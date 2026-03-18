@@ -827,13 +827,37 @@ collect_git_context() {
     log_warn "Falha ao fazer fetch do remote. Usando dados locais."
   fi
 
+  # Determine base branch ref (local dev, or origin/dev as fallback)
+  local base_ref=""
+  if git rev-parse --verify dev &>/dev/null; then
+    base_ref="dev"
+  elif git rev-parse --verify origin/dev &>/dev/null; then
+    base_ref="origin/dev"
+    log_info "Usando origin/dev como base (branch dev nao existe localmente)"
+  elif git rev-parse --verify main &>/dev/null; then
+    base_ref="main"
+    log_info "Usando main como base (branch dev nao encontrada)"
+  elif git rev-parse --verify origin/main &>/dev/null; then
+    base_ref="origin/main"
+    log_info "Usando origin/main como base"
+  else
+    log_error "Branch base nao encontrada (dev, origin/dev, main, origin/main)."
+    exit 1
+  fi
+
+  log_info "Base: $base_ref"
+
   # Collect diff with line limit
   local max_diff_lines=8000
-  local raw_diff
-  raw_diff=$(git diff dev...HEAD 2>/dev/null || git diff dev..HEAD 2>/dev/null || echo "")
+  local raw_diff=""
+
+  raw_diff=$(git diff "${base_ref}...HEAD" 2>/dev/null || true)
+  if [[ -z "$raw_diff" ]]; then
+    raw_diff=$(git diff "${base_ref}..HEAD" 2>/dev/null || true)
+  fi
 
   if [[ -z "$raw_diff" ]]; then
-    log_error "Nenhuma alteracao encontrada em relacao a dev."
+    log_error "Nenhuma alteracao encontrada em relacao a ${base_ref}."
     exit 1
   fi
 
@@ -849,8 +873,8 @@ collect_git_context() {
   fi
 
   # Collect log (max 50 commits)
-  GIT_LOG=$(git log dev...HEAD --oneline --max-count=50 2>/dev/null \
-    || git log dev..HEAD --oneline --max-count=50 2>/dev/null \
+  GIT_LOG=$(git log "${base_ref}...HEAD" --oneline --max-count=50 2>/dev/null \
+    || git log "${base_ref}..HEAD" --oneline --max-count=50 2>/dev/null \
     || echo "(log nao disponivel)")
 }
 
