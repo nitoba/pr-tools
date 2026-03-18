@@ -7,7 +7,7 @@ set -euo pipefail
 # from git context, with clickable Azure DevOps PR links.
 # ============================================================
 
-VERSION="2.2.0"
+VERSION="2.2.1"
 CONFIG_DIR="$HOME/.config/pr-tools"
 ENV_FILE="$CONFIG_DIR/.env"
 TEMPLATE_FILE="$CONFIG_DIR/pr-template.md"
@@ -601,16 +601,22 @@ run_setup_wizard() {
     echo ""
   fi
 
-  # ---- LLM Providers (only if missing) ----
-  if [[ "$needs_providers" == "true" ]]; then
+  # ---- LLM Providers (only if any is missing) ----
+  if [[ "$needs_openrouter" == "true" || "$needs_groq" == "true" || "$needs_gemini" == "true" ]]; then
     echo -e "${BOLD}Providers de LLM${NC}"
     echo ""
 
-    if [[ "$needs_openrouter" == "true" || "$needs_providers" == "true" ]]; then
+    # Show what's already configured
+    [[ -n "$existing_openrouter_key" ]] && log_success "OpenRouter ja configurado"
+    [[ -n "$existing_groq_key" ]] && log_success "Groq ja configurado"
+    [[ -n "$existing_gemini_key" ]] && log_success "Google Gemini ja configurado"
+    [[ -n "$existing_openrouter_key" || -n "$existing_groq_key" || -n "$existing_gemini_key" ]] && echo ""
+
+    if [[ "$needs_openrouter" == "true" ]]; then
       if prompt_yn "Configurar OpenRouter?" "y"; then
         echo -e "  ${BOLD}OpenRouter${NC} - Crie uma key em: ${CYAN}https://openrouter.ai/keys${NC}"
         local new_or_key
-        new_or_key=$(prompt_value "API Key" "$existing_openrouter_key" "true")
+        new_or_key=$(prompt_value "API Key" "" "true")
         if [[ -n "$new_or_key" ]]; then
           echo -en "  Testando key... "
           if test_provider_key "openrouter" "$new_or_key"; then
@@ -621,21 +627,16 @@ run_setup_wizard() {
           fi
           set_env_var "OPENROUTER_API_KEY" "$new_or_key"
           changed=true
-
-          # Update providers list if needed
-          if [[ -z "$existing_providers" ]]; then
-            set_env_var "PR_PROVIDERS" "openrouter,groq"
-          fi
         fi
         echo ""
       fi
     fi
 
-    if [[ "$needs_groq" == "true" || "$needs_providers" == "true" ]]; then
+    if [[ "$needs_groq" == "true" ]]; then
       if prompt_yn "Configurar Groq?" "y"; then
         echo -e "  ${BOLD}Groq${NC} - Crie uma key em: ${CYAN}https://console.groq.com/keys${NC}"
         local new_groq_key
-        new_groq_key=$(prompt_value "API Key" "$existing_groq_key" "true")
+        new_groq_key=$(prompt_value "API Key" "" "true")
         if [[ -n "$new_groq_key" ]]; then
           echo -en "  Testando key... "
           if test_provider_key "groq" "$new_groq_key"; then
@@ -651,11 +652,11 @@ run_setup_wizard() {
       fi
     fi
 
-    if [[ "$needs_gemini" == "true" || "$needs_providers" == "true" ]]; then
+    if [[ "$needs_gemini" == "true" ]]; then
       if prompt_yn "Configurar Google Gemini?" "y"; then
         echo -e "  ${BOLD}Google Gemini${NC} - Crie uma key em: ${CYAN}https://aistudio.google.com/apikey${NC}"
         local new_gemini_key
-        new_gemini_key=$(prompt_value "API Key" "$existing_gemini_key" "true")
+        new_gemini_key=$(prompt_value "API Key" "" "true")
         if [[ -n "$new_gemini_key" ]]; then
           echo -en "  Testando key... "
           if test_provider_key "gemini" "$new_gemini_key"; then
