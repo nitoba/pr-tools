@@ -7,7 +7,7 @@ set -euo pipefail
 # from git context, with clickable Azure DevOps PR links.
 # ============================================================
 
-VERSION="1.6.1"
+VERSION="1.6.2"
 CONFIG_DIR="$HOME/.config/pr-tools"
 ENV_FILE="$CONFIG_DIR/.env"
 TEMPLATE_FILE="$CONFIG_DIR/pr-template.md"
@@ -103,7 +103,7 @@ Se nao houver, omita esta secao.>
 
 ## Regras:
 - A primeira linha DEVE ser o titulo no formato: TITULO: <texto>
-- Se um Work Item for fornecido no contexto (AB#numero), inclua "Relacionado a: AB#numero" no final da descricao
+- Se um Work Item for fornecido no contexto (#numero), inclua "Relacionado a: #numero" no final da descricao
 - Escreva em portugues brasileiro
 - Seja tecnico mas conciso
 - Foque no "o que" e "por que", nao no "como"
@@ -1419,7 +1419,7 @@ print_output() {
   echo -e "${BOLD}Target branches: ${target_display}${NC}"
   echo -e "${BOLD}Provider: ${USED_PROVIDER} (${USED_MODEL})${NC}"
   if [[ -n "$WORK_ITEM_ID" ]]; then
-    echo -e "${BOLD}Work Item: ${CYAN}AB#${WORK_ITEM_ID}${NC}"
+    echo -e "${BOLD}Work Item: ${CYAN}#${WORK_ITEM_ID}${NC}"
   fi
   echo -e "${BOLD}${separator}${NC}"
 
@@ -1439,7 +1439,7 @@ print_output() {
 
     if [[ -n "$WORK_ITEM_ID" && "$IS_AZURE_DEVOPS" == "true" ]]; then
       echo -e "${BOLD}Work Item:${NC}"
-      echo -e "  -> ${CYAN}AB#${WORK_ITEM_ID}${NC}:"
+      echo -e "  -> ${CYAN}#${WORK_ITEM_ID}${NC}:"
       echo -e "     https://dev.azure.com/$AZURE_ORG/$AZURE_PROJECT/_workitems/edit/$WORK_ITEM_ID"
       echo ""
     fi
@@ -1513,7 +1513,7 @@ main() {
   local work_item_context=""
   if [[ -n "$WORK_ITEM_ID" ]]; then
     work_item_context="
-**Work Item:** AB#$WORK_ITEM_ID"
+**Work Item:** #$WORK_ITEM_ID"
   fi
 
   local user_prompt
