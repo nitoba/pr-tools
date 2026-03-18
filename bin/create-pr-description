@@ -7,7 +7,7 @@ set -euo pipefail
 # from git context, with clickable Azure DevOps PR links.
 # ============================================================
 
-VERSION="2.2.3"
+VERSION="2.3.0"
 CONFIG_DIR="$HOME/.config/pr-tools"
 ENV_FILE="$CONFIG_DIR/.env"
 TEMPLATE_FILE="$CONFIG_DIR/pr-template.md"
@@ -907,9 +907,22 @@ collect_git_context() {
   fi
 
   # Determine base branch ref
-  # Prefer origin/dev (always up-to-date after fetch) over local dev (may be stale)
+  # Prefer sprint branch (feature branches are created from sprint, not dev)
+  # Fallback order: origin/sprint/N -> origin/dev -> dev -> origin/main -> main
   local base_ref=""
-  if git rev-parse --verify origin/dev &>/dev/null; then
+
+  # Detect sprint branch first for base ref
+  local sprint_for_base
+  sprint_for_base=$(git branch -r 2>/dev/null \
+    | grep 'origin/sprint/' \
+    | sed 's|.*origin/sprint/||' \
+    | sort -n \
+    | tail -1 \
+    | tr -d '[:space:]' || echo "")
+
+  if [[ -n "$sprint_for_base" ]] && git rev-parse --verify "origin/sprint/$sprint_for_base" &>/dev/null; then
+    base_ref="origin/sprint/$sprint_for_base"
+  elif git rev-parse --verify origin/dev &>/dev/null; then
     base_ref="origin/dev"
   elif git rev-parse --verify dev &>/dev/null; then
     base_ref="dev"
@@ -918,7 +931,7 @@ collect_git_context() {
   elif git rev-parse --verify main &>/dev/null; then
     base_ref="main"
   else
-    log_error "Branch base nao encontrada (origin/dev, dev, origin/main, main)."
+    log_error "Branch base nao encontrada."
     exit 1
   fi
 
