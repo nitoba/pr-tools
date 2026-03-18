@@ -7,7 +7,7 @@ set -euo pipefail
 # from git context, with clickable Azure DevOps PR links.
 # ============================================================
 
-VERSION="1.6.0"
+VERSION="1.6.1"
 CONFIG_DIR="$HOME/.config/pr-tools"
 ENV_FILE="$CONFIG_DIR/.env"
 TEMPLATE_FILE="$CONFIG_DIR/pr-template.md"
@@ -1320,6 +1320,8 @@ call_with_fallback() {
 detect_clipboard() {
   if command -v pbcopy &>/dev/null; then
     CLIP_CMD="pbcopy"
+  elif command -v wl-copy &>/dev/null; then
+    CLIP_CMD="wl-copy"
   elif command -v xclip &>/dev/null; then
     CLIP_CMD="xclip -selection clipboard"
   elif command -v xsel &>/dev/null; then
