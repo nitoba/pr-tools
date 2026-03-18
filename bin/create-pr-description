@@ -7,7 +7,7 @@ set -euo pipefail
 # from git context, with clickable Azure DevOps PR links.
 # ============================================================
 
-VERSION="2.0.0"
+VERSION="2.1.0"
 CONFIG_DIR="$HOME/.config/pr-tools"
 ENV_FILE="$CONFIG_DIR/.env"
 TEMPLATE_FILE="$CONFIG_DIR/pr-template.md"
@@ -481,6 +481,8 @@ test_azure_pat() {
 }
 
 # Interactive wizard for configuring credentials
+# On first run: creates .env with all settings
+# On subsequent runs: only asks about what's missing, updates in-place
 run_setup_wizard() {
   echo ""
   echo -e "${BOLD}========================================${NC}"
@@ -495,8 +497,12 @@ run_setup_wizard() {
   local existing_openrouter_model=""
   local existing_groq_model=""
   local existing_azure_pat=""
+  local existing_reviewer_dev=""
+  local existing_reviewer_sprint=""
+  local is_update=false
 
   if [[ -f "$ENV_FILE" ]]; then
+    is_update=true
     while IFS= read -r line; do
       [[ "$line" =~ ^[[:space:]]*# ]] && continue
       [[ -z "${line// /}" ]] && continue
@@ -512,194 +518,193 @@ run_setup_wizard() {
         OPENROUTER_MODEL)     existing_openrouter_model="$value" ;;
         GROQ_MODEL)           existing_groq_model="$value" ;;
         AZURE_PAT)            existing_azure_pat="$value" ;;
+        PR_REVIEWER_DEV)      existing_reviewer_dev="$value" ;;
+        PR_REVIEWER_SPRINT)   existing_reviewer_sprint="$value" ;;
       esac
     done < "$ENV_FILE"
   fi
 
-  # ---- Step 1: LLM Providers ----
-  echo -e "${BOLD}1) Providers de LLM${NC}"
-  echo -e "  Escolha quais providers voce quer configurar."
-  echo -e "  O script tenta na ordem configurada, com fallback automatico."
-  echo ""
+  # Track what needs configuring
+  local needs_providers=false
+  local needs_openrouter=false
+  local needs_groq=false
+  local needs_pat=false
+  local needs_reviewers=false
+  local changed=false
 
-  local configure_openrouter=false
-  local configure_groq=false
-
-  if prompt_yn "Configurar OpenRouter? (modelos gratuitos disponiveis)" "y"; then
-    configure_openrouter=true
+  # Detect what's missing
+  if [[ -z "$existing_openrouter_key" && -z "$existing_groq_key" ]]; then
+    needs_providers=true
   fi
+  if [[ -z "$existing_openrouter_key" ]]; then needs_openrouter=true; fi
+  if [[ -z "$existing_groq_key" ]]; then needs_groq=true; fi
+  if [[ -z "$existing_azure_pat" ]]; then needs_pat=true; fi
+  if [[ -z "$existing_reviewer_dev" || -z "$existing_reviewer_sprint" ]]; then needs_reviewers=true; fi
 
-  if prompt_yn "Configurar Groq? (modelos gratuitos disponiveis)" "y"; then
-    configure_groq=true
-  fi
-
-  if [[ "$configure_openrouter" == "false" && "$configure_groq" == "false" ]]; then
-    log_warn "Nenhum provider selecionado. Voce precisara configurar manualmente em $ENV_FILE."
-    return
-  fi
-
-  # Build providers list
-  local providers_list=""
-  if [[ "$configure_openrouter" == "true" && "$configure_groq" == "true" ]]; then
+  # If everything is configured, show summary and ask if they want to change anything
+  if [[ "$needs_providers" == "false" && "$needs_pat" == "false" && "$needs_reviewers" == "false" ]]; then
+    echo -e "  ${GREEN}Todas as configuracoes ja estao preenchidas:${NC}"
     echo ""
-    local first_provider
-    first_provider=$(prompt_choice "Qual provider tentar primeiro?" "openrouter" "groq")
-    if [[ "$first_provider" == "openrouter" ]]; then
-      providers_list="openrouter,groq"
-    else
-      providers_list="groq,openrouter"
+    local masked_or="${existing_openrouter_key:0:4}...${existing_openrouter_key: -4}"
+    local masked_groq="${existing_groq_key:0:4}...${existing_groq_key: -4}"
+    local masked_pat="${existing_azure_pat:0:4}...${existing_azure_pat: -4}"
+    [[ -n "$existing_openrouter_key" ]] && echo -e "    OpenRouter API Key: ${CYAN}${masked_or}${NC}"
+    [[ -n "$existing_groq_key" ]] && echo -e "    Groq API Key:       ${CYAN}${masked_groq}${NC}"
+    [[ -n "$existing_azure_pat" ]] && echo -e "    Azure PAT:          ${CYAN}${masked_pat}${NC}"
+    [[ -n "$existing_reviewer_dev" ]] && echo -e "    Reviewer dev:       ${CYAN}${existing_reviewer_dev}${NC}"
+    [[ -n "$existing_reviewer_sprint" ]] && echo -e "    Reviewer sprint:    ${CYAN}${existing_reviewer_sprint}${NC}"
+    echo ""
+    if ! prompt_yn "Deseja alterar alguma configuracao?" "n"; then
+      return
     fi
-  elif [[ "$configure_openrouter" == "true" ]]; then
-    providers_list="openrouter"
+    # If they want to change, ask everything
+    needs_providers=true
+    needs_pat=true
+    needs_reviewers=true
+    echo ""
+  fi
+
+  if [[ "$is_update" == "true" ]]; then
+    log_info "Configuracao existente detectada. Apenas itens faltantes serao perguntados."
+    echo ""
+  fi
+
+  # ---- LLM Providers (only if missing) ----
+  if [[ "$needs_providers" == "true" ]]; then
+    echo -e "${BOLD}Providers de LLM${NC}"
+    echo ""
+
+    if [[ "$needs_openrouter" == "true" || "$needs_providers" == "true" ]]; then
+      if prompt_yn "Configurar OpenRouter?" "y"; then
+        echo -e "  ${BOLD}OpenRouter${NC} - Crie uma key em: ${CYAN}https://openrouter.ai/keys${NC}"
+        local new_or_key
+        new_or_key=$(prompt_value "API Key" "$existing_openrouter_key" "true")
+        if [[ -n "$new_or_key" ]]; then
+          echo -en "  Testando key... "
+          if test_provider_key "openrouter" "$new_or_key"; then
+            echo -e "${GREEN}valida!${NC}"
+          else
+            echo -e "${RED}falhou${NC}"
+            log_warn "A key pode estar errada ou o servico esta fora. Salvando mesmo assim."
+          fi
+          set_env_var "OPENROUTER_API_KEY" "$new_or_key"
+          changed=true
+
+          # Update providers list if needed
+          if [[ -z "$existing_providers" ]]; then
+            set_env_var "PR_PROVIDERS" "openrouter,groq"
+          fi
+        fi
+        echo ""
+      fi
+    fi
+
+    if [[ "$needs_groq" == "true" || "$needs_providers" == "true" ]]; then
+      if prompt_yn "Configurar Groq?" "y"; then
+        echo -e "  ${BOLD}Groq${NC} - Crie uma key em: ${CYAN}https://console.groq.com/keys${NC}"
+        local new_groq_key
+        new_groq_key=$(prompt_value "API Key" "$existing_groq_key" "true")
+        if [[ -n "$new_groq_key" ]]; then
+          echo -en "  Testando key... "
+          if test_provider_key "groq" "$new_groq_key"; then
+            echo -e "${GREEN}valida!${NC}"
+          else
+            echo -e "${RED}falhou${NC}"
+            log_warn "A key pode estar errada ou o servico esta fora. Salvando mesmo assim."
+          fi
+          set_env_var "GROQ_API_KEY" "$new_groq_key"
+          changed=true
+
+          if [[ -z "$existing_providers" ]]; then
+            set_env_var "PR_PROVIDERS" "openrouter,groq"
+          fi
+        fi
+        echo ""
+      fi
+    fi
   else
-    providers_list="groq"
+    log_success "Providers de LLM ja configurados"
   fi
 
-  echo ""
-
-  # ---- Step 2: API Keys ----
-  echo -e "${BOLD}2) API Keys${NC}"
-  echo ""
-
-  local new_openrouter_key="$existing_openrouter_key"
-  local new_groq_key="$existing_groq_key"
-  local new_openrouter_model="$existing_openrouter_model"
-  local new_groq_model="$existing_groq_model"
-
-  if [[ "$configure_openrouter" == "true" ]]; then
-    echo -e "  ${BOLD}OpenRouter${NC} - Crie uma key em: ${CYAN}https://openrouter.ai/keys${NC}"
-    new_openrouter_key=$(prompt_value "API Key" "$existing_openrouter_key" "true")
-
-    if [[ -n "$new_openrouter_key" ]]; then
-      echo -en "  Testando key... "
-      if test_provider_key "openrouter" "$new_openrouter_key"; then
-        echo -e "${GREEN}valida!${NC}"
-      else
-        echo -e "${RED}falhou${NC}"
-        log_warn "A key pode estar errada ou o servico esta fora. Salvando mesmo assim."
-      fi
-
-      # Model selection
-      if [[ -z "$new_openrouter_model" ]]; then
-        new_openrouter_model="$DEFAULT_OPENROUTER_MODEL"
-      fi
-      echo -e "  Modelo atual: ${CYAN}$new_openrouter_model${NC}"
-      if prompt_yn "Mudar modelo?" "n"; then
-        new_openrouter_model=$(prompt_value "Modelo OpenRouter" "$new_openrouter_model")
-      fi
-    fi
+  # ---- Azure DevOps PAT (only if missing) ----
+  if [[ "$needs_pat" == "true" ]]; then
+    echo -e "${BOLD}Azure DevOps${NC}"
     echo ""
-  fi
-
-  if [[ "$configure_groq" == "true" ]]; then
-    echo -e "  ${BOLD}Groq${NC} - Crie uma key em: ${CYAN}https://console.groq.com/keys${NC}"
-    new_groq_key=$(prompt_value "API Key" "$existing_groq_key" "true")
-
-    if [[ -n "$new_groq_key" ]]; then
-      echo -en "  Testando key... "
-      if test_provider_key "groq" "$new_groq_key"; then
-        echo -e "${GREEN}valida!${NC}"
-      else
-        echo -e "${RED}falhou${NC}"
-        log_warn "A key pode estar errada ou o servico esta fora. Salvando mesmo assim."
+    if prompt_yn "Configurar Azure DevOps PAT?" "y"; then
+      echo -e "  Crie um PAT em: ${CYAN}https://dev.azure.com/<sua-org>/_usersSettings/tokens${NC}"
+      echo -e "  Permissao necessaria: ${BOLD}Code (Read & Write)${NC}"
+      local new_pat
+      new_pat=$(prompt_value "PAT Token" "$existing_azure_pat" "true")
+      if [[ -n "$new_pat" ]]; then
+        echo -en "  Testando PAT... "
+        if test_azure_pat "$new_pat"; then
+          echo -e "${GREEN}valido!${NC}"
+        else
+          echo -e "${RED}falhou${NC}"
+          log_warn "O PAT pode estar errado ou expirado. Salvando mesmo assim."
+        fi
+        set_env_var "AZURE_PAT" "$new_pat"
+        changed=true
       fi
-
-      # Model selection
-      if [[ -z "$new_groq_model" ]]; then
-        new_groq_model="$DEFAULT_GROQ_MODEL"
-      fi
-      echo -e "  Modelo atual: ${CYAN}$new_groq_model${NC}"
-      if prompt_yn "Mudar modelo?" "n"; then
-        new_groq_model=$(prompt_value "Modelo Groq" "$new_groq_model")
-      fi
+      echo ""
     fi
-    echo ""
-  fi
-
-  # ---- Step 3: Azure DevOps ----
-  echo -e "${BOLD}3) Azure DevOps (opcional)${NC}"
-  echo -e "  Um PAT permite gerar links de PR com repositoryId completo."
-  echo ""
-
-  local new_azure_pat="$existing_azure_pat"
-  if prompt_yn "Configurar Azure DevOps PAT?" "y"; then
-    echo -e "  Crie um PAT em: ${CYAN}https://dev.azure.com/<sua-org>/_usersSettings/tokens${NC}"
-    echo -e "  Permissao necessaria: ${BOLD}Code (Read)${NC}"
-    new_azure_pat=$(prompt_value "PAT Token" "$existing_azure_pat" "true")
-
-    if [[ -n "$new_azure_pat" ]]; then
-      echo -en "  Testando PAT... "
-      if test_azure_pat "$new_azure_pat"; then
-        echo -e "${GREEN}valido!${NC}"
-      else
-        echo -e "${RED}falhou${NC}"
-        log_warn "O PAT pode estar errado ou expirado. Salvando mesmo assim."
-      fi
-    fi
-  fi
-
-  echo ""
-
-  # ---- Step 4: Write .env ----
-  echo -e "${BOLD}4) Salvando configuracao...${NC}"
-  echo ""
-
-  local env_content="# Configuracao do create-pr-description
-# Gerado por: create-pr-description --init
-
-# Providers em ordem de prioridade
-PR_PROVIDERS=\"$providers_list\""
-
-  if [[ -n "$new_openrouter_key" ]]; then
-    env_content="$env_content
-
-# OpenRouter
-OPENROUTER_API_KEY=\"$new_openrouter_key\""
-    if [[ -n "$new_openrouter_model" && "$new_openrouter_model" != "$DEFAULT_OPENROUTER_MODEL" ]]; then
-      env_content="$env_content
-OPENROUTER_MODEL=\"$new_openrouter_model\""
-    else
-      env_content="$env_content
-# OPENROUTER_MODEL=\"$DEFAULT_OPENROUTER_MODEL\""
-    fi
-  fi
-
-  if [[ -n "$new_groq_key" ]]; then
-    env_content="$env_content
-
-# Groq
-GROQ_API_KEY=\"$new_groq_key\""
-    if [[ -n "$new_groq_model" && "$new_groq_model" != "$DEFAULT_GROQ_MODEL" ]]; then
-      env_content="$env_content
-GROQ_MODEL=\"$new_groq_model\""
-    else
-      env_content="$env_content
-# GROQ_MODEL=\"$DEFAULT_GROQ_MODEL\""
-    fi
-  fi
-
-  if [[ -n "$new_azure_pat" ]]; then
-    env_content="$env_content
-
-# Azure DevOps
-AZURE_PAT=\"$new_azure_pat\""
   else
-    env_content="$env_content
-
-# Azure DevOps (descomente e preencha para links com repositoryId)
-# AZURE_PAT=\"your-pat-token\""
+    log_success "Azure DevOps PAT ja configurado"
   fi
 
-  # Reviewers
-  env_content="$env_content
+  # ---- Reviewers (only if missing) ----
+  if [[ "$needs_reviewers" == "true" ]]; then
+    echo -e "${BOLD}Reviewers${NC}"
+    echo -e "  Emails dos reviewers padrao para criacao automatica de PRs."
+    echo ""
 
-# Reviewers (email) para criacao automatica de PRs
-# PR_REVIEWER_DEV=\"reviewer-dev@empresa.com\"
-# PR_REVIEWER_SPRINT=\"reviewer-sprint@empresa.com\""
+    if [[ -z "$existing_reviewer_dev" ]]; then
+      local new_rev_dev
+      new_rev_dev=$(prompt_value "Reviewer para PRs -> dev (email)" "")
+      if [[ -n "$new_rev_dev" ]]; then
+        set_env_var "PR_REVIEWER_DEV" "$new_rev_dev"
+        changed=true
+      fi
+    else
+      echo -e "  Reviewer dev: ${CYAN}${existing_reviewer_dev}${NC}"
+      if prompt_yn "Alterar?" "n"; then
+        local new_rev_dev
+        new_rev_dev=$(prompt_value "Reviewer para PRs -> dev (email)" "$existing_reviewer_dev")
+        if [[ -n "$new_rev_dev" ]]; then
+          set_env_var "PR_REVIEWER_DEV" "$new_rev_dev"
+          changed=true
+        fi
+      fi
+    fi
 
-  echo "$env_content" > "$ENV_FILE"
-  chmod 600 "$ENV_FILE"
-  log_success "Configuracao salva em $ENV_FILE"
+    if [[ -z "$existing_reviewer_sprint" ]]; then
+      local new_rev_sprint
+      new_rev_sprint=$(prompt_value "Reviewer para PRs -> sprint (email)" "")
+      if [[ -n "$new_rev_sprint" ]]; then
+        set_env_var "PR_REVIEWER_SPRINT" "$new_rev_sprint"
+        changed=true
+      fi
+    else
+      echo -e "  Reviewer sprint: ${CYAN}${existing_reviewer_sprint}${NC}"
+      if prompt_yn "Alterar?" "n"; then
+        local new_rev_sprint
+        new_rev_sprint=$(prompt_value "Reviewer para PRs -> sprint (email)" "$existing_reviewer_sprint")
+        if [[ -n "$new_rev_sprint" ]]; then
+          set_env_var "PR_REVIEWER_SPRINT" "$new_rev_sprint"
+          changed=true
+        fi
+      fi
+    fi
+    echo ""
+  else
+    log_success "Reviewers ja configurados"
+  fi
+
+  if [[ "$changed" == "true" ]]; then
+    log_success "Configuracao atualizada em $ENV_FILE"
+  else
+    log_info "Nenhuma alteracao feita."
+  fi
 }
 
 do_init() {
