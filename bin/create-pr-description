@@ -7,7 +7,7 @@ set -euo pipefail
 # from git context, with clickable Azure DevOps PR links.
 # ============================================================
 
-VERSION="1.1.0"
+VERSION="1.2.0"
 CONFIG_DIR="$HOME/.config/pr-tools"
 ENV_FILE="$CONFIG_DIR/.env"
 TEMPLATE_FILE="$CONFIG_DIR/pr-template.md"
@@ -850,14 +850,41 @@ collect_git_context() {
   # Collect diff with line limit
   local max_diff_lines=8000
   local raw_diff=""
+  local diff_err=""
 
-  raw_diff=$(git diff "${base_ref}...HEAD" 2>/dev/null || true)
+  # Try three-dot diff first (changes since common ancestor)
+  if raw_diff=$(git diff "${base_ref}...HEAD" 2>&1); then
+    : # success
+  else
+    diff_err="three-dot falhou: $raw_diff"
+    raw_diff=""
+  fi
+
+  # Fallback to two-dot diff (direct comparison)
   if [[ -z "$raw_diff" ]]; then
-    raw_diff=$(git diff "${base_ref}..HEAD" 2>/dev/null || true)
+    if raw_diff=$(git diff "${base_ref}..HEAD" 2>&1); then
+      : # success
+    else
+      diff_err="$diff_err | two-dot falhou: $raw_diff"
+      raw_diff=""
+    fi
+  fi
+
+  # Fallback: diff against the base ref directly
+  if [[ -z "$raw_diff" ]]; then
+    if raw_diff=$(git diff "${base_ref}" HEAD 2>&1); then
+      : # success
+    else
+      diff_err="$diff_err | direct falhou: $raw_diff"
+      raw_diff=""
+    fi
   fi
 
   if [[ -z "$raw_diff" ]]; then
     log_error "Nenhuma alteracao encontrada em relacao a ${base_ref}."
+    if [[ -n "$diff_err" ]]; then
+      log_error "Detalhes: $diff_err"
+    fi
     exit 1
   fi
 
@@ -872,10 +899,15 @@ collect_git_context() {
     GIT_DIFF="$raw_diff"
   fi
 
-  # Collect log (max 50 commits)
-  GIT_LOG=$(git log "${base_ref}...HEAD" --oneline --max-count=50 2>/dev/null \
-    || git log "${base_ref}..HEAD" --oneline --max-count=50 2>/dev/null \
-    || echo "(log nao disponivel)")
+  # Collect log
+  local git_log_result=""
+  if git_log_result=$(git log "${base_ref}...HEAD" --oneline --max-count=50 2>/dev/null); then
+    GIT_LOG="$git_log_result"
+  elif git_log_result=$(git log "${base_ref}..HEAD" --oneline --max-count=50 2>/dev/null); then
+    GIT_LOG="$git_log_result"
+  else
+    GIT_LOG="(log nao disponivel)"
+  fi
 }
 
 # ---- Sprint Detection ----
