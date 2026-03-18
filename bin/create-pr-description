@@ -7,7 +7,7 @@ set -euo pipefail
 # from git context, with clickable Azure DevOps PR links.
 # ============================================================
 
-VERSION="1.5.0"
+VERSION="1.6.0"
 CONFIG_DIR="$HOME/.config/pr-tools"
 ENV_FILE="$CONFIG_DIR/.env"
 TEMPLATE_FILE="$CONFIG_DIR/pr-template.md"
@@ -1198,18 +1198,34 @@ call_llm_api() {
   printf '%s' "$system_prompt" > "$system_tmp"
   printf '%s' "$user_prompt" > "$user_tmp"
 
-  jq -n \
-    --arg model "$model" \
-    --rawfile system "$system_tmp" \
-    --rawfile user "$user_tmp" \
-    '{
+  # Build base payload; add reasoning_format for providers that support it
+  local jq_filter='{
+    model: $model,
+    messages: [
+      { role: "system", content: $system },
+      { role: "user", content: $user }
+    ],
+    temperature: 0.3
+  }'
+
+  # Groq: disable thinking output for reasoning models (qwen3, etc.)
+  if [[ "$provider_name" == "groq" ]]; then
+    jq_filter='{
       model: $model,
       messages: [
         { role: "system", content: $system },
         { role: "user", content: $user }
       ],
-      temperature: 0.3
-    }' > "$payload_tmp"
+      temperature: 0.3,
+      reasoning_format: "hidden"
+    }'
+  fi
+
+  jq -n \
+    --arg model "$model" \
+    --rawfile system "$system_tmp" \
+    --rawfile user "$user_tmp" \
+    "$jq_filter" > "$payload_tmp"
 
   rm -f "$system_tmp" "$user_tmp"
 
@@ -1328,6 +1344,14 @@ parse_title_and_body() {
   local raw="$1"
   PR_TITLE=""
   PR_BODY=""
+
+  # Strip <think>...</think> blocks (reasoning models like qwen3)
+  # Uses sed to remove everything between <think> and </think> tags
+  raw=$(printf '%s' "$raw" | sed '/<think>/,/<\/think>/d')
+  # Also remove standalone <think> or </think> tags that might remain
+  raw=$(printf '%s' "$raw" | sed 's/<think>//g; s/<\/think>//g')
+  # Remove leading blank lines after stripping
+  raw=$(printf '%s' "$raw" | sed '/./,$!d')
 
   # Try to find TITULO: line anywhere in the output
   local found_title=false
