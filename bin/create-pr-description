@@ -7,7 +7,7 @@ set -euo pipefail
 # from git context, with clickable Azure DevOps PR links.
 # ============================================================
 
-VERSION="1.2.0"
+VERSION="1.3.0"
 CONFIG_DIR="$HOME/.config/pr-tools"
 ENV_FILE="$CONFIG_DIR/.env"
 TEMPLATE_FILE="$CONFIG_DIR/pr-template.md"
@@ -200,7 +200,18 @@ REPO_URL="https://raw.githubusercontent.com/nitoba/pr-tools/main"
 
 do_update() {
   local script_path
-  script_path=$(realpath "$0")
+  # realpath may not exist on older macOS; readlink -f may not work either
+  if command -v realpath &>/dev/null; then
+    script_path=$(realpath "$0")
+  elif readlink -f "$0" &>/dev/null; then
+    script_path=$(readlink -f "$0")
+  else
+    # Fallback: resolve manually
+    script_path="$0"
+    if [[ "$script_path" != /* ]]; then
+      script_path="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+    fi
+  fi
 
   log_info "Verificando atualizacao..."
 
@@ -214,7 +225,7 @@ do_update() {
 
   # Extract remote version
   local remote_version
-  remote_version=$(echo "$remote_script" | grep '^VERSION=' | head -1 | cut -d'"' -f2)
+  remote_version=$(echo "$remote_script" | grep '^VERSION=' | head -1 | cut -d'"' -f2 || true)
 
   if [[ -z "$remote_version" ]]; then
     log_warn "Nao foi possivel determinar a versao remota."
@@ -440,7 +451,7 @@ test_provider_key() {
     --max-time 15 \
     -H "Content-Type: application/json" \
     -H "Authorization: Bearer $key" \
-    "${extra_headers[@]}" \
+    ${extra_headers[@]+"${extra_headers[@]}"} \
     -d "$payload" \
     "$url" 2>/dev/null || echo "000")
 
@@ -1323,7 +1334,7 @@ parse_title_and_body() {
   else
     # Fallback: extract title from ## Descricao section's first sentence
     local desc_line
-    desc_line=$(echo "$raw" | grep -A1 "^## Descricao" | tail -1 | sed 's/^[[:space:]]*//')
+    desc_line=$(echo "$raw" | grep -A1 "^## Descricao" | tail -1 | sed 's/^[[:space:]]*//' || true)
     if [[ -n "$desc_line" && "$desc_line" != "##"* ]]; then
       # Truncate to 80 chars
       PR_TITLE="${desc_line:0:80}"
