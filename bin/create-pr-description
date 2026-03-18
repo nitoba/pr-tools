@@ -7,7 +7,7 @@ set -euo pipefail
 # from git context, with clickable Azure DevOps PR links.
 # ============================================================
 
-VERSION="1.4.0"
+VERSION="1.5.0"
 CONFIG_DIR="$HOME/.config/pr-tools"
 ENV_FILE="$CONFIG_DIR/.env"
 TEMPLATE_FILE="$CONFIG_DIR/pr-template.md"
@@ -838,21 +838,19 @@ collect_git_context() {
     log_warn "Falha ao fazer fetch do remote. Usando dados locais."
   fi
 
-  # Determine base branch ref (local dev, or origin/dev as fallback)
+  # Determine base branch ref
+  # Prefer origin/dev (always up-to-date after fetch) over local dev (may be stale)
   local base_ref=""
-  if git rev-parse --verify dev &>/dev/null; then
-    base_ref="dev"
-  elif git rev-parse --verify origin/dev &>/dev/null; then
+  if git rev-parse --verify origin/dev &>/dev/null; then
     base_ref="origin/dev"
-    log_info "Usando origin/dev como base (branch dev nao existe localmente)"
-  elif git rev-parse --verify main &>/dev/null; then
-    base_ref="main"
-    log_info "Usando main como base (branch dev nao encontrada)"
+  elif git rev-parse --verify dev &>/dev/null; then
+    base_ref="dev"
   elif git rev-parse --verify origin/main &>/dev/null; then
     base_ref="origin/main"
-    log_info "Usando origin/main como base"
+  elif git rev-parse --verify main &>/dev/null; then
+    base_ref="main"
   else
-    log_error "Branch base nao encontrada (dev, origin/dev, main, origin/main)."
+    log_error "Branch base nao encontrada (origin/dev, dev, origin/main, main)."
     exit 1
   fi
 
@@ -1189,11 +1187,21 @@ call_llm_api() {
   local provider_name="$6"
 
   # Build JSON payload using jq to properly escape content
-  local payload
-  payload=$(jq -n \
+  # Build JSON payload using temp files to avoid "Argument list too long"
+  # jq --arg passes data via process arguments which have OS size limits
+  # Solution: write prompts to files, use jq --rawfile (jq 1.6+) to read them
+  local payload_tmp system_tmp user_tmp
+  payload_tmp=$(mktemp)
+  system_tmp=$(mktemp)
+  user_tmp=$(mktemp)
+
+  printf '%s' "$system_prompt" > "$system_tmp"
+  printf '%s' "$user_prompt" > "$user_tmp"
+
+  jq -n \
     --arg model "$model" \
-    --arg system "$system_prompt" \
-    --arg user "$user_prompt" \
+    --rawfile system "$system_tmp" \
+    --rawfile user "$user_tmp" \
     '{
       model: $model,
       messages: [
@@ -1201,7 +1209,9 @@ call_llm_api() {
         { role: "user", content: $user }
       ],
       temperature: 0.3
-    }')
+    }' > "$payload_tmp"
+
+  rm -f "$system_tmp" "$user_tmp"
 
   # Build curl command
   local curl_args=(
@@ -1218,10 +1228,11 @@ call_llm_api() {
     curl_args+=(-H "X-Title: create-pr-description")
   fi
 
-  curl_args+=(-d "$payload" "$url")
+  curl_args+=(-d @"$payload_tmp" "$url")
 
   local response
   response=$(curl "${curl_args[@]}" 2>/dev/null || echo -e "\n000")
+  rm -f "$payload_tmp"
 
   local http_code
   http_code=$(echo "$response" | tail -1)
