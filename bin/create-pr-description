@@ -42,6 +42,8 @@ USED_PROVIDER=""
 USED_MODEL=""
 LLM_RESULT=""
 CLIP_CMD=""
+WORK_ITEM_ID=""
+CLI_WORK_ITEM=""
 
 # ---- Helper functions ----
 
@@ -101,6 +103,7 @@ Se nao houver, omita esta secao.>
 
 ## Regras:
 - A primeira linha DEVE ser o titulo no formato: TITULO: <texto>
+- Se um Work Item for fornecido no contexto (AB#numero), inclua "Relacionado a: AB#numero" no final da descricao
 - Escreva em portugues brasileiro
 - Seja tecnico mas conciso
 - Foque no "o que" e "por que", nao no "como"
@@ -140,6 +143,7 @@ usando LLM (OpenRouter/Groq) com fallback configuravel.
 Opcoes:
   --init                              Inicializa arquivos de configuracao
   --target <branch>                   Target do PR: dev, sprint (pode repetir; padrao: ambos)
+  --work-item <id>                     ID do work item do Azure DevOps (ex: 11763)
   --set-openrouter-model <modelo>     Salva modelo do OpenRouter no .env
   --set-groq-model <modelo>           Salva modelo do Groq no .env
   --dry-run                           Mostra o prompt sem chamar a LLM
@@ -247,6 +251,14 @@ parse_args() {
           exit 1
         fi
         TARGETS+=("$2")
+        shift 2
+        ;;
+      --work-item)
+        if [[ -z "${2:-}" ]]; then
+          log_error "Flag --work-item requer o ID do work item."
+          exit 1
+        fi
+        CLI_WORK_ITEM="$2"
         shift 2
         ;;
       --set-openrouter-model)
@@ -887,6 +899,38 @@ detect_sprint() {
   fi
 }
 
+# ---- Work Item ----
+
+detect_work_item() {
+  # 1. CLI flag takes priority
+  if [[ -n "$CLI_WORK_ITEM" ]]; then
+    WORK_ITEM_ID="$CLI_WORK_ITEM"
+    log_info "Work item (flag): #$WORK_ITEM_ID"
+    return
+  fi
+
+  # 2. Try to extract from branch name: tipo/NUMERO-descricao
+  if [[ "$BRANCH_NAME" =~ ^[a-zA-Z]+/([0-9]+) ]]; then
+    WORK_ITEM_ID="${BASH_REMATCH[1]}"
+    log_info "Work item (branch): #$WORK_ITEM_ID"
+    return
+  fi
+
+  # 3. Interactive prompt (only if terminal is interactive)
+  if [[ -t 0 ]]; then
+    echo ""
+    log_warn "Nao foi possivel extrair o work item ID da branch '$BRANCH_NAME'."
+    echo -en "  ID do work item (Enter para pular): "
+    read -r user_input
+    if [[ -n "$user_input" ]]; then
+      WORK_ITEM_ID="$user_input"
+      log_info "Work item: #$WORK_ITEM_ID"
+    else
+      log_info "Sem work item vinculado."
+    fi
+  fi
+}
+
 # ---- Azure DevOps ----
 
 parse_azure_remote() {
@@ -1266,6 +1310,9 @@ print_output() {
   target_display="${target_display%, }"
   echo -e "${BOLD}Target branches: ${target_display}${NC}"
   echo -e "${BOLD}Provider: ${USED_PROVIDER} (${USED_MODEL})${NC}"
+  if [[ -n "$WORK_ITEM_ID" ]]; then
+    echo -e "${BOLD}Work Item: ${CYAN}AB#${WORK_ITEM_ID}${NC}"
+  fi
   echo -e "${BOLD}${separator}${NC}"
 
   # Title
@@ -1278,18 +1325,28 @@ print_output() {
   echo "$PR_BODY"
   echo ""
 
-  # PR Links
-  if [[ ${#PR_LINKS[@]} -gt 0 ]]; then
+  # PR Links and Work Item link
+  if [[ ${#PR_LINKS[@]} -gt 0 || -n "$WORK_ITEM_ID" ]]; then
     echo -e "${BOLD}${separator}${NC}"
-    echo -e "${BOLD}Abrir PR:${NC}"
-    echo ""
-    for link_entry in "${PR_LINKS[@]}"; do
-      local target_ref="${link_entry%%|*}"
-      local url="${link_entry#*|}"
-      echo -e "  -> ${CYAN}${target_ref}${NC}:"
-      echo -e "     ${url}"
+
+    if [[ -n "$WORK_ITEM_ID" && "$IS_AZURE_DEVOPS" == "true" ]]; then
+      echo -e "${BOLD}Work Item:${NC}"
+      echo -e "  -> ${CYAN}AB#${WORK_ITEM_ID}${NC}:"
+      echo -e "     https://dev.azure.com/$AZURE_ORG/$AZURE_PROJECT/_workitems/edit/$WORK_ITEM_ID"
       echo ""
-    done
+    fi
+
+    if [[ ${#PR_LINKS[@]} -gt 0 ]]; then
+      echo -e "${BOLD}Abrir PR:${NC}"
+      echo ""
+      for link_entry in "${PR_LINKS[@]}"; do
+        local target_ref="${link_entry%%|*}"
+        local url="${link_entry#*|}"
+        echo -e "  -> ${CYAN}${target_ref}${NC}:"
+        echo -e "     ${url}"
+        echo ""
+      done
+    fi
   fi
 
   # Clipboard - copy body (description)
@@ -1323,6 +1380,7 @@ main() {
 
   # Collect context
   collect_git_context
+  detect_work_item
   detect_sprint
   parse_azure_remote
   fetch_repo_id
@@ -1343,11 +1401,18 @@ main() {
   done
   target_display="${target_display%, }"
 
+  # Work item context
+  local work_item_context=""
+  if [[ -n "$WORK_ITEM_ID" ]]; then
+    work_item_context="
+**Work Item:** AB#$WORK_ITEM_ID"
+  fi
+
   local user_prompt
   user_prompt="## Contexto Git
 
 **Branch:** $BRANCH_NAME
-**Base branches alvo:** $target_display
+**Base branches alvo:** $target_display${work_item_context}
 
 ### Git Log (commits desde a base):
 $GIT_LOG
