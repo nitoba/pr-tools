@@ -7,7 +7,7 @@ set -euo pipefail
 # from git context, with clickable Azure DevOps PR links.
 # ============================================================
 
-VERSION="2.2.1"
+VERSION="2.2.2"
 CONFIG_DIR="$HOME/.config/pr-tools"
 ENV_FILE="$CONFIG_DIR/.env"
 TEMPLATE_FILE="$CONFIG_DIR/pr-template.md"
@@ -1046,8 +1046,14 @@ detect_work_item() {
     return
   fi
 
-  # 2. Try to extract from branch name: tipo/NUMERO-descricao
+  # 2. Try to extract from branch name:
+  #    - tipo/NUMERO-descricao  (ex: feat/11494-dark-mode)
+  #    - NUMERO/descricao       (ex: 11494/Landing_pages_blogs)
   if [[ "$BRANCH_NAME" =~ ^[a-zA-Z]+/([0-9]+) ]]; then
+    WORK_ITEM_ID="${BASH_REMATCH[1]}"
+    log_info "Work item (branch): #$WORK_ITEM_ID"
+    return
+  elif [[ "$BRANCH_NAME" =~ ^([0-9]+)/ ]]; then
     WORK_ITEM_ID="${BASH_REMATCH[1]}"
     log_info "Work item (branch): #$WORK_ITEM_ID"
     return
