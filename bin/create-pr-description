@@ -63,10 +63,13 @@ log_success() {
 
 # ---- Default Template ----
 
-DEFAULT_TEMPLATE='Analise o diff e log do git fornecidos e gere uma descricao de PR em portugues
-brasileiro seguindo EXATAMENTE este formato:
+DEFAULT_TEMPLATE='Analise o diff e log do git fornecidos e gere um TITULO e uma DESCRICAO de PR
+em portugues brasileiro.
 
----
+IMPORTANTE: A PRIMEIRA LINHA da sua resposta DEVE ser o titulo neste formato exato:
+TITULO: <texto curto e descritivo, max 80 caracteres>
+
+Depois do titulo, siga este formato para a descricao:
 
 ## Descricao
 
@@ -97,6 +100,7 @@ Se nao houver, omita esta secao.>
 ---
 
 ## Regras:
+- A primeira linha DEVE ser o titulo no formato: TITULO: <texto>
 - Escreva em portugues brasileiro
 - Seja tecnico mas conciso
 - Foque no "o que" e "por que", nao no "como"
@@ -124,6 +128,7 @@ PR_PROVIDERS="openrouter,groq"
 
 ACTION=""
 TARGETS=()
+DRY_RUN=false
 
 show_help() {
   cat <<'HELP'
@@ -137,14 +142,17 @@ Opcoes:
   --target <branch>                   Target do PR: dev, sprint (pode repetir; padrao: ambos)
   --set-openrouter-model <modelo>     Salva modelo do OpenRouter no .env
   --set-groq-model <modelo>           Salva modelo do Groq no .env
+  --dry-run                           Mostra o prompt sem chamar a LLM
+  --update                            Atualiza o script para a versao mais recente
   --help                              Mostra esta ajuda
   --version                           Mostra a versao
 
 Exemplos:
   create-pr-description                                                # PR para dev + sprint
   create-pr-description --target dev                                   # PR apenas para dev
+  create-pr-description --dry-run                                      # Ve o prompt sem chamar LLM
   create-pr-description --set-openrouter-model qwen/qwen3-4b:free     # Muda modelo OpenRouter
-  create-pr-description --set-groq-model llama3-8b-8192                # Muda modelo Groq
+  create-pr-description --update                                       # Atualiza para ultima versao
 HELP
 }
 
@@ -182,6 +190,46 @@ set_env_var() {
   chmod 600 "$ENV_FILE"
 }
 
+# ---- Auto-update ----
+
+REPO_URL="https://raw.githubusercontent.com/nitoba/pr-tools/main"
+
+do_update() {
+  local script_path
+  script_path=$(realpath "$0")
+
+  log_info "Verificando atualizacao..."
+
+  local remote_script
+  remote_script=$(curl -fsSL "$REPO_URL/bin/create-pr-description" 2>/dev/null || echo "")
+
+  if [[ -z "$remote_script" ]]; then
+    log_error "Falha ao baixar atualizacao. Verifique sua conexao."
+    exit 1
+  fi
+
+  # Extract remote version
+  local remote_version
+  remote_version=$(echo "$remote_script" | grep '^VERSION=' | head -1 | cut -d'"' -f2)
+
+  if [[ -z "$remote_version" ]]; then
+    log_warn "Nao foi possivel determinar a versao remota."
+    remote_version="desconhecida"
+  fi
+
+  if [[ "$remote_version" == "$VERSION" ]]; then
+    log_success "Voce ja esta na versao mais recente (v$VERSION)."
+    return
+  fi
+
+  log_info "Versao atual: v$VERSION"
+  log_info "Versao disponivel: v$remote_version"
+
+  echo "$remote_script" > "$script_path"
+  chmod +x "$script_path"
+  log_success "Atualizado para v$remote_version!"
+}
+
 parse_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -217,6 +265,14 @@ parse_args() {
         fi
         set_env_var "GROQ_MODEL" "$2"
         log_success "Modelo Groq salvo: $2"
+        exit 0
+        ;;
+      --dry-run)
+        DRY_RUN=true
+        shift
+        ;;
+      --update)
+        do_update
         exit 0
         ;;
       --help)
@@ -1142,13 +1198,61 @@ copy_to_clipboard() {
 
 # ---- Output ----
 
+parse_title_and_body() {
+  local raw="$1"
+  PR_TITLE=""
+  PR_BODY=""
+
+  # Try to find TITULO: line anywhere in the output
+  local found_title=false
+  local body_lines=""
+
+  while IFS= read -r line; do
+    if [[ "$found_title" == "false" && "$line" =~ ^[[:space:]]*TITULO:[[:space:]]*(.+) ]]; then
+      PR_TITLE="${BASH_REMATCH[1]}"
+      found_title=true
+    else
+      body_lines="${body_lines}${line}"$'\n'
+    fi
+  done <<< "$raw"
+
+  if [[ "$found_title" == "true" && -n "$PR_TITLE" ]]; then
+    PR_BODY="$body_lines"
+  else
+    # Fallback: extract title from ## Descricao section's first sentence
+    local desc_line
+    desc_line=$(echo "$raw" | grep -A1 "^## Descricao" | tail -1 | sed 's/^[[:space:]]*//')
+    if [[ -n "$desc_line" && "$desc_line" != "##"* ]]; then
+      # Truncate to 80 chars
+      PR_TITLE="${desc_line:0:80}"
+    else
+      # Last resort: use branch name
+      PR_TITLE="$BRANCH_NAME"
+    fi
+    PR_BODY="$raw"
+  fi
+
+  # Clean up title: remove quotes, trailing dots, leading/trailing whitespace
+  PR_TITLE=$(echo "$PR_TITLE" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//;s/^"//;s/"$//')
+
+  # Clean up body: remove leading blank lines and standalone ---
+  PR_BODY=$(echo "$PR_BODY" | sed '/./,$!d')
+  # Remove leading --- if first non-empty line
+  if [[ "$(echo "$PR_BODY" | head -1)" == "---" ]]; then
+    PR_BODY=$(echo "$PR_BODY" | tail -n +2 | sed '/./,$!d')
+  fi
+}
+
 print_output() {
-  local description="$1"
+  local raw_result="$1"
   local separator="=========================================="
+
+  # Parse title and body
+  parse_title_and_body "$raw_result"
 
   echo ""
   echo -e "${BOLD}${separator}${NC}"
-  echo -e "${BOLD}PR Description - ${CYAN}${BRANCH_NAME}${NC}"
+  echo -e "${BOLD}PR - ${CYAN}${BRANCH_NAME}${NC}"
 
   # Show target branches
   local target_display=""
@@ -1163,8 +1267,15 @@ print_output() {
   echo -e "${BOLD}Target branches: ${target_display}${NC}"
   echo -e "${BOLD}Provider: ${USED_PROVIDER} (${USED_MODEL})${NC}"
   echo -e "${BOLD}${separator}${NC}"
+
+  # Title
   echo ""
-  echo "$description"
+  echo -e "${BOLD}Titulo:${NC} ${CYAN}${PR_TITLE}${NC}"
+  echo ""
+
+  # Body
+  echo -e "${BOLD}Descricao:${NC}"
+  echo "$PR_BODY"
   echo ""
 
   # PR Links
@@ -1181,10 +1292,11 @@ print_output() {
     done
   fi
 
-  # Clipboard
+  # Clipboard - copy body (description)
   detect_clipboard
-  if copy_to_clipboard "$description"; then
+  if copy_to_clipboard "$PR_BODY"; then
     echo -e "${BOLD}Descricao copiada para o clipboard!${NC}"
+    echo -e "  Titulo disponivel acima para copiar manualmente."
   else
     log_warn "Nenhum comando de clipboard encontrado (pbcopy/xclip/xsel). Descricao exibida apenas no terminal."
   fi
@@ -1242,6 +1354,26 @@ $GIT_LOG
 
 ### Git Diff:
 $GIT_DIFF"
+
+  # Dry-run: show prompt and exit
+  if [[ "$DRY_RUN" == "true" ]]; then
+    local separator="=========================================="
+    echo ""
+    echo -e "${BOLD}${separator}${NC}"
+    echo -e "${BOLD}DRY RUN - Prompt que seria enviado ao LLM${NC}"
+    echo -e "${BOLD}${separator}${NC}"
+    echo ""
+    echo -e "${BOLD}[SYSTEM]${NC}"
+    echo "$template_content"
+    echo ""
+    echo -e "${BOLD}[USER]${NC}"
+    echo "$user_prompt"
+    echo ""
+    echo -e "${BOLD}${separator}${NC}"
+    echo -e "Provider: ${PR_PROVIDERS%,*} | Modelo: ${OPENROUTER_MODEL:-$DEFAULT_OPENROUTER_MODEL}"
+    echo -e "${BOLD}${separator}${NC}"
+    exit 0
+  fi
 
   # Call LLM
   log_info "Gerando descricao do PR..."
