@@ -133,16 +133,53 @@ Gera descricao de PR automaticamente a partir do contexto git,
 usando LLM (OpenRouter/Groq) com fallback configuravel.
 
 Opcoes:
-  --init               Inicializa arquivos de configuracao
-  --target <branch>    Target do PR: dev, sprint (pode repetir; padrao: ambos)
-  --help               Mostra esta ajuda
-  --version            Mostra a versao
+  --init                              Inicializa arquivos de configuracao
+  --target <branch>                   Target do PR: dev, sprint (pode repetir; padrao: ambos)
+  --set-openrouter-model <modelo>     Salva modelo do OpenRouter no .env
+  --set-groq-model <modelo>           Salva modelo do Groq no .env
+  --help                              Mostra esta ajuda
+  --version                           Mostra a versao
 
 Exemplos:
-  create-pr-description                      # PR para dev + sprint
-  create-pr-description --target dev         # PR apenas para dev
-  create-pr-description --target sprint      # PR apenas para sprint
+  create-pr-description                                                # PR para dev + sprint
+  create-pr-description --target dev                                   # PR apenas para dev
+  create-pr-description --set-openrouter-model qwen/qwen3-4b:free     # Muda modelo OpenRouter
+  create-pr-description --set-groq-model llama3-8b-8192                # Muda modelo Groq
 HELP
+}
+
+# ---- Env Persistence ----
+
+set_env_var() {
+  local key="$1"
+  local value="$2"
+
+  if [[ ! -f "$ENV_FILE" ]]; then
+    log_error "Arquivo .env nao encontrado. Execute 'create-pr-description --init' primeiro."
+    exit 1
+  fi
+
+  # Build new file: replace line if key found (commented or not), else append
+  local found=false
+  local tmpfile="${ENV_FILE}.tmp"
+  > "$tmpfile"
+
+  while IFS= read -r line; do
+    # Match: optional # and spaces, then KEY=
+    if [[ "$line" =~ ^[#[:space:]]*${key}= ]]; then
+      echo "${key}=\"${value}\"" >> "$tmpfile"
+      found=true
+    else
+      echo "$line" >> "$tmpfile"
+    fi
+  done < "$ENV_FILE"
+
+  if [[ "$found" == "false" ]]; then
+    echo "${key}=\"${value}\"" >> "$tmpfile"
+  fi
+
+  mv "$tmpfile" "$ENV_FILE"
+  chmod 600 "$ENV_FILE"
 }
 
 parse_args() {
@@ -163,6 +200,24 @@ parse_args() {
         fi
         TARGETS+=("$2")
         shift 2
+        ;;
+      --set-openrouter-model)
+        if [[ -z "${2:-}" ]]; then
+          log_error "Flag --set-openrouter-model requer o nome do modelo."
+          exit 1
+        fi
+        set_env_var "OPENROUTER_MODEL" "$2"
+        log_success "Modelo OpenRouter salvo: $2"
+        exit 0
+        ;;
+      --set-groq-model)
+        if [[ -z "${2:-}" ]]; then
+          log_error "Flag --set-groq-model requer o nome do modelo."
+          exit 1
+        fi
+        set_env_var "GROQ_MODEL" "$2"
+        log_success "Modelo Groq salvo: $2"
+        exit 0
         ;;
       --help)
         show_help
@@ -212,31 +267,388 @@ confirm_overwrite() {
   return 0
 }
 
+# Read a value from user, with optional current value shown and hidden input
+prompt_value() {
+  local prompt_text="$1"
+  local current_value="${2:-}"
+  local is_secret="${3:-false}"
+  local result=""
+
+  if [[ -n "$current_value" ]]; then
+    if [[ "$is_secret" == "true" ]]; then
+      local masked="${current_value:0:4}...${current_value: -4}"
+      echo -en "  ${prompt_text} [${CYAN}${masked}${NC}]: "
+    else
+      echo -en "  ${prompt_text} [${CYAN}${current_value}${NC}]: "
+    fi
+  else
+    echo -en "  ${prompt_text}: "
+  fi
+
+  if [[ "$is_secret" == "true" ]]; then
+    read -rs result
+    echo ""  # newline after hidden input
+  else
+    read -r result
+  fi
+
+  # Keep current value if user pressed Enter without typing
+  if [[ -z "$result" ]]; then
+    result="$current_value"
+  fi
+
+  echo "$result"
+}
+
+# Ask a yes/no question
+prompt_yn() {
+  local question="$1"
+  local default="${2:-n}"
+
+  if [[ "$default" == "y" ]]; then
+    echo -en "  ${question} [Y/n]: "
+  else
+    echo -en "  ${question} [y/N]: "
+  fi
+
+  read -r answer
+  answer="${answer:-$default}"
+
+  [[ "$answer" == "y" || "$answer" == "Y" ]]
+}
+
+# Choose from a numbered list, returns the chosen value
+prompt_choice() {
+  local prompt_text="$1"
+  shift
+  local options=("$@")
+
+  echo -e "  ${prompt_text}"
+  for i in "${!options[@]}"; do
+    echo -e "    ${BOLD}$((i+1)))${NC} ${options[$i]}"
+  done
+  echo -en "  Escolha [1-${#options[@]}]: "
+  read -r choice
+
+  # Validate
+  if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#options[@]} )); then
+    echo "${options[$((choice-1))]}"
+  else
+    echo "${options[0]}"  # default to first
+  fi
+}
+
+# Test if an API key works by making a simple call
+test_provider_key() {
+  local provider="$1"
+  local key="$2"
+  local url=""
+  local model=""
+  local extra_headers=()
+
+  case "$provider" in
+    openrouter)
+      url="https://openrouter.ai/api/v1/chat/completions"
+      model="${OPENROUTER_MODEL:-$DEFAULT_OPENROUTER_MODEL}"
+      extra_headers=(-H "HTTP-Referer: https://github.com/create-pr-description" -H "X-Title: create-pr-description")
+      ;;
+    groq)
+      url="https://api.groq.com/openai/v1/chat/completions"
+      model="${GROQ_MODEL:-$DEFAULT_GROQ_MODEL}"
+      ;;
+  esac
+
+  local payload
+  payload=$(jq -n --arg model "$model" '{
+    model: $model,
+    messages: [{ role: "user", content: "Responda apenas: ok" }],
+    max_tokens: 5
+  }')
+
+  local http_code
+  http_code=$(curl -s -o /dev/null -w "%{http_code}" \
+    --max-time 15 \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $key" \
+    "${extra_headers[@]}" \
+    -d "$payload" \
+    "$url" 2>/dev/null || echo "000")
+
+  if [[ "$http_code" == "200" ]]; then
+    return 0
+  elif [[ "$http_code" == "429" ]]; then
+    # Rate limited but key is valid
+    return 0
+  else
+    return 1
+  fi
+}
+
+# Test Azure DevOps PAT
+test_azure_pat() {
+  local pat="$1"
+
+  # Just test authentication against the Azure DevOps API
+  local http_code
+  http_code=$(curl -s -o /dev/null -w "%{http_code}" \
+    --max-time 10 \
+    -u ":$pat" \
+    "https://dev.azure.com/_apis/profile/profiles/me?api-version=7.0" \
+    2>/dev/null || echo "000")
+
+  [[ "$http_code" == "200" ]]
+}
+
+# Interactive wizard for configuring credentials
+run_setup_wizard() {
+  echo ""
+  echo -e "${BOLD}========================================${NC}"
+  echo -e "${BOLD}  Configuracao interativa${NC}"
+  echo -e "${BOLD}========================================${NC}"
+  echo ""
+
+  # Load existing values if .env exists
+  local existing_providers=""
+  local existing_openrouter_key=""
+  local existing_groq_key=""
+  local existing_openrouter_model=""
+  local existing_groq_model=""
+  local existing_azure_pat=""
+
+  if [[ -f "$ENV_FILE" ]]; then
+    while IFS= read -r line; do
+      [[ "$line" =~ ^[[:space:]]*# ]] && continue
+      [[ -z "${line// /}" ]] && continue
+      local key="${line%%=*}"
+      local value="${line#*=}"
+      key=$(echo "$key" | xargs)
+      value="${value#\"}" && value="${value%\"}"
+      value="${value#\'}" && value="${value%\'}"
+      case "$key" in
+        PR_PROVIDERS)         existing_providers="$value" ;;
+        OPENROUTER_API_KEY)   existing_openrouter_key="$value" ;;
+        GROQ_API_KEY)         existing_groq_key="$value" ;;
+        OPENROUTER_MODEL)     existing_openrouter_model="$value" ;;
+        GROQ_MODEL)           existing_groq_model="$value" ;;
+        AZURE_PAT)            existing_azure_pat="$value" ;;
+      esac
+    done < "$ENV_FILE"
+  fi
+
+  # ---- Step 1: LLM Providers ----
+  echo -e "${BOLD}1) Providers de LLM${NC}"
+  echo -e "  Escolha quais providers voce quer configurar."
+  echo -e "  O script tenta na ordem configurada, com fallback automatico."
+  echo ""
+
+  local configure_openrouter=false
+  local configure_groq=false
+
+  if prompt_yn "Configurar OpenRouter? (modelos gratuitos disponiveis)" "y"; then
+    configure_openrouter=true
+  fi
+
+  if prompt_yn "Configurar Groq? (modelos gratuitos disponiveis)" "y"; then
+    configure_groq=true
+  fi
+
+  if [[ "$configure_openrouter" == "false" && "$configure_groq" == "false" ]]; then
+    log_warn "Nenhum provider selecionado. Voce precisara configurar manualmente em $ENV_FILE."
+    return
+  fi
+
+  # Build providers list
+  local providers_list=""
+  if [[ "$configure_openrouter" == "true" && "$configure_groq" == "true" ]]; then
+    echo ""
+    local first_provider
+    first_provider=$(prompt_choice "Qual provider tentar primeiro?" "openrouter" "groq")
+    if [[ "$first_provider" == "openrouter" ]]; then
+      providers_list="openrouter,groq"
+    else
+      providers_list="groq,openrouter"
+    fi
+  elif [[ "$configure_openrouter" == "true" ]]; then
+    providers_list="openrouter"
+  else
+    providers_list="groq"
+  fi
+
+  echo ""
+
+  # ---- Step 2: API Keys ----
+  echo -e "${BOLD}2) API Keys${NC}"
+  echo ""
+
+  local new_openrouter_key="$existing_openrouter_key"
+  local new_groq_key="$existing_groq_key"
+  local new_openrouter_model="$existing_openrouter_model"
+  local new_groq_model="$existing_groq_model"
+
+  if [[ "$configure_openrouter" == "true" ]]; then
+    echo -e "  ${BOLD}OpenRouter${NC} - Crie uma key em: ${CYAN}https://openrouter.ai/keys${NC}"
+    new_openrouter_key=$(prompt_value "API Key" "$existing_openrouter_key" "true")
+
+    if [[ -n "$new_openrouter_key" ]]; then
+      echo -en "  Testando key... "
+      if test_provider_key "openrouter" "$new_openrouter_key"; then
+        echo -e "${GREEN}valida!${NC}"
+      else
+        echo -e "${RED}falhou${NC}"
+        log_warn "A key pode estar errada ou o servico esta fora. Salvando mesmo assim."
+      fi
+
+      # Model selection
+      if [[ -z "$new_openrouter_model" ]]; then
+        new_openrouter_model="$DEFAULT_OPENROUTER_MODEL"
+      fi
+      echo -e "  Modelo atual: ${CYAN}$new_openrouter_model${NC}"
+      if prompt_yn "Mudar modelo?" "n"; then
+        new_openrouter_model=$(prompt_value "Modelo OpenRouter" "$new_openrouter_model")
+      fi
+    fi
+    echo ""
+  fi
+
+  if [[ "$configure_groq" == "true" ]]; then
+    echo -e "  ${BOLD}Groq${NC} - Crie uma key em: ${CYAN}https://console.groq.com/keys${NC}"
+    new_groq_key=$(prompt_value "API Key" "$existing_groq_key" "true")
+
+    if [[ -n "$new_groq_key" ]]; then
+      echo -en "  Testando key... "
+      if test_provider_key "groq" "$new_groq_key"; then
+        echo -e "${GREEN}valida!${NC}"
+      else
+        echo -e "${RED}falhou${NC}"
+        log_warn "A key pode estar errada ou o servico esta fora. Salvando mesmo assim."
+      fi
+
+      # Model selection
+      if [[ -z "$new_groq_model" ]]; then
+        new_groq_model="$DEFAULT_GROQ_MODEL"
+      fi
+      echo -e "  Modelo atual: ${CYAN}$new_groq_model${NC}"
+      if prompt_yn "Mudar modelo?" "n"; then
+        new_groq_model=$(prompt_value "Modelo Groq" "$new_groq_model")
+      fi
+    fi
+    echo ""
+  fi
+
+  # ---- Step 3: Azure DevOps ----
+  echo -e "${BOLD}3) Azure DevOps (opcional)${NC}"
+  echo -e "  Um PAT permite gerar links de PR com repositoryId completo."
+  echo ""
+
+  local new_azure_pat="$existing_azure_pat"
+  if prompt_yn "Configurar Azure DevOps PAT?" "y"; then
+    echo -e "  Crie um PAT em: ${CYAN}https://dev.azure.com/<sua-org>/_usersSettings/tokens${NC}"
+    echo -e "  Permissao necessaria: ${BOLD}Code (Read)${NC}"
+    new_azure_pat=$(prompt_value "PAT Token" "$existing_azure_pat" "true")
+
+    if [[ -n "$new_azure_pat" ]]; then
+      echo -en "  Testando PAT... "
+      if test_azure_pat "$new_azure_pat"; then
+        echo -e "${GREEN}valido!${NC}"
+      else
+        echo -e "${RED}falhou${NC}"
+        log_warn "O PAT pode estar errado ou expirado. Salvando mesmo assim."
+      fi
+    fi
+  fi
+
+  echo ""
+
+  # ---- Step 4: Write .env ----
+  echo -e "${BOLD}4) Salvando configuracao...${NC}"
+  echo ""
+
+  local env_content="# Configuracao do create-pr-description
+# Gerado por: create-pr-description --init
+
+# Providers em ordem de prioridade
+PR_PROVIDERS=\"$providers_list\""
+
+  if [[ -n "$new_openrouter_key" ]]; then
+    env_content="$env_content
+
+# OpenRouter
+OPENROUTER_API_KEY=\"$new_openrouter_key\""
+    if [[ -n "$new_openrouter_model" && "$new_openrouter_model" != "$DEFAULT_OPENROUTER_MODEL" ]]; then
+      env_content="$env_content
+OPENROUTER_MODEL=\"$new_openrouter_model\""
+    else
+      env_content="$env_content
+# OPENROUTER_MODEL=\"$DEFAULT_OPENROUTER_MODEL\""
+    fi
+  fi
+
+  if [[ -n "$new_groq_key" ]]; then
+    env_content="$env_content
+
+# Groq
+GROQ_API_KEY=\"$new_groq_key\""
+    if [[ -n "$new_groq_model" && "$new_groq_model" != "$DEFAULT_GROQ_MODEL" ]]; then
+      env_content="$env_content
+GROQ_MODEL=\"$new_groq_model\""
+    else
+      env_content="$env_content
+# GROQ_MODEL=\"$DEFAULT_GROQ_MODEL\""
+    fi
+  fi
+
+  if [[ -n "$new_azure_pat" ]]; then
+    env_content="$env_content
+
+# Azure DevOps
+AZURE_PAT=\"$new_azure_pat\""
+  else
+    env_content="$env_content
+
+# Azure DevOps (descomente e preencha para links com repositoryId)
+# AZURE_PAT=\"your-pat-token\""
+  fi
+
+  echo "$env_content" > "$ENV_FILE"
+  chmod 600 "$ENV_FILE"
+  log_success "Configuracao salva em $ENV_FILE"
+}
+
 do_init() {
   log_info "Inicializando configuracao em $CONFIG_DIR..."
 
   mkdir -p "$CONFIG_DIR"
 
+  # Create template
   if confirm_overwrite "$TEMPLATE_FILE"; then
     echo "$DEFAULT_TEMPLATE" > "$TEMPLATE_FILE"
     log_success "Template criado: $TEMPLATE_FILE"
   fi
 
-  if confirm_overwrite "$ENV_FILE"; then
-    echo "$DEFAULT_ENV" > "$ENV_FILE"
-    chmod 600 "$ENV_FILE"
-    log_success "Arquivo .env criado: $ENV_FILE"
-    log_warn "Edite $ENV_FILE e preencha suas API keys."
-  fi
-
+  # Create cache
   if [[ ! -f "$CACHE_FILE" ]]; then
     touch "$CACHE_FILE"
     log_success "Cache criado: $CACHE_FILE"
   fi
 
+  # Interactive setup or default .env
+  if [[ -t 0 ]]; then
+    # Interactive terminal: run wizard
+    run_setup_wizard
+  else
+    # Non-interactive (piped): create default .env
+    if [[ ! -f "$ENV_FILE" ]]; then
+      echo "$DEFAULT_ENV" > "$ENV_FILE"
+      chmod 600 "$ENV_FILE"
+      log_success "Arquivo .env criado: $ENV_FILE"
+      log_warn "Edite $ENV_FILE e preencha suas API keys."
+    fi
+  fi
+
   echo ""
+  echo -e "${BOLD}========================================${NC}"
   log_success "Inicializacao concluida!"
-  echo "Proximo passo: edite $ENV_FILE com suas API keys."
+  echo -e "${BOLD}========================================${NC}"
 }
 
 # ---- Validation ----

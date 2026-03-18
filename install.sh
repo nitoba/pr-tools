@@ -78,17 +78,20 @@ fi
 # Run --init if config doesn't exist
 CONFIG_DIR="$HOME/.config/pr-tools"
 if [[ ! -f "$CONFIG_DIR/.env" ]]; then
-  log_info "Executando configuracao inicial..."
+  echo ""
+  log_info "Iniciando configuracao..."
+  log_info "O wizard vai te guiar na configuracao das credenciais."
+  echo ""
   "$INSTALL_DIR/create-pr-description" --init
 else
   log_info "Configuracao existente encontrada em $CONFIG_DIR"
+  echo ""
+  echo -e "  Para reconfigurar: ${CYAN}create-pr-description --init${NC}"
 fi
 
 echo ""
 echo -e "${BOLD}========================================${NC}"
 echo -e "${GREEN}Instalacao concluida!${NC}"
 echo ""
-echo -e "Proximo passo:"
-echo -e "  1. Configure suas API keys: ${CYAN}vi $CONFIG_DIR/.env${NC}"
-echo -e "  2. Use: ${CYAN}create-pr-description${NC}"
+echo -e "Uso: ${CYAN}create-pr-description${NC}"
 echo -e "${BOLD}========================================${NC}"

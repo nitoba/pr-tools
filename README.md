@@ -20,28 +20,37 @@ Rode o mesmo comando de instalacao. Ele sobrescreve o script com a versao mais r
 
 ## Configuracao
 
-Apos instalar, edite `~/.config/pr-tools/.env`:
+Na primeira instalacao, um **wizard interativo** guia a configuracao:
+
+- Escolha de providers (OpenRouter, Groq ou ambos)
+- API keys (com validacao automatica)
+- Azure DevOps PAT (opcional, para links com repositoryId)
+
+Para reconfigurar a qualquer momento:
+
+```bash
+create-pr-description --init
+```
+
+### Configuracao manual
+
+Tambem e possivel editar diretamente `~/.config/pr-tools/.env`:
 
 ```bash
 vi ~/.config/pr-tools/.env
 ```
 
 ```bash
-# Providers em ordem de prioridade
 PR_PROVIDERS="openrouter,groq"
-
-# Descomente e preencha pelo menos uma API key
 OPENROUTER_API_KEY="sk-or-..."
 GROQ_API_KEY="gsk_..."
-
-# Azure DevOps PAT (opcional - para links com repositoryId)
 AZURE_PAT="your-pat-token"
 ```
 
-Variaveis de ambiente sobrescrevem o `.env`. Exemplo:
+Variaveis de ambiente sobrescrevem o `.env`:
 
 ```bash
-OPENROUTER_API_KEY="minha-key" create-pr-description
+OPENROUTER_MODEL="qwen/qwen3-4b:free" create-pr-description
 ```
 
 ## Uso
