@@ -336,6 +336,7 @@ confirm_overwrite() {
 }
 
 # Read a value from user, with optional current value shown and hidden input
+# Prompts go to stderr (visible on screen), only the result goes to stdout (captured by caller)
 prompt_value() {
   local prompt_text="$1"
   local current_value="${2:-}"
@@ -345,17 +346,17 @@ prompt_value() {
   if [[ -n "$current_value" ]]; then
     if [[ "$is_secret" == "true" ]]; then
       local masked="${current_value:0:4}...${current_value: -4}"
-      echo -en "  ${prompt_text} [${CYAN}${masked}${NC}]: "
+      echo -en "  ${prompt_text} [${CYAN}${masked}${NC}]: " >&2
     else
-      echo -en "  ${prompt_text} [${CYAN}${current_value}${NC}]: "
+      echo -en "  ${prompt_text} [${CYAN}${current_value}${NC}]: " >&2
     fi
   else
-    echo -en "  ${prompt_text}: "
+    echo -en "  ${prompt_text}: " >&2
   fi
 
   if [[ "$is_secret" == "true" ]]; then
     read -rs result
-    echo ""  # newline after hidden input
+    echo "" >&2  # newline after hidden input
   else
     read -r result
   fi
@@ -374,9 +375,9 @@ prompt_yn() {
   local default="${2:-n}"
 
   if [[ "$default" == "y" ]]; then
-    echo -en "  ${question} [Y/n]: "
+    echo -en "  ${question} [Y/n]: " >&2
   else
-    echo -en "  ${question} [y/N]: "
+    echo -en "  ${question} [y/N]: " >&2
   fi
 
   read -r answer
@@ -386,16 +387,17 @@ prompt_yn() {
 }
 
 # Choose from a numbered list, returns the chosen value
+# Menu goes to stderr (visible), only the chosen value goes to stdout (captured)
 prompt_choice() {
   local prompt_text="$1"
   shift
   local options=("$@")
 
-  echo -e "  ${prompt_text}"
+  echo -e "  ${prompt_text}" >&2
   for i in "${!options[@]}"; do
-    echo -e "    ${BOLD}$((i+1)))${NC} ${options[$i]}"
+    echo -e "    ${BOLD}$((i+1)))${NC} ${options[$i]}" >&2
   done
-  echo -en "  Escolha [1-${#options[@]}]: "
+  echo -en "  Escolha [1-${#options[@]}]: " >&2
   read -r choice
 
   # Validate
