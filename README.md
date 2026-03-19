@@ -12,7 +12,7 @@ curl -fsSL https://raw.githubusercontent.com/nitoba/pr-tools/main/install.sh | b
 
 - `git`, `curl`, `jq`
 - Bash 4+ (macOS, Linux, Windows WSL/Git Bash)
-- API key de pelo menos um provider: [OpenRouter](https://openrouter.ai) ou [Groq](https://console.groq.com)
+- API key de pelo menos um provider: [OpenRouter](https://openrouter.ai), [Groq](https://console.groq.com) ou [Google Gemini](https://aistudio.google.com)
 
 ### Atualizacao
 
@@ -22,9 +22,9 @@ Rode o mesmo comando de instalacao. Ele sobrescreve o script com a versao mais r
 
 Na primeira instalacao, um **wizard interativo** guia a configuracao:
 
-- Escolha de providers (OpenRouter, Groq ou ambos)
+- Escolha de providers (OpenRouter, Groq, Gemini ou todos)
 - API keys (com validacao automatica)
-- Azure DevOps PAT (opcional, para links com repositoryId)
+- Azure DevOps PAT (para links e criacao automatica de PR)
 
 Para reconfigurar a qualquer momento:
 
@@ -41,9 +41,10 @@ vi ~/.config/pr-tools/.env
 ```
 
 ```bash
-PR_PROVIDERS="openrouter,groq"
+PR_PROVIDERS="openrouter,groq,gemini"
 OPENROUTER_API_KEY="sk-or-..."
 GROQ_API_KEY="gsk_..."
+GEMINI_API_KEY="..."
 AZURE_PAT="your-pat-token"
 ```
 
@@ -91,7 +92,7 @@ Adiciona suporte ao tema escuro em multiplos componentes...
 - [ ] Refactoring
 
 ==========================================
-Abrir PR:
+Abrir PR (ou criado automaticamente via API):
 
   -> dev:
      https://dev.azure.com/org/project/_git/repo/pullrequestcreate?sourceRef=feat/dark-mode&targetRef=dev&...
@@ -108,8 +109,10 @@ A descricao e copiada automaticamente para o clipboard. Os links sao clickaveis 
 ## Funcionalidades
 
 - Gera descricoes de PR em portugues brasileiro via LLM
-- Suporta OpenRouter e Groq com fallback automatico
+- Suporta OpenRouter, Groq e Gemini com fallback automatico
 - Detecta sprint vigente automaticamente (`sprint/*` branches)
+- Cria PR automaticamente no Azure DevOps via API (reviewers obrigatórios)
+- Vincula work items ao PR automaticamente
 - Gera links clickaveis para abrir PR no Azure DevOps
 - Cacheia `repositoryId` localmente (busca via API uma vez)
 - Copia descricao para clipboard (pbcopy/xclip/xsel)
@@ -121,10 +124,16 @@ A descricao e copiada automaticamente para o clipboard. Os links sao clickaveis 
 create-pr-description [opcoes]
 
 Opcoes:
-  --init               Inicializa arquivos de configuracao
-  --target <branch>    Target do PR: dev, sprint (pode repetir; padrao: ambos)
-  --help               Mostra ajuda
-  --version            Mostra a versao
+  --init                        Inicializa arquivos de configuracao
+  --target <branch>             Target do PR: dev, sprint (pode repetir; padrao: ambos)
+  --work-item <id>              ID do work item do Azure DevOps (ex: 11763)
+  --set-openrouter-model <mod>  Salva modelo do OpenRouter no .env
+  --set-groq-model <mod>        Salva modelo do Groq no .env
+  --set-gemini-model <mod>      Salva modelo do Google Gemini no .env
+  --dry-run                     Mostra o prompt sem chamar a LLM
+  --update                      Atualiza o script para a versao mais recente
+  --help                        Mostra ajuda
+  --version                     Mostra a versao
 ```
 
 ## Como funciona
@@ -135,6 +144,7 @@ Opcoes:
 4. Envia o contexto para um LLM via API REST
 5. Imprime a descricao formatada + links de PR
 6. Copia para o clipboard
+7. Cria o PR automaticamente no Azure DevOps (com reviewers obrigatórios e work items)
 
 ## Providers suportados
 
@@ -142,6 +152,7 @@ Opcoes:
 |---|---|
 | [OpenRouter](https://openrouter.ai) | `meta-llama/llama-3.3-70b-instruct:free` |
 | [Groq](https://console.groq.com) | `llama-3.3-70b-versatile` |
+| [Google Gemini](https://aistudio.google.com) | `gemini-3.1-flash-lite-preview` |
 
 Voce pode trocar o modelo via `.env` ou variavel de ambiente:
 
