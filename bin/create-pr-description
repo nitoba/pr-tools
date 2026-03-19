@@ -7,7 +7,7 @@ set -euo pipefail
 # from git context, with clickable Azure DevOps PR links.
 # ============================================================
 
-VERSION="2.3.0"
+VERSION="2.4.0"
 CONFIG_DIR="$HOME/.config/pr-tools"
 ENV_FILE="$CONFIG_DIR/.env"
 TEMPLATE_FILE="$CONFIG_DIR/pr-template.md"
@@ -1591,7 +1591,7 @@ create_pr_via_api() {
     local reviewer_id
     reviewer_id=$(resolve_reviewer_id "$reviewer_email")
     if [[ -n "$reviewer_id" ]]; then
-      reviewers_json="[{\"id\":\"$reviewer_id\"}]"
+      reviewers_json="[{\"id\":\"$reviewer_id\",\"isRequired\":true}]"
       log_success "Reviewer resolvido: ${reviewer_id:0:8}..."
     else
       log_warn "Nao foi possivel resolver reviewer '$reviewer_email'. PR sera criado sem reviewer."
