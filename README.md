@@ -13,6 +13,7 @@ curl -fsSL https://raw.githubusercontent.com/nitoba/pr-tools/main/install.sh | b
 - `git`, `curl`, `jq`
 - Bash 4+ (macOS, Linux, Windows WSL/Git Bash)
 - API key de pelo menos um provider: [OpenRouter](https://openrouter.ai), [Groq](https://console.groq.com) ou [Google Gemini](https://aistudio.google.com)
+- (Opcional) Renderizador Markdown no terminal: [`glow`](https://github.com/charmbracelet/glow) (recomendado) ou [`bat`](https://github.com/sharkdp/bat) para visualizacao formatada da descricao
 
 ### Atualizacao
 
@@ -67,6 +68,9 @@ create-pr-description --target dev
 
 # Apenas para sprint
 create-pr-description --target sprint
+
+# Saida sem renderizacao Markdown (texto puro)
+create-pr-description --raw
 ```
 
 ### Output
@@ -116,6 +120,7 @@ A descricao e copiada automaticamente para o clipboard. Os links sao clickaveis 
 - Gera links clickaveis para abrir PR no Azure DevOps
 - Cacheia `repositoryId` localmente (busca via API uma vez)
 - Copia descricao para clipboard (pbcopy/xclip/xsel)
+- Renderiza descricao com syntax highlight no terminal (glow/bat) com fallback para texto puro
 - Funciona em macOS, Linux e Windows (WSL/Git Bash)
 
 ## Comandos
@@ -131,6 +136,7 @@ Opcoes:
   --set-groq-model <mod>        Salva modelo do Groq no .env
   --set-gemini-model <mod>      Salva modelo do Google Gemini no .env
   --dry-run                     Mostra o prompt sem chamar a LLM
+  --raw                         Exibe a descricao sem renderizacao Markdown (texto puro)
   --update                      Atualiza o script para a versao mais recente
   --help                        Mostra ajuda
   --version                     Mostra a versao
