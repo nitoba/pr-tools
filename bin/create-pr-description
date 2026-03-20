@@ -7,7 +7,7 @@ set -euo pipefail
 # from git context, with clickable Azure DevOps PR links.
 # ============================================================
 
-VERSION="2.4.0"
+VERSION="2.5.0"
 CONFIG_DIR="$HOME/.config/pr-tools"
 ENV_FILE="$CONFIG_DIR/.env"
 TEMPLATE_FILE="$CONFIG_DIR/pr-template.md"
@@ -133,6 +133,8 @@ PR_PROVIDERS="openrouter,groq"
 ACTION=""
 TARGETS=()
 DRY_RUN=false
+RAW_OUTPUT=false
+MD_RENDERER_CMD=""
 
 show_help() {
   cat <<'HELP'
@@ -149,6 +151,7 @@ Opcoes:
   --set-groq-model <modelo>           Salva modelo do Groq no .env
   --set-gemini-model <modelo>         Salva modelo do Google Gemini no .env
   --dry-run                           Mostra o prompt sem chamar a LLM
+  --raw                               Exibe a descricao sem renderizacao Markdown (texto puro)
   --update                            Atualiza o script para a versao mais recente
   --help                              Mostra esta ajuda
   --version                           Mostra a versao
@@ -303,6 +306,10 @@ parse_args() {
         ;;
       --dry-run)
         DRY_RUN=true
+        shift
+        ;;
+      --raw)
+        RAW_OUTPUT=true
         shift
         ;;
       --update)
@@ -1716,6 +1723,38 @@ offer_pr_creation() {
   done
 }
 
+# ---- Markdown Rendering ----
+
+detect_md_renderer() {
+  if [[ "$RAW_OUTPUT" == "true" ]]; then
+    MD_RENDERER_CMD=""
+    return
+  fi
+
+  if command -v glow &>/dev/null; then
+    MD_RENDERER_CMD="glow -"
+  elif command -v bat &>/dev/null; then
+    MD_RENDERER_CMD="bat --language=md --style=plain --paging=never -"
+  elif command -v batcat &>/dev/null; then
+    MD_RENDERER_CMD="batcat --language=md --style=plain --paging=never -"
+  else
+    MD_RENDERER_CMD=""
+  fi
+}
+
+render_markdown() {
+  local content="$1"
+
+  if [[ -n "$MD_RENDERER_CMD" ]]; then
+    printf '%s\n' "$content" | $MD_RENDERER_CMD
+  else
+    echo "$content"
+    if [[ "$RAW_OUTPUT" != "true" ]]; then
+      log_warn "Nenhum renderizador Markdown encontrado. Instale 'glow' (recomendado) ou 'bat' para uma visualizacao formatada."
+    fi
+  fi
+}
+
 # ---- Output ----
 
 parse_title_and_body() {
@@ -1806,7 +1845,7 @@ print_output() {
 
   # Body
   echo -e "${BOLD}Descricao:${NC}"
-  echo "$PR_BODY"
+  render_markdown "$PR_BODY"
   echo ""
 
   # PR Links and Work Item link
@@ -1869,6 +1908,7 @@ main() {
   parse_azure_remote
   fetch_repo_id
   build_pr_links
+  detect_md_renderer
 
   # Read template
   local template_content
