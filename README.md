@@ -71,6 +71,9 @@ create-pr-description --target sprint
 
 # Saida sem renderizacao Markdown (texto puro)
 create-pr-description --raw
+
+# PR usando outra branch como origem (sem precisar fazer checkout)
+create-pr-description --source feature/1234-login
 ```
 
 ### Output
@@ -121,6 +124,7 @@ A descricao e copiada automaticamente para o clipboard. Os links sao clickaveis 
 - Cacheia `repositoryId` localmente (busca via API uma vez)
 - Copia descricao para clipboard (pbcopy/xclip/xsel)
 - Renderiza descricao com syntax highlight no terminal (glow/bat) com fallback para texto puro
+- Permite definir a branch de origem do PR via `--source` sem precisar fazer checkout
 - Funciona em macOS, Linux e Windows (WSL/Git Bash)
 
 ## Comandos
@@ -130,6 +134,7 @@ create-pr-description [opcoes]
 
 Opcoes:
   --init                        Inicializa arquivos de configuracao
+  --source <branch>             Branch de origem do PR (padrao: branch atual)
   --target <branch>             Target do PR: dev, sprint (pode repetir; padrao: ambos)
   --work-item <id>              ID do work item do Azure DevOps (ex: 11763)
   --set-openrouter-model <mod>  Salva modelo do OpenRouter no .env
