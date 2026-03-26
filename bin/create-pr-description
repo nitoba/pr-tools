@@ -7,7 +7,7 @@ set -euo pipefail
 # from git context, with clickable Azure DevOps PR links.
 # ============================================================
 
-VERSION="2.5.0"
+VERSION="2.5.1"
 CONFIG_DIR="$HOME/.config/pr-tools"
 ENV_FILE="$CONFIG_DIR/.env"
 TEMPLATE_FILE="$CONFIG_DIR/pr-template.md"
@@ -1272,58 +1272,57 @@ get_provider_config() {
   esac
 }
 
-call_llm_api() {
-  local url="$1"
-  local key="$2"
-  local model="$3"
-  local system_prompt="$4"
-  local user_prompt="$5"
-  local provider_name="$6"
+build_openai_compatible_payload() {
+  local model="$1"
+  local system_prompt="$2"
+  local user_prompt="$3"
+  local include_reasoning_format="$4"
 
-  # Build JSON payload using jq to properly escape content
-  # Build JSON payload using temp files to avoid "Argument list too long"
-  # jq --arg passes data via process arguments which have OS size limits
-  # Solution: write prompts to files, use jq --rawfile (jq 1.6+) to read them
-  local payload_tmp system_tmp user_tmp
-  payload_tmp=$(mktemp)
+  local system_tmp user_tmp
   system_tmp=$(mktemp)
   user_tmp=$(mktemp)
 
   printf '%s' "$system_prompt" > "$system_tmp"
   printf '%s' "$user_prompt" > "$user_tmp"
 
-  # Build base payload; add reasoning_format for providers that support it
-  local jq_filter='{
-    model: $model,
-    messages: [
-      { role: "system", content: $system },
-      { role: "user", content: $user }
-    ],
-    temperature: 0.3
-  }'
-
-  # Groq: disable thinking output for reasoning models (qwen3, etc.)
-  if [[ "$provider_name" == "groq" ]]; then
-    jq_filter='{
-      model: $model,
-      messages: [
-        { role: "system", content: $system },
-        { role: "user", content: $user }
-      ],
-      temperature: 0.3,
-      reasoning_format: "hidden"
-    }'
+  if [[ "$include_reasoning_format" == "true" ]]; then
+    jq -n \
+      --arg model "$model" \
+      --rawfile system "$system_tmp" \
+      --rawfile user "$user_tmp" \
+      '{
+        model: $model,
+        messages: [
+          { role: "system", content: $system },
+          { role: "user", content: $user }
+        ],
+        temperature: 0.3,
+        reasoning_format: "hidden"
+      }'
+  else
+    jq -n \
+      --arg model "$model" \
+      --rawfile system "$system_tmp" \
+      --rawfile user "$user_tmp" \
+      '{
+        model: $model,
+        messages: [
+          { role: "system", content: $system },
+          { role: "user", content: $user }
+        ],
+        temperature: 0.3
+      }'
   fi
 
-  jq -n \
-    --arg model "$model" \
-    --rawfile system "$system_tmp" \
-    --rawfile user "$user_tmp" \
-    "$jq_filter" > "$payload_tmp"
-
   rm -f "$system_tmp" "$user_tmp"
+}
 
-  # Build curl command
+execute_openai_compatible_request() {
+  local url="$1"
+  local key="$2"
+  local provider_name="$3"
+  local payload_file="$4"
+
   local curl_args=(
     -s
     -w "\n%{http_code}"
@@ -1332,36 +1331,103 @@ call_llm_api() {
     -H "Authorization: Bearer $key"
   )
 
-  # Add extra headers for OpenRouter
   if [[ "$provider_name" == "openrouter" ]]; then
     curl_args+=(-H "HTTP-Referer: https://github.com/create-pr-description")
     curl_args+=(-H "X-Title: create-pr-description")
   fi
 
-  curl_args+=(-d @"$payload_tmp" "$url")
+  curl_args+=(-d @"$payload_file" "$url")
+  curl "${curl_args[@]}" 2>/dev/null || printf '\n000'
+}
+
+is_groq_reasoning_format_retryable_error() {
+  local provider_name="$1"
+  local http_code="$2"
+  local body="$3"
+
+  if [[ "$provider_name" != "groq" || "$http_code" != "400" ]]; then
+    return 1
+  fi
+
+  local error_param error_message error_message_lc
+  error_param=$(printf '%s' "$body" | jq -r '.error.param? // empty' 2>/dev/null || printf '')
+  error_message=$(printf '%s' "$body" | jq -r '.error.message? // empty' 2>/dev/null || printf '')
+
+  if [[ "$error_param" != "reasoning_format" || -z "$error_message" ]]; then
+    return 1
+  fi
+
+  error_message_lc=$(printf '%s' "$error_message" | tr '[:upper:]' '[:lower:]')
+  [[ "$error_message_lc" == *"reasoning_format"* && "$error_message_lc" == *"not supported"* ]]
+}
+
+call_llm_api() {
+  local url="$1"
+  local key="$2"
+  local model="$3"
+  local system_prompt="$4"
+  local user_prompt="$5"
+  local provider_name="$6"
+
+  # Build JSON payload using temp files to avoid "Argument list too long"
+  # jq --arg passes data via process arguments which have OS size limits
+  # Solution: write prompts to files, use jq --rawfile (jq 1.6+) to read them
+  local payload_tmp
+  payload_tmp=$(mktemp)
+
+  local include_reasoning_format=false
+  if [[ "$provider_name" == "groq" ]]; then
+    include_reasoning_format=true
+  fi
+
+  build_openai_compatible_payload "$model" "$system_prompt" "$user_prompt" "$include_reasoning_format" > "$payload_tmp"
 
   local response
-  response=$(curl "${curl_args[@]}" 2>/dev/null || echo -e "\n000")
-  rm -f "$payload_tmp"
+  response=$(execute_openai_compatible_request "$url" "$key" "$provider_name" "$payload_tmp")
 
   local http_code
-  http_code=$(echo "$response" | tail -1)
+  http_code="${response##*$'\n'}"
   local body
-  body=$(echo "$response" | sed '$d')
+  body="${response%$'\n'*}"
 
   if [[ "$http_code" == "000" ]]; then
+    rm -f "$payload_tmp"
     log_warn "Timeout no provider $provider_name (sem resposta em 120s)"
     echo ""
     return 1
   elif [[ "$http_code" == "429" ]]; then
+    rm -f "$payload_tmp"
     log_warn "Rate limit (HTTP 429) no provider $provider_name"
     echo ""
     return 1
   elif [[ "$http_code" != "200" ]]; then
-    log_warn "HTTP $http_code de $provider_name ($url)"
-    echo ""
-    return 1
+    if is_groq_reasoning_format_retryable_error "$provider_name" "$http_code" "$body"; then
+      log_warn "Groq rejeitou reasoning_format para este modelo; tentando novamente sem esse parametro"
+      build_openai_compatible_payload "$model" "$system_prompt" "$user_prompt" "false" > "$payload_tmp"
+      response=$(execute_openai_compatible_request "$url" "$key" "$provider_name" "$payload_tmp")
+      http_code="${response##*$'\n'}"
+      body="${response%$'\n'*}"
+    fi
+
+    if [[ "$http_code" == "000" ]]; then
+      rm -f "$payload_tmp"
+      log_warn "Timeout no provider $provider_name (sem resposta em 120s)"
+      echo ""
+      return 1
+    elif [[ "$http_code" == "429" ]]; then
+      rm -f "$payload_tmp"
+      log_warn "Rate limit (HTTP 429) no provider $provider_name"
+      echo ""
+      return 1
+    elif [[ "$http_code" != "200" ]]; then
+      rm -f "$payload_tmp"
+      log_warn "HTTP $http_code de $provider_name ($url)"
+      echo ""
+      return 1
+    fi
   fi
+
+  rm -f "$payload_tmp"
 
   # Extract content
   local content
@@ -1975,4 +2041,6 @@ $GIT_DIFF"
   offer_pr_creation
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi
