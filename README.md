@@ -17,7 +17,9 @@ curl -fsSL https://raw.githubusercontent.com/nitoba/pr-tools/main/install.sh | b
 
 ### Atualização
 
-Rode o mesmo comando de instalação. Ele sobrescreve o script com a versão mais recente.
+```bash
+create-pr-description --update
+```
 
 ## Configuração
 
