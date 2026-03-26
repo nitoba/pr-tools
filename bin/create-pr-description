@@ -7,7 +7,7 @@ set -euo pipefail
 # from git context, with clickable Azure DevOps PR links.
 # ============================================================
 
-VERSION="2.5.1"
+VERSION="2.6.1"
 CONFIG_DIR="$HOME/.config/pr-tools"
 ENV_FILE="$CONFIG_DIR/.env"
 TEMPLATE_FILE="$CONFIG_DIR/pr-template.md"
@@ -45,6 +45,7 @@ LLM_RESULT=""
 CLIP_CMD=""
 WORK_ITEM_ID=""
 CLI_WORK_ITEM=""
+SOURCE_BRANCH=""
 
 # ---- Helper functions ----
 
@@ -145,6 +146,7 @@ usando LLM (OpenRouter/Groq) com fallback configuravel.
 
 Opcoes:
   --init                              Inicializa arquivos de configuracao
+  --source <branch>                    Branch de origem do PR (padrao: branch atual)
   --target <branch>                   Target do PR: dev, sprint (pode repetir; padrao: ambos)
   --work-item <id>                     ID do work item do Azure DevOps (ex: 11763)
   --set-openrouter-model <modelo>     Salva modelo do OpenRouter no .env
@@ -161,6 +163,7 @@ Exemplos:
   create-pr-description --target dev                                   # PR apenas para dev
   create-pr-description --dry-run                                      # Ve o prompt sem chamar LLM
   create-pr-description --set-openrouter-model qwen/qwen3-4b:free     # Muda modelo OpenRouter
+  create-pr-description --source feature/1234-login                     # PR usando outra branch como origem
   create-pr-description --update                                       # Atualiza para ultima versao
 HELP
 }
@@ -256,6 +259,14 @@ parse_args() {
       --init)
         ACTION="init"
         shift
+        ;;
+      --source)
+        if [[ -z "${2:-}" ]]; then
+          log_error "Flag --source requer o nome da branch de origem."
+          exit 1
+        fi
+        SOURCE_BRANCH="$2"
+        shift 2
         ;;
       --target)
         if [[ -z "${2:-}" ]]; then
@@ -829,13 +840,25 @@ validate_dependencies() {
 
 validate_not_base_branch() {
   local branch
-  branch=$(git branch --show-current 2>/dev/null || echo "")
+
+  if [[ -n "$SOURCE_BRANCH" ]]; then
+    branch="$SOURCE_BRANCH"
+    # Validate that the source branch exists
+    if ! git rev-parse --verify "$branch" &>/dev/null && \
+       ! git rev-parse --verify "origin/$branch" &>/dev/null; then
+      log_error "Branch '$branch' nao encontrada (local ou remota)."
+      exit 1
+    fi
+  else
+    branch=$(git branch --show-current 2>/dev/null || echo "")
+  fi
+
   if [[ "$branch" == "dev" || "$branch" == "main" || "$branch" == "master" ]]; then
-    log_error "Voce esta na branch base ($branch). Mude para uma feature branch."
+    log_error "A branch de origem ($branch) e uma branch base. Use uma feature branch."
     exit 1
   fi
   if [[ -z "$branch" ]]; then
-    log_error "Nao foi possivel determinar a branch atual (detached HEAD?)."
+    log_error "Nao foi possivel determinar a branch atual (detached HEAD?). Use --source para informar a branch."
     exit 1
   fi
 }
@@ -905,8 +928,18 @@ load_config() {
 # ---- Git Context ----
 
 collect_git_context() {
-  BRANCH_NAME=$(git branch --show-current)
-  log_info "Branch: $BRANCH_NAME"
+  if [[ -n "$SOURCE_BRANCH" ]]; then
+    # Resolve source branch: prefer local, fallback to remote tracking
+    if git rev-parse --verify "$SOURCE_BRANCH" &>/dev/null; then
+      BRANCH_NAME="$SOURCE_BRANCH"
+    elif git rev-parse --verify "origin/$SOURCE_BRANCH" &>/dev/null; then
+      BRANCH_NAME="$SOURCE_BRANCH"
+    fi
+    log_info "Branch (--source): $BRANCH_NAME"
+  else
+    BRANCH_NAME=$(git branch --show-current)
+    log_info "Branch: $BRANCH_NAME"
+  fi
 
   # Fetch remote (non-fatal on failure)
   if ! git fetch --prune origin 2>/dev/null; then
@@ -944,6 +977,16 @@ collect_git_context() {
 
   log_info "Base: $base_ref"
 
+  # Resolve source ref: use BRANCH_NAME if --source was provided, otherwise HEAD
+  local source_ref="HEAD"
+  if [[ -n "$SOURCE_BRANCH" ]]; then
+    if git rev-parse --verify "$BRANCH_NAME" &>/dev/null; then
+      source_ref="$BRANCH_NAME"
+    elif git rev-parse --verify "origin/$BRANCH_NAME" &>/dev/null; then
+      source_ref="origin/$BRANCH_NAME"
+    fi
+  fi
+
   # Collect diff using temp file (avoids issues with huge diffs in variables)
   local max_diff_lines=8000
   local diff_tmp
@@ -953,7 +996,7 @@ collect_git_context() {
   local diff_ok=false
 
   # Try three-dot diff (changes since common ancestor)
-  if git diff "${base_ref}...HEAD" > "$diff_tmp" 2>/dev/null; then
+  if git diff "${base_ref}...${source_ref}" > "$diff_tmp" 2>/dev/null; then
     if [[ -s "$diff_tmp" ]]; then
       diff_ok=true
     fi
@@ -961,7 +1004,7 @@ collect_git_context() {
 
   # Fallback: two-dot diff
   if [[ "$diff_ok" == "false" ]]; then
-    if git diff "${base_ref}..HEAD" > "$diff_tmp" 2>/dev/null; then
+    if git diff "${base_ref}..${source_ref}" > "$diff_tmp" 2>/dev/null; then
       if [[ -s "$diff_tmp" ]]; then
         diff_ok=true
       fi
@@ -970,7 +1013,7 @@ collect_git_context() {
 
   # Fallback: direct diff
   if [[ "$diff_ok" == "false" ]]; then
-    if git diff "${base_ref}" HEAD > "$diff_tmp" 2>/dev/null; then
+    if git diff "${base_ref}" "${source_ref}" > "$diff_tmp" 2>/dev/null; then
       if [[ -s "$diff_tmp" ]]; then
         diff_ok=true
       fi
@@ -1000,9 +1043,9 @@ collect_git_context() {
 
   # Collect log
   local git_log_result=""
-  if git_log_result=$(git log "${base_ref}...HEAD" --oneline --max-count=50 2>/dev/null); then
+  if git_log_result=$(git log "${base_ref}...${source_ref}" --oneline --max-count=50 2>/dev/null); then
     GIT_LOG="$git_log_result"
-  elif git_log_result=$(git log "${base_ref}..HEAD" --oneline --max-count=50 2>/dev/null); then
+  elif git_log_result=$(git log "${base_ref}..${source_ref}" --oneline --max-count=50 2>/dev/null); then
     GIT_LOG="$git_log_result"
   else
     GIT_LOG="(log nao disponivel)"
