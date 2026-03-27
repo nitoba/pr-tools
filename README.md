@@ -130,6 +130,16 @@ Precedência de configuração:
 
 No projeto `AGROTRACE`, o `AreaPath` padrão do Test Case é `AGROTRACE\Devops`.
 
+Na criação de `Test Case` para `AGROTRACE`, o script também envia estes defaults do processo:
+
+- `Priority = 2`
+- `Team = DevOps`
+- `Programas Agrotrace = Agrotrace`
+
+Além disso, o comando mostra logs de progresso no modo normal para indicar fases longas como resolução de PR, busca de changes e geração via LLM.
+
+Antes da criação real do `Test Case`, o script mostra o texto gerado e pede confirmação interativa, em linha com o fluxo do `create-pr-description`.
+
 ### Output
 
 ```
