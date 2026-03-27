@@ -103,6 +103,7 @@ LINKED_WORK_ITEMS_SUMMARY=""
 GENERATED_TITLE=""
 GENERATED_MARKDOWN=""
 GENERATED_HTML=""
+GENERATED_STEPS=""
 LLM_RESULT=""
 USED_PROVIDER=""
 USED_MODEL=""
@@ -1439,6 +1440,67 @@ markdown_to_html() {
   printf '%s' "$html"
 }
 
+xml_escape() {
+  printf '%s' "$1" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g; s/"/\&quot;/g'
+}
+
+markdown_to_azure_steps() {
+  local input="$1"
+  local in_checklist=false
+  local step_id=2
+  local steps_xml=''
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" =~ ^##[[:space:]]+Checklist[[:space:]]+de[[:space:]]+testes ]]; then
+      in_checklist=true
+      continue
+    fi
+
+    if [[ "$in_checklist" == "true" && "$line" =~ ^##[[:space:]]+ ]]; then
+      break
+    fi
+
+    if [[ "$in_checklist" != "true" ]]; then
+      continue
+    fi
+
+    if [[ "$line" =~ ^[[:space:]]*-[[:space:]]+\[[^]]*\][[:space:]]+(.+)$ ]]; then
+      local action_text escaped_action
+      action_text="${BASH_REMATCH[1]}"
+      escaped_action=$(xml_escape "$action_text")
+      steps_xml+="<step id=\"${step_id}\" type=\"ActionStep\"><parameterizedString isformatted=\"true\">&lt;DIV&gt;&lt;P&gt;${escaped_action}&lt;/P&gt;&lt;/DIV&gt;</parameterizedString><parameterizedString isformatted=\"true\">&lt;DIV&gt;&lt;P&gt;&lt;BR/&gt;&lt;/P&gt;&lt;/DIV&gt;</parameterizedString><description/></step>"
+      step_id=$((step_id + 1))
+      continue
+    fi
+
+    if [[ "$line" =~ ^[[:space:]]*-[[:space:]]+(.+)$ ]]; then
+      local action_text escaped_action
+      action_text="${BASH_REMATCH[1]}"
+      escaped_action=$(xml_escape "$action_text")
+      steps_xml+="<step id=\"${step_id}\" type=\"ActionStep\"><parameterizedString isformatted=\"true\">&lt;DIV&gt;&lt;P&gt;${escaped_action}&lt;/P&gt;&lt;/DIV&gt;</parameterizedString><parameterizedString isformatted=\"true\">&lt;DIV&gt;&lt;P&gt;&lt;BR/&gt;&lt;/P&gt;&lt;/DIV&gt;</parameterizedString><description/></step>"
+      step_id=$((step_id + 1))
+      continue
+    fi
+
+    if [[ "$line" =~ ^[[:space:]]*[0-9]+\.[[:space:]]+(.+)$ ]]; then
+      local action_text escaped_action
+      action_text="${BASH_REMATCH[1]}"
+      escaped_action=$(xml_escape "$action_text")
+      steps_xml+="<step id=\"${step_id}\" type=\"ActionStep\"><parameterizedString isformatted=\"true\">&lt;DIV&gt;&lt;P&gt;${escaped_action}&lt;/P&gt;&lt;/DIV&gt;</parameterizedString><parameterizedString isformatted=\"true\">&lt;DIV&gt;&lt;P&gt;&lt;BR/&gt;&lt;/P&gt;&lt;/DIV&gt;</parameterizedString><description/></step>"
+      step_id=$((step_id + 1))
+    fi
+  done <<< "$input"
+
+  if [[ -z "$steps_xml" ]]; then
+    local fallback escaped_fallback
+    fallback=$(xml_escape "$GENERATED_TITLE")
+    steps_xml="<step id=\"2\" type=\"ActionStep\"><parameterizedString isformatted=\"true\">&lt;DIV&gt;&lt;P&gt;${fallback}&lt;/P&gt;&lt;/DIV&gt;</parameterizedString><parameterizedString isformatted=\"true\">&lt;DIV&gt;&lt;P&gt;&lt;BR/&gt;&lt;/P&gt;&lt;/DIV&gt;</parameterizedString><description/></step>"
+    step_id=3
+  fi
+
+  printf '<steps id="0" last="%d">%s</steps>' "$((step_id - 1))" "$steps_xml"
+}
+
 resolve_creation_defaults() {
   log_info "Resolvendo defaults de criacao do Test Case..."
   SELECTED_ASSIGNED_TO="$CLI_ASSIGNED_TO"
@@ -1582,6 +1644,7 @@ create_test_case() {
   jq -n \
     --arg title "$GENERATED_TITLE" \
     --arg desc "$GENERATED_HTML" \
+    --arg steps "$GENERATED_STEPS" \
     --arg area "$SELECTED_AREA_PATH" \
     --arg iteration "$WORK_ITEM_ITERATION_PATH" \
     --arg priority "$ATTEMPTED_PRIORITY" \
@@ -1592,6 +1655,7 @@ create_test_case() {
       [
         {op:"add", path:"/fields/System.Title", value:$title},
         {op:"add", path:"/fields/System.Description", value:$desc},
+        {op:"add", path:"/fields/Microsoft.VSTS.TCM.Steps", value:$steps},
         {op:"add", path:"/fields/System.AreaPath", value:$area},
         {op:"add", path:"/relations/-", value:{rel:"System.LinkTypes.Hierarchy-Reverse", url:$parent}}
       ]
@@ -1674,6 +1738,7 @@ EOF
   LLM_RESULT=$(strip_think_blocks "$LLM_RESULT")
   parse_llm_result
   GENERATED_HTML=$(markdown_to_html "$GENERATED_MARKDOWN")
+  GENERATED_STEPS=$(markdown_to_azure_steps "$GENERATED_MARKDOWN")
   print_output
 
   if confirm_test_case_creation; then
