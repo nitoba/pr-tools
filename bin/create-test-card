@@ -18,6 +18,9 @@ DEFAULT_OPENROUTER_MODEL="meta-llama/llama-3.3-70b-instruct:free"
 DEFAULT_GROQ_MODEL="llama-3.3-70b-versatile"
 DEFAULT_GEMINI_MODEL="gemini-3.1-flash-lite-preview"
 DEFAULT_AGROTRACE_AREA_PATH="AGROTRACE\\Devops"
+DEFAULT_AGROTRACE_PRIORITY="2"
+DEFAULT_AGROTRACE_TEAM="DevOps"
+DEFAULT_AGROTRACE_PROGRAMA="Agrotrace"
 DEFAULT_EXAMPLES=2
 MAX_EXAMPLES=5
 MAX_CHANGED_FILES=200
@@ -88,6 +91,9 @@ PR_REPOSITORY_NAME=""
 
 SELECTED_AREA_PATH=""
 SELECTED_ASSIGNED_TO=""
+ATTEMPTED_PRIORITY=""
+ATTEMPTED_TEAM=""
+ATTEMPTED_PROGRAMA=""
 
 CHANGED_FILES_SUMMARY=""
 DIFF_SUMMARY=""
@@ -160,7 +166,11 @@ log_warn() {
 }
 
 log_info() {
-  echo -e "${CYAN}[INFO]${NC} $1"
+  if [[ "$RAW_OUTPUT" == "true" ]]; then
+    echo -e "${CYAN}[INFO]${NC} $1" >&2
+  else
+    echo -e "${CYAN}[INFO]${NC} $1"
+  fi
 }
 
 log_success() {
@@ -822,6 +832,7 @@ file_has_nul_byte() {
 }
 
 resolve_pr() {
+  log_info "Resolvendo PR..."
   if [[ -n "$CLI_PR_ID" ]]; then
     PR_ID="$CLI_PR_ID"
     fetch_pr_by_id
@@ -910,6 +921,7 @@ fetch_work_item_details() {
 }
 
 resolve_work_item() {
+  log_info "Resolvendo work item pai..."
   if [[ -n "$CLI_WORK_ITEM_ID" ]]; then
     WORK_ITEM_ID="$CLI_WORK_ITEM_ID"
   else
@@ -925,6 +937,7 @@ resolve_work_item() {
 }
 
 fetch_pr_changes() {
+  log_info "Buscando alteracoes do PR..."
   local response code body iter_id changes_response changes_body changes_code
   response=$(azure_get "https://dev.azure.com/$AZURE_ORG_ENC/$AZURE_PROJECT_ENC/_apis/git/repositories/$AZURE_REPO_ENC/pullRequests/$PR_ID/iterations?api-version=7.0")
   code=$(response_code "$response")
@@ -1082,6 +1095,7 @@ fetch_pr_changes() {
 }
 
 fetch_example_test_cases() {
+  log_info "Buscando exemplos de Test Case..."
   if (( EXAMPLE_COUNT == 0 )); then
     EXAMPLES_SUMMARY="(exemplos desabilitados pelo usuario)"
     return
@@ -1426,6 +1440,7 @@ markdown_to_html() {
 }
 
 resolve_creation_defaults() {
+  log_info "Resolvendo defaults de criacao do Test Case..."
   SELECTED_ASSIGNED_TO="$CLI_ASSIGNED_TO"
   if [[ -z "$SELECTED_ASSIGNED_TO" ]]; then
     SELECTED_ASSIGNED_TO="${TEST_CARD_ASSIGNED_TO:-}"
@@ -1446,6 +1461,28 @@ resolve_creation_defaults() {
     log_error "Nao foi possivel resolver o AreaPath do Test Case. Use --area-path ou configure TEST_CARD_AREA_PATH."
     exit 1
   fi
+
+  ATTEMPTED_PRIORITY=""
+  ATTEMPTED_TEAM=""
+  ATTEMPTED_PROGRAMA=""
+  if [[ "$AZURE_PROJECT" == "AGROTRACE" ]]; then
+    ATTEMPTED_PRIORITY="$DEFAULT_AGROTRACE_PRIORITY"
+    ATTEMPTED_TEAM="$DEFAULT_AGROTRACE_TEAM"
+    ATTEMPTED_PROGRAMA="$DEFAULT_AGROTRACE_PROGRAMA"
+  fi
+}
+
+print_create_field_summary() {
+  cat <<EOF
+Campos tentados na criacao:
+- AreaPath: $SELECTED_AREA_PATH
+- IterationPath: ${WORK_ITEM_ITERATION_PATH:-<empty>}
+- Priority: ${ATTEMPTED_PRIORITY:-<empty>}
+- Custom.Team: ${ATTEMPTED_TEAM:-<empty>}
+- Custom.ProgramasAgrotrace: ${ATTEMPTED_PROGRAMA:-<empty>}
+- AssignedTo: ${SELECTED_ASSIGNED_TO:-<empty>}
+- Parent: #$WORK_ITEM_ID
+EOF
 }
 
 print_dry_run() {
@@ -1465,7 +1502,9 @@ areaPath: $SELECTED_AREA_PATH
 assignedTo: ${SELECTED_ASSIGNED_TO:-<not configured>}
 parentId: $WORK_ITEM_ID
 iterationPath: ${WORK_ITEM_ITERATION_PATH:-<empty>}
-priority: ${WORK_ITEM_PRIORITY:-<empty>}
+priority: ${ATTEMPTED_PRIORITY:-<empty>}
+customTeam: ${ATTEMPTED_TEAM:-<empty>}
+customProgramasAgrotrace: ${ATTEMPTED_PROGRAMA:-<empty>}
 descriptionHtml: <from LLM response converted to HTML>
 EOF
 }
@@ -1498,6 +1537,7 @@ print_create_result() {
       echo "Test Case criado: #$CREATED_TEST_CASE_ID $CREATED_TEST_CASE_URL" >&2
     elif [[ -n "$CREATE_ERROR" ]]; then
       echo "Falha ao criar Test Case: $CREATE_ERROR" >&2
+      print_create_field_summary >&2
     fi
     return
   fi
@@ -1509,12 +1549,33 @@ print_create_result() {
   elif [[ -n "$CREATE_ERROR" ]]; then
     log_warn "Nao foi possivel criar o Test Case automaticamente."
     echo "$CREATE_ERROR"
+    print_create_field_summary
     echo "Use o Markdown gerado acima para criar o card manualmente no Azure DevOps; isso costuma acontecer quando o processo exige campos customizados obrigatorios."
   fi
 }
 
+confirm_test_case_creation() {
+  if [[ "$NO_CREATE" == "true" ]]; then
+    return 1
+  fi
+
+  if [[ ! -t 0 || ! -t 1 ]]; then
+    log_warn "Ambiente nao interativo; pulando criacao automatica do Test Case. Rode interativamente para confirmar a criacao."
+    return 1
+  fi
+
+  echo ""
+  if ! prompt_yn "Criar este Test Case no Azure DevOps?" "n"; then
+    log_info "Criacao do Test Case cancelada pelo usuario."
+    return 1
+  fi
+
+  return 0
+}
+
 create_test_case() {
   local payload_tmp response code body parent_url
+  log_info "Criando Test Case no Azure DevOps..."
   payload_tmp=$(mktemp)
   parent_url="https://dev.azure.com/$AZURE_ORG_ENC/$AZURE_PROJECT_ENC/_apis/wit/workItems/$WORK_ITEM_ID"
 
@@ -1523,7 +1584,9 @@ create_test_case() {
     --arg desc "$GENERATED_HTML" \
     --arg area "$SELECTED_AREA_PATH" \
     --arg iteration "$WORK_ITEM_ITERATION_PATH" \
-    --arg priority "$WORK_ITEM_PRIORITY" \
+    --arg priority "$ATTEMPTED_PRIORITY" \
+    --arg team "$ATTEMPTED_TEAM" \
+    --arg programa "$ATTEMPTED_PROGRAMA" \
     --arg assigned "$SELECTED_ASSIGNED_TO" \
     --arg parent "$parent_url" '
       [
@@ -1534,6 +1597,8 @@ create_test_case() {
       ]
       + (if $iteration != "" then [{op:"add", path:"/fields/System.IterationPath", value:$iteration}] else [] end)
       + (if $priority != "" then [{op:"add", path:"/fields/Microsoft.VSTS.Common.Priority", value:($priority|tonumber)}] else [] end)
+      + (if $team != "" then [{op:"add", path:"/fields/Custom.Team", value:$team}] else [] end)
+      + (if $programa != "" then [{op:"add", path:"/fields/Custom.ProgramasAgrotrace", value:$programa}] else [] end)
       + (if $assigned != "" then [{op:"add", path:"/fields/System.AssignedTo", value:$assigned}] else [] end)
     ' > "$payload_tmp"
 
@@ -1572,6 +1637,7 @@ main() {
   validate_provider_keys
   detect_git_context
   parse_azure_remote
+  log_info "Resolvendo contexto do Azure DevOps..."
   resolve_routing
   resolve_pr
   resolve_work_item
@@ -1592,7 +1658,9 @@ areaPath: $SELECTED_AREA_PATH
 assignedTo: ${SELECTED_ASSIGNED_TO:-<not configured>}
 parentId: $WORK_ITEM_ID
 iterationPath: ${WORK_ITEM_ITERATION_PATH:-<empty>}
-priority: ${WORK_ITEM_PRIORITY:-<empty>}
+priority: ${ATTEMPTED_PRIORITY:-<empty>}
+customTeam: ${ATTEMPTED_TEAM:-<empty>}
+customProgramasAgrotrace: ${ATTEMPTED_PROGRAMA:-<empty>}
 descriptionHtml: <from LLM response converted to HTML>
 EOF
       exit 0
@@ -1601,14 +1669,14 @@ EOF
     exit 0
   fi
 
-  log_info "Gerando card de teste..."
+  log_info "Gerando card de teste via LLM..."
   call_with_fallback "$user_prompt"
   LLM_RESULT=$(strip_think_blocks "$LLM_RESULT")
   parse_llm_result
   GENERATED_HTML=$(markdown_to_html "$GENERATED_MARKDOWN")
   print_output
 
-  if [[ "$NO_CREATE" == "false" ]]; then
+  if confirm_test_case_creation; then
     if create_test_case; then
       :
     fi
