@@ -25,6 +25,8 @@ steps=$(markdown_to_azure_steps "$markdown")
 [[ "$steps" == *'<steps id="0"'* ]]
 [[ "$steps" == *'Adicionar 1 imagem e remover'* ]]
 [[ "$steps" == *'Validar erro quando obrigatoria sem imagens'* ]]
+[[ "$steps" != *'[ ] Adicionar 1 imagem e remover'* ]]
+[[ "$steps" != *'[ ] Validar erro quando obrigatoria sem imagens'* ]]
 [[ "$steps" == *'<step id="2" type="ActionStep">'* ]]
 [[ "$steps" == *'<step id="3" type="ActionStep">'* ]]
 

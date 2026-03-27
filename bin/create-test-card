@@ -110,6 +110,7 @@ USED_MODEL=""
 CREATE_ERROR=""
 CREATED_TEST_CASE_ID=""
 CREATED_TEST_CASE_URL=""
+UPDATED_PARENT_TO_TEST_QA=false
 
 DEFAULT_SYSTEM_PROMPT='Voce e um analista de QA tecnico.
 
@@ -1635,6 +1636,54 @@ confirm_test_case_creation() {
   return 0
 }
 
+confirm_parent_test_qa_update() {
+  if [[ -z "$CREATED_TEST_CASE_ID" ]]; then
+    return 1
+  fi
+
+  if [[ ! -t 0 || ! -t 1 ]]; then
+    return 1
+  fi
+
+  echo ""
+  if ! prompt_yn "Atualizar o work item #$WORK_ITEM_ID para Test QA?" "n"; then
+    log_info "Atualizacao do work item pai cancelada pelo usuario."
+    return 1
+  fi
+
+  return 0
+}
+
+update_parent_work_item_to_test_qa() {
+  local payload_tmp response code body
+  log_info "Atualizando work item #$WORK_ITEM_ID para Test QA..."
+  payload_tmp=$(mktemp)
+
+  jq -n '[{op:"add", path:"/fields/System.State", value:"Test QA"}]' > "$payload_tmp"
+  response=$(azure_patch_json "https://dev.azure.com/$AZURE_ORG_ENC/$AZURE_PROJECT_ENC/_apis/wit/workitems/$WORK_ITEM_ID?api-version=7.0" "$payload_tmp")
+  rm -f "$payload_tmp"
+
+  code=$(response_code "$response")
+  body=$(response_body "$response")
+  if [[ "$code" != "200" && "$code" != "201" ]]; then
+    local error_msg
+    error_msg=$(printf '%s' "$body" | jq -r '.message // .Message // "Erro desconhecido ao atualizar work item."')
+    log_warn "Nao foi possivel atualizar o work item #$WORK_ITEM_ID para Test QA."
+    if [[ -n "$error_msg" ]]; then
+      if [[ "$RAW_OUTPUT" == "true" ]]; then
+        echo "Falha ao atualizar work item para Test QA: $error_msg" >&2
+      else
+        echo "$error_msg"
+      fi
+    fi
+    return 1
+  fi
+
+  UPDATED_PARENT_TO_TEST_QA=true
+  log_success "Work item #$WORK_ITEM_ID atualizado para Test QA."
+  return 0
+}
+
 create_test_case() {
   local payload_tmp response code body parent_url
   log_info "Criando Test Case no Azure DevOps..."
@@ -1748,6 +1797,10 @@ EOF
   fi
 
   print_create_result
+
+  if confirm_parent_test_qa_update; then
+    update_parent_work_item_to_test_qa || true
+  fi
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
