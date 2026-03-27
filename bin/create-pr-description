@@ -47,7 +47,7 @@ CLIP_CMD=""
 WORK_ITEM_ID=""
 CLI_WORK_ITEM=""
 SOURCE_BRANCH=""
-STREAM_MODE=false
+STREAM_MODE=true
 
 # ---- Helper functions ----
 
@@ -128,6 +128,9 @@ PR_PROVIDERS="openrouter,groq"
 # OPENROUTER_MODEL="meta-llama/llama-3.3-70b-instruct:free"
 # GROQ_MODEL="llama-3.3-70b-versatile"
 
+# Streaming (exibe tokens em tempo real; padrao: true)
+PR_STREAM="true"
+
 # Azure DevOps (para gerar links de PR com repositoryId)
 # AZURE_PAT="your-pat-token"'
 
@@ -156,7 +159,7 @@ Opcoes:
   --set-gemini-model <modelo>         Salva modelo do Google Gemini no .env
   --dry-run                           Mostra o prompt sem chamar a LLM
   --raw                               Exibe a descricao sem renderizacao Markdown (texto puro)
-  --stream                            Exibe a resposta do LLM em tempo real (streaming)
+  --no-stream                          Desabilita streaming (exibe resposta apenas ao final)
   --update                            Atualiza o script para a versao mais recente
   --help                              Mostra esta ajuda
   --version                           Mostra a versao
@@ -326,8 +329,8 @@ parse_args() {
         RAW_OUTPUT=true
         shift
         ;;
-      --stream)
-        STREAM_MODE=true
+      --no-stream)
+        STREAM_MODE=false
         shift
         ;;
       --update)
@@ -931,9 +934,9 @@ load_config() {
   GROQ_MODEL="${GROQ_MODEL:-$DEFAULT_GROQ_MODEL}"
   GEMINI_MODEL="${GEMINI_MODEL:-$DEFAULT_GEMINI_MODEL}"
 
-  # Support PR_STREAM env var for streaming mode
-  if [[ "${PR_STREAM:-}" == "true" ]]; then
-    STREAM_MODE=true
+  # Support PR_STREAM env var for streaming mode (default: true)
+  if [[ "${PR_STREAM:-}" == "false" ]]; then
+    STREAM_MODE=false
   fi
 }
 
