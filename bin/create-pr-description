@@ -25,6 +25,7 @@ YELLOW='\033[1;33m'
 GREEN='\033[0;32m'
 CYAN='\033[0;36m'
 BOLD='\033[1m'
+DIM='\033[2m'
 NC='\033[0m' # No Color
 
 # Global state
@@ -46,6 +47,7 @@ CLIP_CMD=""
 WORK_ITEM_ID=""
 CLI_WORK_ITEM=""
 SOURCE_BRANCH=""
+STREAM_MODE=true
 
 # ---- Helper functions ----
 
@@ -126,6 +128,9 @@ PR_PROVIDERS="openrouter,groq"
 # OPENROUTER_MODEL="meta-llama/llama-3.3-70b-instruct:free"
 # GROQ_MODEL="llama-3.3-70b-versatile"
 
+# Streaming (exibe tokens em tempo real; padrao: true)
+PR_STREAM="true"
+
 # Azure DevOps (para gerar links de PR com repositoryId)
 # AZURE_PAT="your-pat-token"'
 
@@ -154,6 +159,7 @@ Opcoes:
   --set-gemini-model <modelo>         Salva modelo do Google Gemini no .env
   --dry-run                           Mostra o prompt sem chamar a LLM
   --raw                               Exibe a descricao sem renderizacao Markdown (texto puro)
+  --no-stream                          Desabilita streaming (exibe resposta apenas ao final)
   --update                            Atualiza o script para a versao mais recente
   --help                              Mostra esta ajuda
   --version                           Mostra a versao
@@ -321,6 +327,10 @@ parse_args() {
         ;;
       --raw)
         RAW_OUTPUT=true
+        shift
+        ;;
+      --no-stream)
+        STREAM_MODE=false
         shift
         ;;
       --update)
@@ -923,6 +933,11 @@ load_config() {
   OPENROUTER_MODEL="${OPENROUTER_MODEL:-$DEFAULT_OPENROUTER_MODEL}"
   GROQ_MODEL="${GROQ_MODEL:-$DEFAULT_GROQ_MODEL}"
   GEMINI_MODEL="${GEMINI_MODEL:-$DEFAULT_GEMINI_MODEL}"
+
+  # Support PR_STREAM env var for streaming mode (default: true)
+  if [[ "${PR_STREAM:-}" == "false" ]]; then
+    STREAM_MODE=false
+  fi
 }
 
 # ---- Git Context ----
@@ -1383,6 +1398,162 @@ execute_openai_compatible_request() {
   curl "${curl_args[@]}" 2>/dev/null || printf '\n000'
 }
 
+# ---- Streaming Functions ----
+
+parse_openai_sse_stream() {
+  local accumulator_file="$1"
+  local error_file="$2"
+
+  > "$accumulator_file"
+  > "$error_file"
+
+  while IFS= read -r line; do
+    # Strip carriage return (SSE uses \r\n)
+    line="${line%%$'\r'}"
+
+    # Skip empty lines (SSE delimiter)
+    [[ -z "$line" ]] && continue
+
+    # Check for stream end
+    [[ "$line" == "data: [DONE]" ]] && break
+
+    # Only process data: lines
+    [[ "$line" != data:* ]] && continue
+
+    # Extract JSON after "data: "
+    local json="${line#data: }"
+
+    # Check for error object
+    local err
+    err=$(printf '%s' "$json" | jq -r '.error.message // empty' 2>/dev/null)
+    if [[ -n "$err" ]]; then
+      printf '%s' "$err" > "$error_file"
+      return 1
+    fi
+
+    # Extract delta content
+    local token
+    token=$(printf '%s' "$json" | jq -r '.choices[0].delta.content // empty' 2>/dev/null)
+
+    if [[ -n "$token" ]]; then
+      printf '%s' "$token" >&2
+      printf '%s' "$token" >> "$accumulator_file"
+    fi
+  done
+
+  printf '\n' >&2
+  return 0
+}
+
+parse_gemini_sse_stream() {
+  local accumulator_file="$1"
+  local error_file="$2"
+
+  > "$accumulator_file"
+  > "$error_file"
+
+  while IFS= read -r line; do
+    line="${line%%$'\r'}"
+    [[ -z "$line" ]] && continue
+    [[ "$line" != data:* ]] && continue
+
+    local json="${line#data: }"
+
+    # Check for error
+    local err
+    err=$(printf '%s' "$json" | jq -r '.error.message // empty' 2>/dev/null)
+    if [[ -n "$err" ]]; then
+      printf '%s' "$err" > "$error_file"
+      return 1
+    fi
+
+    local token
+    token=$(printf '%s' "$json" | jq -r '.candidates[0].content.parts[0].text // empty' 2>/dev/null)
+
+    if [[ -n "$token" ]]; then
+      printf '%s' "$token" >&2
+      printf '%s' "$token" >> "$accumulator_file"
+    fi
+  done
+
+  printf '\n' >&2
+  return 0
+}
+
+execute_openai_compatible_stream_request() {
+  local url="$1"
+  local key="$2"
+  local provider_name="$3"
+  local payload_file="$4"
+  local accumulator_file="$5"
+  local error_file="$6"
+
+  local header_file
+  header_file=$(mktemp)
+
+  local curl_args=(
+    -N
+    -s
+    --max-time 120
+    --dump-header "$header_file"
+    -H "Content-Type: application/json"
+    -H "Authorization: Bearer $key"
+  )
+
+  if [[ "$provider_name" == "openrouter" ]]; then
+    curl_args+=(-H "HTTP-Referer: https://github.com/create-pr-description")
+    curl_args+=(-H "X-Title: create-pr-description")
+  fi
+
+  curl_args+=(-d @"$payload_file" "$url")
+
+  local parse_ok=true
+  curl "${curl_args[@]}" 2>/dev/null | parse_openai_sse_stream "$accumulator_file" "$error_file" || parse_ok=false
+
+  # Extract HTTP status code from dumped headers
+  local http_code
+  http_code=$(head -1 "$header_file" 2>/dev/null | grep -o '[0-9][0-9][0-9]' || echo "000")
+  rm -f "$header_file"
+
+  if [[ "$parse_ok" == "false" && "$http_code" == "200" ]]; then
+    # SSE parser detected an error in the stream data
+    http_code="500"
+  fi
+
+  echo "$http_code"
+}
+
+execute_gemini_stream_request() {
+  local api_key="$1"
+  local model="$2"
+  local payload_file="$3"
+  local accumulator_file="$4"
+  local error_file="$5"
+
+  local api_url="https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${api_key}"
+
+  local header_file
+  header_file=$(mktemp)
+
+  local parse_ok=true
+  curl -N -s \
+    --max-time 120 \
+    --dump-header "$header_file" \
+    -H "Content-Type: application/json" \
+    -d @"$payload_file" \
+    "$api_url" 2>/dev/null | parse_gemini_sse_stream "$accumulator_file" "$error_file" || parse_ok=false
+
+  local http_code
+  http_code=$(head -1 "$header_file" 2>/dev/null | grep -o '[0-9][0-9][0-9]' || echo "000")
+  rm -f "$header_file"
+
+  if [[ "$parse_ok" == "false" && "$http_code" == "200" ]]; then
+    http_code="500"
+  fi
+
+  echo "$http_code"
+}
+
 is_groq_reasoning_format_retryable_error() {
   local provider_name="$1"
   local http_code="$2"
@@ -1425,6 +1596,66 @@ call_llm_api() {
 
   build_openai_compatible_payload "$model" "$system_prompt" "$user_prompt" "$include_reasoning_format" > "$payload_tmp"
 
+  # Streaming mode
+  if [[ "$STREAM_MODE" == "true" ]]; then
+    # Inject stream:true into payload
+    local stream_payload_tmp
+    stream_payload_tmp=$(mktemp)
+    jq '. + {stream: true}' "$payload_tmp" > "$stream_payload_tmp"
+
+    local accumulator_file error_file
+    accumulator_file=$(mktemp)
+    error_file=$(mktemp)
+
+    local http_code
+    http_code=$(execute_openai_compatible_stream_request "$url" "$key" "$provider_name" "$stream_payload_tmp" "$accumulator_file" "$error_file")
+
+    # Handle Groq reasoning_format retry in streaming mode
+    if [[ "$http_code" != "200" && "$provider_name" == "groq" && "$include_reasoning_format" == "true" ]]; then
+      log_warn "Groq rejeitou reasoning_format para este modelo; tentando novamente sem esse parametro"
+      build_openai_compatible_payload "$model" "$system_prompt" "$user_prompt" "false" > "$payload_tmp"
+      jq '. + {stream: true}' "$payload_tmp" > "$stream_payload_tmp"
+      > "$accumulator_file"
+      > "$error_file"
+      http_code=$(execute_openai_compatible_stream_request "$url" "$key" "$provider_name" "$stream_payload_tmp" "$accumulator_file" "$error_file")
+    fi
+
+    rm -f "$payload_tmp" "$stream_payload_tmp"
+
+    if [[ "$http_code" == "000" ]]; then
+      rm -f "$accumulator_file" "$error_file"
+      log_warn "Timeout no provider $provider_name (sem resposta em 120s)"
+      echo ""
+      return 1
+    elif [[ "$http_code" == "429" ]]; then
+      rm -f "$accumulator_file" "$error_file"
+      log_warn "Rate limit (HTTP 429) no provider $provider_name"
+      echo ""
+      return 1
+    elif [[ "$http_code" != "200" ]]; then
+      local err_msg
+      err_msg=$(cat "$error_file" 2>/dev/null)
+      rm -f "$accumulator_file" "$error_file"
+      log_warn "HTTP $http_code de $provider_name ($url)${err_msg:+ - $err_msg}"
+      echo ""
+      return 1
+    fi
+
+    local content
+    content=$(cat "$accumulator_file")
+    rm -f "$accumulator_file" "$error_file"
+
+    if [[ -z "$content" ]]; then
+      log_warn "Resposta vazia ou invalida de $provider_name"
+      echo ""
+      return 1
+    fi
+
+    echo "$content"
+    return 0
+  fi
+
+  # Non-streaming mode (original)
   local response
   response=$(execute_openai_compatible_request "$url" "$key" "$provider_name" "$payload_tmp")
 
@@ -1521,6 +1752,51 @@ call_gemini_api() {
 
   rm -f "$system_tmp" "$user_tmp"
 
+  # Streaming mode
+  if [[ "$STREAM_MODE" == "true" ]]; then
+    local accumulator_file error_file
+    accumulator_file=$(mktemp)
+    error_file=$(mktemp)
+
+    local http_code
+    http_code=$(execute_gemini_stream_request "$key" "$model" "$payload_tmp" "$accumulator_file" "$error_file")
+
+    rm -f "$payload_tmp"
+
+    if [[ "$http_code" == "000" ]]; then
+      rm -f "$accumulator_file" "$error_file"
+      log_warn "Timeout no provider gemini (sem resposta em 120s)"
+      echo ""
+      return 1
+    elif [[ "$http_code" == "429" ]]; then
+      rm -f "$accumulator_file" "$error_file"
+      log_warn "Rate limit (HTTP 429) no provider gemini"
+      echo ""
+      return 1
+    elif [[ "$http_code" != "200" ]]; then
+      local err_msg
+      err_msg=$(cat "$error_file" 2>/dev/null)
+      rm -f "$accumulator_file" "$error_file"
+      log_warn "HTTP $http_code de gemini${err_msg:+ - $err_msg}"
+      echo ""
+      return 1
+    fi
+
+    local content
+    content=$(cat "$accumulator_file")
+    rm -f "$accumulator_file" "$error_file"
+
+    if [[ -z "$content" ]]; then
+      log_warn "Resposta vazia ou invalida de gemini"
+      echo ""
+      return 1
+    fi
+
+    echo "$content"
+    return 0
+  fi
+
+  # Non-streaming mode (original)
   local api_url="https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}"
 
   local response
@@ -2075,7 +2351,16 @@ $GIT_DIFF"
 
   # Call LLM
   log_info "Gerando descricao do PR..."
+  if [[ "$STREAM_MODE" == "true" ]]; then
+    echo "" >&2
+    echo -e "${DIM}--- Streaming resposta do LLM ---${NC}" >&2
+    echo "" >&2
+  fi
   call_with_fallback "$template_content" "$user_prompt"
+  if [[ "$STREAM_MODE" == "true" ]]; then
+    echo "" >&2
+    echo -e "${DIM}--- Resposta completa recebida. Formatando... ---${NC}" >&2
+  fi
 
   # Output
   print_output "$LLM_RESULT"
