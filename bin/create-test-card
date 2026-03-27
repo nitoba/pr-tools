@@ -7,7 +7,7 @@ set -euo pipefail
 # from PR + Work Item context, with best-effort creation.
 # ============================================================
 
-VERSION="0.1.1"
+VERSION="0.1.2"
 CONFIG_DIR="$HOME/.config/pr-tools"
 ENV_FILE="$CONFIG_DIR/.env"
 CACHE_FILE="$CONFIG_DIR/.cache"
@@ -1257,7 +1257,7 @@ call_openai_provider() {
     debug_log "$body"
     return 1
   fi
-  content=$(printf '%s' "$body" | jq -r '.choices[0].message.content // empty')
+  content=$(printf '%s' "$body" | jq -r '.choices[0].message.content // empty' | sed 's/\\n/\n/g; s/\\t/\t/g')
   [[ -n "$content" ]] || return 1
   LLM_RESULT="$content"
   USED_PROVIDER="$provider"
@@ -1296,7 +1296,7 @@ call_gemini_provider() {
     debug_log "$body"
     return 1
   fi
-  content=$(printf '%s' "$body" | jq -r '.candidates[0].content.parts[0].text // empty')
+  content=$(printf '%s' "$body" | jq -r '.candidates[0].content.parts[0].text // empty' | sed 's/\\n/\n/g; s/\\t/\t/g')
   [[ -n "$content" ]] || return 1
   LLM_RESULT="$content"
   USED_PROVIDER="gemini"
