@@ -679,8 +679,14 @@ azure_patch_json() {
   local url="$1"
   local payload_file="$2"
   curl -s -w "\n%{http_code}" --max-time 60 -u ":$AZURE_PAT" \
+    -X PATCH \
     -H "Content-Type: application/json-patch+json" \
     --data @"$payload_file" "$url" 2>/dev/null || echo -e "\n000"
+}
+
+extract_azure_error_message() {
+  local body="$1"
+  printf '%s' "$body" | jq -r '.message // .Message // .value.message // .value.Message // ""' 2>/dev/null || true
 }
 
 response_body() {
@@ -1667,7 +1673,8 @@ update_parent_work_item_to_test_qa() {
   body=$(response_body "$response")
   if [[ "$code" != "200" && "$code" != "201" ]]; then
     local error_msg
-    error_msg=$(printf '%s' "$body" | jq -r '.message // .Message // "Erro desconhecido ao atualizar work item."')
+    error_msg=$(extract_azure_error_message "$body")
+    [[ -n "$error_msg" ]] || error_msg="Erro desconhecido ao atualizar work item."
     log_warn "Nao foi possivel atualizar o work item #$WORK_ITEM_ID para Test QA."
     if [[ -n "$error_msg" ]]; then
       if [[ "$RAW_OUTPUT" == "true" ]]; then
@@ -1726,7 +1733,8 @@ create_test_case() {
   code=$(response_code "$response")
   body=$(response_body "$response")
   if [[ "$code" != "200" && "$code" != "201" ]]; then
-    CREATE_ERROR=$(printf '%s' "$body" | jq -r '.message // .Message // "Erro desconhecido na criacao do Test Case."')
+    CREATE_ERROR=$(extract_azure_error_message "$body")
+    [[ -n "$CREATE_ERROR" ]] || CREATE_ERROR="Erro desconhecido na criacao do Test Case."
     return 1
   fi
 
