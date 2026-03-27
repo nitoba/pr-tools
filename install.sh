@@ -18,6 +18,15 @@ YELLOW='\033[1;33m'
 BOLD='\033[1m'
 NC='\033[0m'
 
+if [[ ! -t 1 || -n "${NO_COLOR:-}" ]]; then
+  RED=''
+  GREEN=''
+  CYAN=''
+  YELLOW=''
+  BOLD=''
+  NC=''
+fi
+
 log_info()    { echo -e "${CYAN}[INFO]${NC} $1"; }
 log_success() { echo -e "${GREEN}[OK]${NC} $1"; }
 log_warn()    { echo -e "${YELLOW}[AVISO]${NC} $1"; }
@@ -42,13 +51,28 @@ log_success "Dependencias encontradas (curl, git, jq)"
 mkdir -p "$INSTALL_DIR"
 log_info "Diretorio de instalacao: $INSTALL_DIR"
 
-# Download script
+# Download scripts
 log_info "Baixando create-pr-description..."
-if curl -fsSL "$RAW_URL/bin/create-pr-description" -o "$INSTALL_DIR/create-pr-description"; then
-  chmod +x "$INSTALL_DIR/create-pr-description"
+tmp_pr=$(mktemp)
+if curl -fsSL "$RAW_URL/bin/create-pr-description" -o "$tmp_pr"; then
+  chmod +x "$tmp_pr"
+  mv "$tmp_pr" "$INSTALL_DIR/create-pr-description"
   log_success "Script instalado: $INSTALL_DIR/create-pr-description"
 else
-  log_error "Falha ao baixar o script."
+  rm -f "$tmp_pr"
+  log_error "Falha ao baixar create-pr-description."
+  exit 1
+fi
+
+log_info "Baixando create-test-card..."
+tmp_test=$(mktemp)
+if curl -fsSL "$RAW_URL/bin/create-test-card" -o "$tmp_test"; then
+  chmod +x "$tmp_test"
+  mv "$tmp_test" "$INSTALL_DIR/create-test-card"
+  log_success "Script instalado: $INSTALL_DIR/create-test-card"
+else
+  rm -f "$tmp_test"
+  log_error "Falha ao baixar create-test-card."
   exit 1
 fi
 
@@ -58,7 +82,7 @@ if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
   echo ""
 
   # Detect shell config file
-  SHELL_NAME=$(basename "$SHELL")
+  SHELL_NAME=$(basename "${SHELL:-sh}")
   case "$SHELL_NAME" in
     zsh)  SHELL_RC="$HOME/.zshrc" ;;
     bash) SHELL_RC="$HOME/.bashrc" ;;
@@ -80,13 +104,21 @@ CONFIG_DIR="$HOME/.config/pr-tools"
 if [[ ! -f "$CONFIG_DIR/.env" ]]; then
   echo ""
   log_info "Iniciando configuracao..."
-  log_info "O wizard vai te guiar na configuracao das credenciais."
+  log_info "Se houver TTY disponivel, o wizard vai te guiar na configuracao das credenciais."
   echo ""
-  "$INSTALL_DIR/create-pr-description" --init
+  if [[ -t 0 && -t 1 ]]; then
+    "$INSTALL_DIR/create-pr-description" --init
+    "$INSTALL_DIR/create-test-card" --init
+  else
+    log_warn "Sem TTY interativo; pulando o wizard automatico."
+    echo -e "  Proximo passo: ${CYAN}create-pr-description --init${NC}"
+    echo -e "  Proximo passo: ${CYAN}create-test-card --init${NC}"
+  fi
 else
   log_info "Configuracao existente encontrada em $CONFIG_DIR"
   echo ""
-  echo -e "  Para reconfigurar: ${CYAN}create-pr-description --init${NC}"
+  echo -e "  Para reconfigurar PRs: ${CYAN}create-pr-description --init${NC}"
+  echo -e "  Para reconfigurar Test Cases: ${CYAN}create-test-card --init${NC}"
 fi
 
 echo ""
@@ -94,4 +126,5 @@ echo -e "${BOLD}========================================${NC}"
 echo -e "${GREEN}Instalacao concluida!${NC}"
 echo ""
 echo -e "Uso: ${CYAN}create-pr-description${NC}"
+echo -e "Uso: ${CYAN}create-test-card${NC}"
 echo -e "${BOLD}========================================${NC}"

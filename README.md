@@ -1,6 +1,6 @@
 # pr-tools
 
-Ferramentas de produtividade para Pull Requests. Gera descrições de PR automaticamente usando IA, com links para Azure DevOps.
+Ferramentas de produtividade para Pull Requests e Test Cases no Azure DevOps. Gera descrições de PR e cards de teste automaticamente usando IA.
 
 ## Instalação
 
@@ -19,21 +19,23 @@ curl -fsSL https://raw.githubusercontent.com/nitoba/pr-tools/main/install.sh | b
 
 ```bash
 create-pr-description --update
+create-test-card --update
 ```
 
 ## Configuração
 
-Na primeira execução, um **wizard interativo** guia a configuração:
+Na primeira execução com TTY disponível, um **wizard interativo** guia a configuração. Em instalações não interativas, rode `--init` manualmente depois:
 
 - Escolha de providers (OpenRouter, Groq, Gemini ou todos)
 - API keys (com validação automática)
-- Azure DevOps PAT (para links e criação automática de PR)
+- Azure DevOps PAT (para links, leitura de contexto e criação automática de PR/Test Case)
 - Reviewers padrão para PRs (emails para criação automática)
 
 Para reconfigurar a qualquer momento:
 
 ```bash
 create-pr-description --init
+create-test-card --init
 ```
 
 ### Configuração manual
@@ -59,6 +61,10 @@ AZURE_PAT="your-pat-token"
 # Reviewers padrão para criação automática de PRs
 # PR_REVIEWER_DEV="email@exemplo.com"
 # PR_REVIEWER_SPRINT="email@exemplo.com"
+
+# Defaults para Test Cases
+# TEST_CARD_AREA_PATH="AGROTRACE\\Devops"
+# TEST_CARD_ASSIGNED_TO="nome@exemplo.com"
 ```
 
 Variáveis de ambiente sobrescrevem o `.env`:
@@ -89,54 +95,86 @@ create-pr-description --source feature/1234-login
 
 # Vincular work item específico ao PR
 create-pr-description --work-item 11763
+
+# Gerar card de teste detectando PR e work item a partir da branch atual
+create-test-card
+
+# Gerar card de teste para um PR específico
+create-test-card --pr 10513
+
+# Gerar o card sem tentar criar o Test Case no Azure DevOps
+create-test-card --no-create
+
+# Inspecionar o prompt e o payload sem chamar a LLM
+create-test-card --dry-run --debug
 ```
+
+### Configuração do create-test-card
+
+Você pode definir defaults para o Test Case no mesmo `~/.config/pr-tools/.env`:
+
+```bash
+# AreaPath padrão para cards de teste
+# TEST_CARD_AREA_PATH="AGROTRACE\Devops"
+
+# Responsável padrão para cards de teste
+# TEST_CARD_ASSIGNED_TO="nome@empresa.com"
+```
+
+Precedência de configuração:
+
+1. flags CLI
+2. variáveis de ambiente do shell
+3. `.env`
+4. defaults internos
+
+No projeto `AGROTRACE`, o `AreaPath` padrão do Test Case é `AGROTRACE\Devops`.
 
 ### Output
 
 ```
 ==========================================
-PR - feat/dark-mode
-Target branches: dev, sprint/97
-Provider: openrouter (meta-llama/llama-3.3-70b-instruct:free)
+Test Card - PR #10513
 ==========================================
+Provider: groq (qwen/qwen3-32b)
+Work Item pai: #11796 - Novo tipo de pergunta: Anexo (upload de documentos)
+AreaPath Teste: AGROTRACE\Devops
+Responsável: qa@empresa.com
 
-Titulo: Adiciona suporte ao tema escuro
+Titulo: Testar novo tipo de pergunta 'Anexo' no CMS e formulários
 
-Descricao:
-## Descrição
-Adiciona suporte ao tema escuro em múltiplos componentes...
+## Objetivo
+Validar a implementação do novo tipo de pergunta "Anexo"...
 
-## Alterações
-### Componentes atualizados
-- **home-padrao**: Skeletons de loading adaptados para dark mode...
+## Cenario base
+1. Cadastro no CMS...
+2. Configuração da estrutura...
+3. Resposta do produtor...
 
-## Tipo de mudança
-- [ ] Bug fix
-- [x] Nova feature
-- [ ] Breaking change
-- [ ] Refactoring
+## Checklist de testes
+- [ ] Opção Anexo aparece no CMS...
+- [ ] Campo de tamanho máximo respeita valor padrão...
+- [ ] Upload acima do limite exibe erro...
 
-==========================================
-Abrir PR:
+## Resultado esperado
+O tipo de pergunta Anexo funciona corretamente...
 
-  -> dev:
-     https://dev.azure.com/org/project/_git/repo/pullrequestcreate?sourceRef=feat/dark-mode&targetRef=dev&...
-
-  -> sprint/97:
-     https://dev.azure.com/org/project/_git/repo/pullrequestcreate?sourceRef=feat/dark-mode&targetRef=sprint/97&...
-
-Descrição copiada para o clipboard!
+[OK] Test Case criado com sucesso: #12345
+https://dev.azure.com/org/project/_workitems/edit/12345
 ==========================================
 ```
 
-A descrição é copiada automaticamente para o clipboard. Os links são clicáveis no terminal.
+Se a criação falhar por regra do processo do Azure DevOps, o comando mantém o Markdown gerado visível no terminal e informa que pode ser necessário criar o card manualmente.
 
 ## Funcionalidades
 
 - Gera descrições de PR em português brasileiro via LLM
+- Gera cards de teste em português brasileiro a partir de PR + Work Item
 - Suporta OpenRouter, Groq e Gemini com fallback automático
 - Detecta sprint vigente automaticamente (`sprint/*` branches)
 - Cria PR automaticamente no Azure DevOps via API (com reviewers obrigatórios e work items)
+- Tenta detectar automaticamente PR e Work Item da branch atual para criar Test Cases
+- Tenta criar `Test Case` filho no Azure DevOps com fallback para Markdown quando regras do processo bloqueiam a criação
 - Vincula work items ao PR automaticamente (via branch ou flag `--work-item`)
 - Gera links clicáveis para abrir PR no Azure DevOps
 - Cacheia `repositoryId` e IDs de reviewers localmente
@@ -167,7 +205,44 @@ Opções:
   --version                     Mostra a versão
 ```
 
+### `create-test-card`
+
+Veja os exemplos na seção `Uso` e rode `create-test-card --help` para a lista completa de flags.
+
+Exemplo de saída do `create-test-card`:
+
+```text
+========================================
+Test Card - PR #10513
+========================================
+Provider: groq (qwen/qwen3-32b)
+Work Item pai: #11796 - Novo tipo de pergunta: Anexo (upload de documentos)
+AreaPath Teste: AGROTRACE\Devops
+Responsável: qa@empresa.com
+
+Titulo: Testar novo tipo de pergunta 'Anexo' no CMS e formulários
+
+## Objetivo
+...
+
+## Cenario base
+...
+
+## Checklist de testes
+...
+
+## Resultado esperado
+...
+
+[OK] Test Case criado com sucesso: #12345
+https://dev.azure.com/org/project/_workitems/edit/12345
+```
+
+Se a criação falhar por regra do processo no Azure DevOps, o comando mantém o Markdown visível e informa que pode ser necessário criar o card manualmente.
+
 ## Como funciona
+
+### `create-pr-description`
 
 1. Coleta `git diff` e `git log` da branch atual vs branch base (sprint ou dev)
 2. Detecta a sprint vigente (maior número em `origin/sprint/*`)
@@ -178,6 +253,10 @@ Opções:
 7. Imprime a descrição formatada + links de PR
 8. Copia a descrição para o clipboard
 9. Oferece criar o PR automaticamente no Azure DevOps (com reviewers e work items)
+
+### `create-test-card`
+
+O fluxo do `create-test-card` está documentado nas seções `Uso` e `Output`, incluindo autodetecção de PR/work item, geração em Markdown e fallback para criação manual quando o Azure DevOps bloquear a criação automática.
 
 ## Providers suportados
 
@@ -197,6 +276,7 @@ OPENROUTER_MODEL="qwen/qwen3-4b:free" create-pr-description
 
 ```
 ~/.local/bin/create-pr-description    # Script principal
+~/.local/bin/create-test-card         # Script para gerar/criar Test Cases
 ~/.config/pr-tools/pr-template.md     # Template da descrição (editável)
 ~/.config/pr-tools/.env               # API keys e configuração
 ~/.config/pr-tools/.cache             # Cache de repositoryId e reviewers
