@@ -7,7 +7,7 @@ set -euo pipefail
 # from git context, with clickable Azure DevOps PR links.
 # ============================================================
 
-VERSION="2.6.2"
+VERSION="2.6.3"
 CONFIG_DIR="$HOME/.config/pr-tools"
 ENV_FILE="$CONFIG_DIR/.env"
 TEMPLATE_FILE="$CONFIG_DIR/pr-template.md"
@@ -1398,6 +1398,14 @@ execute_openai_compatible_request() {
   curl "${curl_args[@]}" 2>/dev/null || printf '\n000'
 }
 
+# ---- Content Normalization ----
+
+# Normalize LLM content: some models (e.g. qwen) emit literal \n (backslash-n)
+# instead of real newlines inside SSE delta tokens. Convert them to real newlines.
+normalize_llm_content() {
+  sed 's/\\n/\n/g; s/\\t/\t/g'
+}
+
 # ---- Streaming Functions ----
 
 parse_openai_sse_stream() {
@@ -1436,8 +1444,11 @@ parse_openai_sse_stream() {
     token=$(printf '%s' "$json" | jq -r '.choices[0].delta.content // empty' 2>/dev/null)
 
     if [[ -n "$token" ]]; then
-      printf '%s' "$token" >&2
-      printf '%s' "$token" >> "$accumulator_file"
+      # Normalize literal \n sequences emitted by some models (e.g. qwen)
+      local normalized_token
+      normalized_token=$(printf '%s' "$token" | sed 's/\\n/\n/g; s/\\t/\t/g')
+      printf '%s' "$normalized_token" >&2
+      printf '%s' "$normalized_token" >> "$accumulator_file"
     fi
   done
 
@@ -1471,8 +1482,10 @@ parse_gemini_sse_stream() {
     token=$(printf '%s' "$json" | jq -r '.candidates[0].content.parts[0].text // empty' 2>/dev/null)
 
     if [[ -n "$token" ]]; then
-      printf '%s' "$token" >&2
-      printf '%s' "$token" >> "$accumulator_file"
+      local normalized_token
+      normalized_token=$(printf '%s' "$token" | sed 's/\\n/\n/g; s/\\t/\t/g')
+      printf '%s' "$normalized_token" >&2
+      printf '%s' "$normalized_token" >> "$accumulator_file"
     fi
   done
 
@@ -1642,7 +1655,7 @@ call_llm_api() {
     fi
 
     local content
-    content=$(cat "$accumulator_file")
+    content=$(cat "$accumulator_file" | normalize_llm_content)
     rm -f "$accumulator_file" "$error_file"
 
     if [[ -z "$content" ]]; then
@@ -1705,7 +1718,7 @@ call_llm_api() {
 
   # Extract content
   local content
-  content=$(printf '%s' "$body" | jq -r '.choices[0].message.content // empty' 2>/dev/null || printf '')
+  content=$(printf '%s' "$body" | jq -r '.choices[0].message.content // empty' 2>/dev/null | normalize_llm_content || printf '')
 
   if [[ -z "$content" || "$content" == "null" ]]; then
     log_warn "Resposta vazia ou invalida de $provider_name"
@@ -1783,7 +1796,7 @@ call_gemini_api() {
     fi
 
     local content
-    content=$(cat "$accumulator_file")
+    content=$(cat "$accumulator_file" | normalize_llm_content)
     rm -f "$accumulator_file" "$error_file"
 
     if [[ -z "$content" ]]; then
@@ -1829,7 +1842,7 @@ call_gemini_api() {
 
   # Gemini response format: candidates[0].content.parts[0].text
   local content
-  content=$(printf '%s' "$body" | jq -r '.candidates[0].content.parts[0].text // empty' 2>/dev/null || printf '')
+  content=$(printf '%s' "$body" | jq -r '.candidates[0].content.parts[0].text // empty' 2>/dev/null | normalize_llm_content || printf '')
 
   if [[ -z "$content" || "$content" == "null" ]]; then
     log_warn "Resposta vazia ou invalida de gemini"
