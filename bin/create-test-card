@@ -7,7 +7,7 @@ set -euo pipefail
 # from PR + Work Item context, with best-effort creation.
 # ============================================================
 
-VERSION="0.1.7"
+VERSION="0.1.8"
 CONFIG_DIR="$HOME/.config/pr-tools"
 ENV_FILE="$CONFIG_DIR/.env"
 CACHE_FILE="$CONFIG_DIR/.cache"
@@ -1678,13 +1678,23 @@ collect_test_qa_required_fields() {
     current_real_effort=$(printf '%s' "$wi_body" | jq -r '.fields["Custom.RealEffort"] // empty')
   fi
 
-  TEST_QA_REAL_EFFORT=""
-  if [[ -z "$current_real_effort" ]]; then
-    local default_effort="${current_effort:-0.5}"
-    echo -en "  Real Effort (horas decimais) [${CYAN}${default_effort}${NC}]: " >&2
+  TEST_QA_EFFORT=""
+  if [[ -z "$current_effort" ]]; then
+    echo -en "  Effort (horas decimais, ex: 0.5) [${CYAN}0.5${NC}]: " >&2
     local input_effort
     read -r input_effort
-    TEST_QA_REAL_EFFORT="${input_effort:-$default_effort}"
+    TEST_QA_EFFORT="${input_effort:-0.5}"
+  else
+    TEST_QA_EFFORT="$current_effort"
+  fi
+
+  TEST_QA_REAL_EFFORT=""
+  if [[ -z "$current_real_effort" ]]; then
+    local default_real="${TEST_QA_EFFORT:-0.5}"
+    echo -en "  Real Effort (horas decimais) [${CYAN}${default_real}${NC}]: " >&2
+    local input_real_effort
+    read -r input_real_effort
+    TEST_QA_REAL_EFFORT="${input_real_effort:-$default_real}"
   else
     TEST_QA_REAL_EFFORT="$current_real_effort"
   fi
@@ -1698,8 +1708,9 @@ update_parent_work_item_to_test_qa() {
 
   payload_tmp=$(mktemp)
 
-  jq -n --arg real_effort "$TEST_QA_REAL_EFFORT" '
+  jq -n --arg effort "$TEST_QA_EFFORT" --arg real_effort "$TEST_QA_REAL_EFFORT" '
     [{op:"add", path:"/fields/System.State", value:"Test QA"}]
+    + (if $effort != "" then [{op:"add", path:"/fields/Microsoft.VSTS.Scheduling.Effort", value:($effort|tonumber)}] else [] end)
     + (if $real_effort != "" then [{op:"add", path:"/fields/Custom.RealEffort", value:($real_effort|tonumber)}] else [] end)
   ' > "$payload_tmp"
 
