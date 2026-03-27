@@ -7,7 +7,7 @@ set -euo pipefail
 # from PR + Work Item context, with best-effort creation.
 # ============================================================
 
-VERSION="0.1.6"
+VERSION="0.1.7"
 CONFIG_DIR="$HOME/.config/pr-tools"
 ENV_FILE="$CONFIG_DIR/.env"
 CACHE_FILE="$CONFIG_DIR/.cache"
@@ -1665,12 +1665,44 @@ confirm_parent_test_qa_update() {
   return 0
 }
 
+collect_test_qa_required_fields() {
+  local wi_response wi_body wi_code current_effort current_real_effort
+  wi_response=$(azure_get "https://dev.azure.com/$AZURE_ORG_ENC/$AZURE_PROJECT_ENC/_apis/wit/workitems/$WORK_ITEM_ID?api-version=7.0")
+  wi_code=$(response_code "$wi_response")
+  wi_body=$(response_body "$wi_response")
+
+  current_effort=""
+  current_real_effort=""
+  if [[ "$wi_code" == "200" ]]; then
+    current_effort=$(printf '%s' "$wi_body" | jq -r '.fields["Microsoft.VSTS.Scheduling.Effort"] // empty')
+    current_real_effort=$(printf '%s' "$wi_body" | jq -r '.fields["Custom.RealEffort"] // empty')
+  fi
+
+  TEST_QA_REAL_EFFORT=""
+  if [[ -z "$current_real_effort" ]]; then
+    local default_effort="${current_effort:-0.5}"
+    echo -en "  Real Effort (horas decimais) [${CYAN}${default_effort}${NC}]: " >&2
+    local input_effort
+    read -r input_effort
+    TEST_QA_REAL_EFFORT="${input_effort:-$default_effort}"
+  else
+    TEST_QA_REAL_EFFORT="$current_real_effort"
+  fi
+}
+
 update_parent_work_item_to_test_qa() {
   local payload_tmp response code body
   log_info "Atualizando work item #$WORK_ITEM_ID para Test QA..."
+
+  collect_test_qa_required_fields
+
   payload_tmp=$(mktemp)
 
-  jq -n '[{op:"add", path:"/fields/System.State", value:"Test QA"}]' > "$payload_tmp"
+  jq -n --arg real_effort "$TEST_QA_REAL_EFFORT" '
+    [{op:"add", path:"/fields/System.State", value:"Test QA"}]
+    + (if $real_effort != "" then [{op:"add", path:"/fields/Custom.RealEffort", value:($real_effort|tonumber)}] else [] end)
+  ' > "$payload_tmp"
+
   response=$(azure_patch_json "https://dev.azure.com/$AZURE_ORG_ENC/$AZURE_PROJECT_ENC/_apis/wit/workitems/$WORK_ITEM_ID?api-version=7.0" "$payload_tmp")
   rm -f "$payload_tmp"
 
