@@ -7,7 +7,7 @@ set -euo pipefail
 # from git context, with clickable Azure DevOps PR links.
 # ============================================================
 
-VERSION="2.6.3"
+VERSION="2.6.4"
 CONFIG_DIR="$HOME/.config/pr-tools"
 ENV_FILE="$CONFIG_DIR/.env"
 TEMPLATE_FILE="$CONFIG_DIR/pr-template.md"
@@ -47,7 +47,7 @@ CLIP_CMD=""
 WORK_ITEM_ID=""
 CLI_WORK_ITEM=""
 SOURCE_BRANCH=""
-STREAM_MODE=true
+STREAM_MODE=false
 
 # ---- Helper functions ----
 
