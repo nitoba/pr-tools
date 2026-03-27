@@ -7,7 +7,7 @@ set -euo pipefail
 # from git context, with clickable Azure DevOps PR links.
 # ============================================================
 
-VERSION="2.6.1"
+VERSION="2.6.2"
 CONFIG_DIR="$HOME/.config/pr-tools"
 ENV_FILE="$CONFIG_DIR/.env"
 TEMPLATE_FILE="$CONFIG_DIR/pr-template.md"
@@ -1647,11 +1647,11 @@ call_llm_api() {
 
     if [[ -z "$content" ]]; then
       log_warn "Resposta vazia ou invalida de $provider_name"
-      echo ""
+      printf ''
       return 1
     fi
 
-    echo "$content"
+    printf '%s' "$content"
     return 0
   fi
 
@@ -1705,15 +1705,15 @@ call_llm_api() {
 
   # Extract content
   local content
-  content=$(echo "$body" | jq -r '.choices[0].message.content // empty' 2>/dev/null || echo "")
+  content=$(printf '%s' "$body" | jq -r '.choices[0].message.content // empty' 2>/dev/null || printf '')
 
   if [[ -z "$content" || "$content" == "null" ]]; then
     log_warn "Resposta vazia ou invalida de $provider_name"
-    echo ""
+    printf ''
     return 1
   fi
 
-  echo "$content"
+  printf '%s' "$content"
   return 0
 }
 
@@ -1788,11 +1788,11 @@ call_gemini_api() {
 
     if [[ -z "$content" ]]; then
       log_warn "Resposta vazia ou invalida de gemini"
-      echo ""
+      printf ''
       return 1
     fi
 
-    echo "$content"
+    printf '%s' "$content"
     return 0
   fi
 
@@ -1829,15 +1829,15 @@ call_gemini_api() {
 
   # Gemini response format: candidates[0].content.parts[0].text
   local content
-  content=$(echo "$body" | jq -r '.candidates[0].content.parts[0].text // empty' 2>/dev/null || echo "")
+  content=$(printf '%s' "$body" | jq -r '.candidates[0].content.parts[0].text // empty' 2>/dev/null || printf '')
 
   if [[ -z "$content" || "$content" == "null" ]]; then
     log_warn "Resposta vazia ou invalida de gemini"
-    echo ""
+    printf ''
     return 1
   fi
 
-  echo "$content"
+  printf '%s' "$content"
   return 0
 }
 
@@ -2155,25 +2155,37 @@ parse_title_and_body() {
   # Remove leading blank lines after stripping
   raw=$(printf '%s' "$raw" | sed '/./,$!d')
 
-  # Try to find TITULO: line anywhere in the output
+  # Try to find TITULO: line anywhere in the output (case-insensitive match)
   local found_title=false
-  local body_lines=""
+  local title_line_num=0
+  local current_line=0
 
   while IFS= read -r line; do
-    if [[ "$found_title" == "false" && "$line" =~ ^[[:space:]]*TITULO:[[:space:]]*(.+) ]]; then
+    current_line=$((current_line + 1))
+    # Match TITULO: or Titulo: or titulo: with optional leading whitespace
+    if [[ "$found_title" == "false" && "$line" =~ ^[[:space:]]*[Tt][Ii][Tt][Uu][Ll][Oo]:[[:space:]]*(.+) ]]; then
       PR_TITLE="${BASH_REMATCH[1]}"
       found_title=true
-    else
-      body_lines="${body_lines}${line}"$'\n'
+      title_line_num=$current_line
+      break
     fi
   done <<< "$raw"
 
   if [[ "$found_title" == "true" && -n "$PR_TITLE" ]]; then
+    # Collect only lines AFTER the TITULO: line as the body
+    local body_lines=""
+    local line_count=0
+    while IFS= read -r line; do
+      line_count=$((line_count + 1))
+      if [[ $line_count -gt $title_line_num ]]; then
+        body_lines="${body_lines}${line}"$'\n'
+      fi
+    done <<< "$raw"
     PR_BODY="$body_lines"
   else
     # Fallback: extract title from ## Descricao section's first sentence
     local desc_line
-    desc_line=$(echo "$raw" | grep -A1 "^## Descricao" | tail -1 | sed 's/^[[:space:]]*//' || true)
+    desc_line=$(printf '%s' "$raw" | grep -A1 "^## Descricao" | tail -1 | sed 's/^[[:space:]]*//' || true)
     if [[ -n "$desc_line" && "$desc_line" != "##"* ]]; then
       # Truncate to 80 chars
       PR_TITLE="${desc_line:0:80}"
@@ -2185,13 +2197,13 @@ parse_title_and_body() {
   fi
 
   # Clean up title: remove quotes, trailing dots, leading/trailing whitespace
-  PR_TITLE=$(echo "$PR_TITLE" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//;s/^"//;s/"$//')
+  PR_TITLE=$(printf '%s' "$PR_TITLE" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//;s/^"//;s/"$//')
 
   # Clean up body: remove leading blank lines and standalone ---
-  PR_BODY=$(echo "$PR_BODY" | sed '/./,$!d')
+  PR_BODY=$(printf '%s\n' "$PR_BODY" | sed '/./,$!d')
   # Remove leading --- if first non-empty line
-  if [[ "$(echo "$PR_BODY" | head -1)" == "---" ]]; then
-    PR_BODY=$(echo "$PR_BODY" | tail -n +2 | sed '/./,$!d')
+  if [[ "$(printf '%s\n' "$PR_BODY" | head -1)" == "---" ]]; then
+    PR_BODY=$(printf '%s\n' "$PR_BODY" | tail -n +2 | sed '/./,$!d')
   fi
 }
 
