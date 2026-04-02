@@ -41,16 +41,14 @@ fi
 
 _title_loop() {
   local msg="$1"
-  local toggle=0
-  # Save cursor position, then keep rewriting line
+  local frame=0
+  local frames=("✦" "✧" "✦" "·")
+  local colors=("$_UI_CYAN$_UI_BOLD" "$_UI_YELLOW$_UI_BOLD" "$_UI_CYAN$_UI_DIM" "$_UI_YELLOW$_UI_DIM")
   while true; do
-    if (( toggle % 2 == 0 )); then
-      printf '\r\033[2K%b·%b %b%s%b' "$_UI_CYAN$_UI_BOLD" "$_UI_NC" "$_UI_DIM" "$msg" "$_UI_NC" >&2
-    else
-      printf '\r\033[2K%b·%b %b%s%b' "$_UI_CYAN$_UI_DIM" "$_UI_NC" "$_UI_DIM" "$msg" "$_UI_NC" >&2
-    fi
-    toggle=$(( toggle + 1 ))
-    sleep 0.4
+    local i=$(( frame % ${#frames[@]} ))
+    printf '\r\033[2K%b%s%b %b%s%b' "${colors[$i]}" "${frames[$i]}" "$_UI_NC" "$_UI_DIM" "$msg" "$_UI_NC" >&2
+    frame=$(( frame + 1 ))
+    sleep 0.35
   done
 }
 
@@ -77,7 +75,7 @@ ui_title_start() {
     # Move to next line so steps print below the title
     printf '\n' >&2
   else
-    printf '· %s\n' "$msg" >&2
+    printf '✦ %s\n' "$msg" >&2
   fi
 }
 
