@@ -53,9 +53,8 @@ _spinner_loop() {
   local title_msg="$3"
   local frame=0
 
-  # When title active: "│" gray connector aligned under title icon
-  local prefix="    "
-  [[ "$title_dist" -gt 0 ]] && prefix="\033[38;5;242m│\033[0m  "
+  local prefix="   "
+  [[ "$title_dist" -gt 0 ]] && prefix="\033[38;5;242m│\033[0m "
 
   local sparkle_frames=("✦" "✧" "✦" "·")
   # Orange tones for title sparkle
@@ -156,7 +155,7 @@ step_done() {
   _spinner_clear_line
   local prefix="   "
   if [[ "$_TITLE_ACTIVE" == "true" ]]; then
-    prefix="${_UI_GRAY}│${_UI_NC}  "
+    prefix="${_UI_GRAY}│${_UI_NC} "
   fi
   printf ' %b %b✓%b %s\n' "$prefix" "$_UI_GREEN" "$_UI_NC" "$msg" >&2
   _SPINNER_MSG=""
@@ -171,7 +170,7 @@ step_fail() {
   _spinner_clear_line
   local prefix="   "
   if [[ "$_TITLE_ACTIVE" == "true" ]]; then
-    prefix="${_UI_GRAY}│${_UI_NC}  "
+    prefix="${_UI_GRAY}│${_UI_NC} "
   fi
   printf ' %b %b✗%b %s\n' "$prefix" "$_UI_RED" "$_UI_NC" "$msg" >&2
   _SPINNER_MSG=""
