@@ -2,11 +2,11 @@
 
 ## Purpose
 - This repository is a Bash-first CLI project for generating Azure DevOps PR descriptions with LLM providers.
-- Main runtime code lives in `bin/create-pr-description`; installation/bootstrap logic lives in `install.sh`.
+- Main runtime code lives in `src/bin/create-pr-description`; installation/bootstrap logic lives in `install.sh`.
 - There is no formal build system; agents should optimize for safe shell edits, syntax checks, and targeted manual validation.
 
 ## Repository Map
-- `bin/create-pr-description` - main CLI, provider calls, git context collection, Azure DevOps integration, clipboard handling.
+- `src/bin/create-pr-description` - main CLI, provider calls, git context collection, Azure DevOps integration, clipboard handling.
 - `install.sh` - installer that downloads the CLI into `~/.local/bin` and optionally bootstraps config.
 - `README.md` - user-facing installation and usage docs in Brazilian Portuguese.
 - `opencode.json` - local agent tooling config.
@@ -16,19 +16,19 @@
 ### Setup / install
 - Install from remote: `curl -fsSL https://raw.githubusercontent.com/nitoba/pr-tools/main/install.sh | bash`
 - Run local installer from repo: `bash install.sh`
-- Initialize local config only: `bin/create-pr-description --init`
+- Initialize local config only: `src/bin/create-pr-description --init`
 
 ### Build
 - There is no compile/build step.
 - The closest equivalent is shell syntax validation:
-- `bash -n bin/create-pr-description`
+- `bash -n src/bin/create-pr-description`
 - `bash -n install.sh`
 
 ### Lint / format
 - No repo-local linter or formatter config was found.
 - Optional checks if available in the environment:
-- `shellcheck bin/create-pr-description install.sh`
-- `shfmt -w bin/create-pr-description install.sh`
+- `shellcheck src/bin/create-pr-description install.sh`
+- `shfmt -w src/bin/create-pr-description install.sh`
 - Do not assume `shellcheck` or `shfmt` are installed unless you verify first.
 
 ### Test
@@ -39,17 +39,17 @@
 ### Single-test equivalent
 - There is no true single-test command because no automated harness exists.
 - Use the narrowest possible check for the code you changed:
-- `bash -n bin/create-pr-description`
+- `bash -n src/bin/create-pr-description`
 - `bash -n install.sh`
-- `bin/create-pr-description --help`
-- `bin/create-pr-description --version`
-- `bin/create-pr-description --dry-run`
+- `src/bin/create-pr-description --help`
+- `src/bin/create-pr-description --version`
+- `src/bin/create-pr-description --dry-run`
 
 ### Recommended validation flows
-- CLI-only change: `bash -n bin/create-pr-description && bin/create-pr-description --help`
+- CLI-only change: `bash -n src/bin/create-pr-description && src/bin/create-pr-description --help`
 - Installer-only change: `bash -n install.sh`
-- Prompt/output change: `bash -n bin/create-pr-description && bin/create-pr-description --dry-run`
-- Config/init change: `bash -n bin/create-pr-description && bin/create-pr-description --init`
+- Prompt/output change: `bash -n src/bin/create-pr-description && src/bin/create-pr-description --dry-run`
+- Config/init change: `bash -n src/bin/create-pr-description && src/bin/create-pr-description --init`
 
 ## Tooling Findings
 - Language: Bash
@@ -132,7 +132,7 @@
 
 ### API and config changes
 - Preserve environment-variable precedence: explicit environment values override `.env` values.
-- Keep default provider/model constants centralized near the top of `bin/create-pr-description`.
+- Keep default provider/model constants centralized near the top of `src/bin/create-pr-description`.
 - When adding a new CLI flag, update both `parse_args` and `show_help` together.
 - When adding config keys, update creation, loading, validation, and docs together.
 

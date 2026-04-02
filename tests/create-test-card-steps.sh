@@ -5,7 +5,7 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 
 # shellcheck source=/dev/null
-source "$REPO_ROOT/bin/create-test-card"
+source "$REPO_ROOT/src/bin/create-test-card"
 
 markdown=$(cat <<'EOF'
 ## Objetivo

@@ -351,7 +351,7 @@ do_update() {
   log_info "Verificando atualizacao..."
 
   local remote_script
-  remote_script=$(curl -fsSL "$repo_url/bin/$script_name" 2>/dev/null || echo "")
+  remote_script=$(curl -fsSL "$repo_url/src/bin/$script_name" 2>/dev/null || echo "")
 
   if [[ -z "$remote_script" ]]; then
     log_error "Falha ao baixar atualizacao. Verifique sua conexao."
@@ -390,7 +390,7 @@ do_update() {
 
   local lib_file lib_content
   for lib_file in common.sh llm.sh azure.sh test-card-azure.sh test-card-llm.sh; do
-    lib_content=$(curl -fsSL "$repo_url/lib/$lib_file" 2>/dev/null || echo "")
+    lib_content=$(curl -fsSL "$repo_url/src/lib/$lib_file" 2>/dev/null || echo "")
     if [[ -n "$lib_content" ]]; then
       echo "$lib_content" > "$lib_dir/$lib_file"
       log_success "Lib atualizada: $lib_file"

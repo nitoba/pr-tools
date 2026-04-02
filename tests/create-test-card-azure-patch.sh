@@ -11,7 +11,7 @@ curl() {
 AZURE_PAT="dummy"
 
 # shellcheck source=/dev/null
-source "$REPO_ROOT/bin/create-test-card"
+source "$REPO_ROOT/src/bin/create-test-card"
 
 payload=$(mktemp)
 printf '[]' > "$payload"

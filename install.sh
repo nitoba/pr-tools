@@ -54,7 +54,7 @@ log_info "Diretorio de instalacao: $INSTALL_DIR"
 # Download scripts
 log_info "Baixando create-pr-description..."
 tmp_pr=$(mktemp)
-if curl -fsSL "$RAW_URL/bin/create-pr-description" -o "$tmp_pr"; then
+if curl -fsSL "$RAW_URL/src/bin/create-pr-description" -o "$tmp_pr"; then
   chmod +x "$tmp_pr"
   mv "$tmp_pr" "$INSTALL_DIR/create-pr-description"
   log_success "Script instalado: $INSTALL_DIR/create-pr-description"
@@ -66,7 +66,7 @@ fi
 
 log_info "Baixando create-test-card..."
 tmp_test=$(mktemp)
-if curl -fsSL "$RAW_URL/bin/create-test-card" -o "$tmp_test"; then
+if curl -fsSL "$RAW_URL/src/bin/create-test-card" -o "$tmp_test"; then
   chmod +x "$tmp_test"
   mv "$tmp_test" "$INSTALL_DIR/create-test-card"
   log_success "Script instalado: $INSTALL_DIR/create-test-card"
@@ -84,7 +84,7 @@ log_info "Diretorio de libs: $LIB_INSTALL_DIR"
 for lib_file in common.sh llm.sh azure.sh test-card-azure.sh test-card-llm.sh; do
   log_info "Baixando lib/$lib_file..."
   tmp_lib=$(mktemp)
-  if curl -fsSL "$RAW_URL/lib/$lib_file" -o "$tmp_lib"; then
+  if curl -fsSL "$RAW_URL/src/lib/$lib_file" -o "$tmp_lib"; then
     mv "$tmp_lib" "$LIB_INSTALL_DIR/$lib_file"
     log_success "Lib instalada: $LIB_INSTALL_DIR/$lib_file"
   else

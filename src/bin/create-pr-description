@@ -32,7 +32,7 @@ _pr_tools_ensure_libs() {
     echo "[INFO] Bibliotecas nao encontradas. Baixando automaticamente..." >&2
     mkdir -p "$LIB_DIR"
     for _lib in common.sh llm.sh azure.sh test-card-azure.sh test-card-llm.sh; do
-      if ! curl -fsSL "$REPO_URL/lib/$_lib" -o "$LIB_DIR/$_lib" 2>/dev/null; then
+      if ! curl -fsSL "$REPO_URL/src/lib/$_lib" -o "$LIB_DIR/$_lib" 2>/dev/null; then
         echo "[ERRO] Falha ao baixar $LIB_DIR/$_lib" >&2
         echo "[ERRO] Execute: curl -fsSL $REPO_URL/install.sh | bash" >&2
         exit 1
