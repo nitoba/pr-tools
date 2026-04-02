@@ -1072,12 +1072,12 @@ main() {
 
   step_start "Validando branch"
   validate_not_base_branch
-  step_done "Branch: $BRANCH_NAME"
+  step_done "Branch validada"
 
   # Collect context
   step_start "Coletando contexto git"
   collect_git_context
-  step_done "Contexto git coletado"
+  step_done "Contexto git coletado ($BRANCH_NAME)"
 
   step_start "Detectando work item"
   detect_work_item
