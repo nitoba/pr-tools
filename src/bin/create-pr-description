@@ -1056,6 +1056,7 @@ main() {
   fi
 
   # Validation
+  ui_title_start "Gerando descricao do PR..."
   step_start "Validando dependencias"
   validate_dependencies
   validate_git_repo
@@ -1176,6 +1177,7 @@ $GIT_DIFF"
     echo -e "${DIM}--- Resposta completa recebida ---${NC}" >&2
   fi
   step_done "Descrição gerada ($USED_PROVIDER/$USED_MODEL)"
+  ui_title_done
 
   # Output
   print_output "$LLM_RESULT"

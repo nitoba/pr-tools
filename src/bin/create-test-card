@@ -529,6 +529,7 @@ main() {
     exit 0
   fi
 
+  ui_title_start "Gerando card de teste..."
   step_start "Validando dependencias"
   validate_dependencies
   step_done "Dependencias validadas"
@@ -606,6 +607,7 @@ EOF
   GENERATED_HTML=$(markdown_to_html "$GENERATED_MARKDOWN")
   GENERATED_STEPS=$(markdown_to_azure_steps "$GENERATED_MARKDOWN")
   step_done "Card gerado ($USED_PROVIDER/$USED_MODEL)"
+  ui_title_done
 
   print_output
 
