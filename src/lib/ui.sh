@@ -95,6 +95,11 @@ _spinner_loop() {
 }
 
 _spinner_stop() {
+  # Skip if running inside a subshell (e.g. result=$(func))
+  # Subshells inherit _SPINNER_PID but must not kill the parent's spinner
+  if [[ "${BASHPID:-$$}" != "$$" ]]; then
+    return 0
+  fi
   if [[ -n "$_SPINNER_PID" ]]; then
     kill "$_SPINNER_PID" 2>/dev/null
     wait "$_SPINNER_PID" 2>/dev/null
