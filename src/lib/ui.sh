@@ -79,7 +79,7 @@ _spinner_loop() {
     if [[ "$title_dist" -gt 0 && -n "$title_msg" ]]; then
       printf '\033[s' >&2
       printf '\033[%dA\r\033[2K' "$title_dist" >&2
-      printf ' %b%s%b %b%s%b' "${sparkle_colors[$i]}" "${sparkle_frames[$i]}" "\033[0m" "\033[38;5;242m" "$title_msg" "\033[0m" >&2
+      printf ' %b%s%b %b%s%b' "${sparkle_colors[$i]}" "${sparkle_frames[$i]}" "\033[0m" "\033[38;2;153;75;48m" "$title_msg" "\033[0m" >&2
       printf '\033[u' >&2
     fi
 
@@ -112,7 +112,7 @@ ui_title_start() {
   _TITLE_LINES_BELOW=0
 
   if [[ "$_SPINNER_INTERACTIVE" == "true" ]]; then
-    printf ' %b✦%b %b%s%b\n' "$_UI_ORANGE$_UI_BOLD" "$_UI_NC" "$_UI_GRAY" "$msg" "$_UI_NC" >&2
+    printf ' %b✦%b %b%s%b\n' "$_UI_ORANGE$_UI_BOLD" "$_UI_NC" "$_UI_ORANGE_DIM" "$msg" "$_UI_NC" >&2
   else
     printf ' ✦ %s\n' "$msg" >&2
   fi
