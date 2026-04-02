@@ -76,6 +76,24 @@ else
   exit 1
 fi
 
+# Download libs
+LIB_INSTALL_DIR="$HOME/.local/lib/pr-tools"
+mkdir -p "$LIB_INSTALL_DIR"
+log_info "Diretorio de libs: $LIB_INSTALL_DIR"
+
+for lib_file in common.sh llm.sh azure.sh; do
+  log_info "Baixando lib/$lib_file..."
+  tmp_lib=$(mktemp)
+  if curl -fsSL "$RAW_URL/lib/$lib_file" -o "$tmp_lib"; then
+    mv "$tmp_lib" "$LIB_INSTALL_DIR/$lib_file"
+    log_success "Lib instalada: $LIB_INSTALL_DIR/$lib_file"
+  else
+    rm -f "$tmp_lib"
+    log_error "Falha ao baixar lib/$lib_file."
+    exit 1
+  fi
+done
+
 # Check if install dir is in PATH
 if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
   log_warn "$INSTALL_DIR nao esta no PATH."
