@@ -7,7 +7,7 @@ set -euo pipefail
 # from PR + Work Item context, with best-effort creation.
 # ============================================================
 
-VERSION="0.3.0"
+VERSION="0.3.1"
 CONFIG_DIR="$HOME/.config/pr-tools"
 ENV_FILE="$CONFIG_DIR/.env"
 CACHE_FILE="$CONFIG_DIR/.cache"
@@ -204,7 +204,7 @@ Opcoes:
   --pr <id>             ID do PR do Azure DevOps (override)
   --org <nome>          Organization do Azure DevOps (override)
   --project <nome>      Projeto do Azure DevOps (override)
-  --repo <nome>         Repositorio do Azure DevOps (override)
+  --repo <nome>         Repositório do Azure DevOps (override)
   --area-path <path>    AreaPath para criacao do Test Case (override)
   --assigned-to <valor> Responsavel do Test Case (override)
   --examples <n>        Quantidade de exemplos no prompt (0-5, padrao: 2)

@@ -14,12 +14,12 @@
 
 ## File Structure
 
-| File | Responsibility |
-|---|---|
+| File                                 | Responsibility                                                                                            |
+| ------------------------------------ | --------------------------------------------------------------------------------------------------------- |
 | `~/.local/bin/create-pr-description` | Main script: CLI parsing, validation, git context collection, LLM API calls, output formatting, clipboard |
-| `~/.config/pr-tools/pr-template.md` | LLM system prompt with PR description format instructions |
-| `~/.config/pr-tools/.env` | API keys, provider config, Azure PAT |
-| `~/.config/pr-tools/.cache` | Cached repositoryId per remote URL |
+| `~/.config/pr-tools/pr-template.md`  | LLM system prompt with PR description format instructions                                                 |
+| `~/.config/pr-tools/.env`            | API keys, provider config, Azure PAT                                                                      |
+| `~/.config/pr-tools/.cache`          | Cached repositoryId per remote URL                                                                        |
 
 The script is a single file (~400 lines). It is organized into clearly named functions, each with one responsibility. No external dependencies beyond `bash`, `curl`, `jq`, and `git`.
 
@@ -30,6 +30,7 @@ The script is a single file (~400 lines). It is organized into clearly named fun
 ### Task 1: Create script file with shebang, constants, and helper functions
 
 **Files:**
+
 - Create: `~/.local/bin/create-pr-description`
 
 - [ ] **Step 1: Create the script file with base structure**
@@ -103,6 +104,7 @@ git commit -m "feat: create script skeleton with constants and helper functions"
 ### Task 2: Implement CLI argument parsing (--init, --target, --help)
 
 **Files:**
+
 - Modify: `~/.local/bin/create-pr-description`
 
 - [ ] **Step 1: Add argument parsing and --help**
@@ -227,6 +229,7 @@ git commit -m "feat: add CLI argument parsing with --help, --target, --version"
 ### Task 3: Implement --init (create config files)
 
 **Files:**
+
 - Modify: `~/.local/bin/create-pr-description`
 - Create (via script): `~/.config/pr-tools/pr-template.md`
 - Create (via script): `~/.config/pr-tools/.env`
@@ -349,6 +352,7 @@ do_init() {
 
 Run: `rm -rf ~/.config/pr-tools && create-pr-description --init`
 Expected:
+
 ```
 [INFO] Inicializando configuracao em /Users/.../.config/pr-tools...
 [OK] Template criado: .../.config/pr-tools/pr-template.md
@@ -380,6 +384,7 @@ git commit -m "feat: implement --init to create config, template, and cache file
 ### Task 4: Implement validation functions
 
 **Files:**
+
 - Modify: `~/.local/bin/create-pr-description`
 
 - [ ] **Step 1: Add validation functions**
@@ -391,7 +396,7 @@ Add after the helper functions:
 
 validate_git_repo() {
   if ! git rev-parse --is-inside-work-tree &>/dev/null; then
-    log_error "Nao e um repositorio git."
+    log_error "Nao e um repositório git."
     exit 1
   fi
 }
@@ -501,7 +506,7 @@ main() {
 - [ ] **Step 4: Test validation - not a git repo**
 
 Run: `cd /tmp && create-pr-description`
-Expected: Error "Nao e um repositorio git."
+Expected: Error "Nao e um repositório git."
 
 - [ ] **Step 5: Test validation - on base branch**
 
@@ -522,6 +527,7 @@ git commit -m "feat: add validation and config loading functions"
 ### Task 5: Collect git context (branch, diff, log)
 
 **Files:**
+
 - Modify: `~/.local/bin/create-pr-description`
 
 - [ ] **Step 1: Add git context collection functions**
@@ -591,6 +597,7 @@ git commit -m "feat: add git context collection (diff, log, branch)"
 ### Task 6: Detect current sprint
 
 **Files:**
+
 - Modify: `~/.local/bin/create-pr-description`
 
 - [ ] **Step 1: Add sprint detection function**
@@ -660,7 +667,7 @@ Expected: Warning "Nenhuma branch sprint encontrada no remote." and targets adju
 - [ ] **Step 5: Test --target sprint when no sprint exists**
 
 Run: `create-pr-description --target sprint` (from a repo without sprint branches)
-Expected: Error "Flag --target sprint usada, mas nenhuma branch sprint/* encontrada."
+Expected: Error "Flag --target sprint usada, mas nenhuma branch sprint/\* encontrada."
 
 - [ ] **Step 6: Commit**
 
@@ -674,6 +681,7 @@ git commit -m "feat: add automatic sprint branch detection"
 ### Task 7: Parse Azure DevOps remote and get repositoryId
 
 **Files:**
+
 - Modify: `~/.local/bin/create-pr-description`
 
 - [ ] **Step 1: Add remote URL parsing function**
@@ -882,6 +890,7 @@ git commit -m "feat: add Azure DevOps remote parsing, repo ID fetch/cache, PR li
 ### Task 8: Implement LLM API call with provider fallback
 
 **Files:**
+
 - Modify: `~/.local/bin/create-pr-description`
 
 - [ ] **Step 1: Add provider-specific config resolver**
@@ -1043,6 +1052,7 @@ git commit -m "feat: add LLM API call with multi-provider fallback"
 ### Task 9: Implement output formatting and clipboard
 
 **Files:**
+
 - Modify: `~/.local/bin/create-pr-description`
 
 - [ ] **Step 1: Add clipboard detection function**
@@ -1145,6 +1155,7 @@ git commit -m "feat: add output formatting with PR links and clipboard support"
 ### Task 10: Wire everything together in main()
 
 **Files:**
+
 - Modify: `~/.local/bin/create-pr-description`
 
 - [ ] **Step 1: Update main() with the complete flow**
@@ -1216,9 +1227,11 @@ main "$@"
 - [ ] **Step 2: End-to-end test**
 
 Run (from a feature branch with changes, after configuring .env with a valid API key):
+
 ```bash
 create-pr-description
 ```
+
 Expected: Full output with description, PR links, clipboard copy confirmation.
 
 - [ ] **Step 3: Test with --target dev only**
@@ -1249,7 +1262,7 @@ Run these tests to verify all error paths and edge cases work:
 - [ ] **Step 1: Test outside git repo**
 
 Run: `cd /tmp && create-pr-description`
-Expected: Error "Nao e um repositorio git."
+Expected: Error "Nao e um repositório git."
 
 - [ ] **Step 2: Test on base branch**
 
@@ -1310,4 +1323,4 @@ Expected: Warning "Remote nao e Azure DevOps. Links de PR nao serao gerados." an
 
 From a repo without sprint branches:
 Run: `create-pr-description --target sprint`
-Expected: Error "Flag --target sprint usada, mas nenhuma branch sprint/* encontrada."
+Expected: Error "Flag --target sprint usada, mas nenhuma branch sprint/\* encontrada."

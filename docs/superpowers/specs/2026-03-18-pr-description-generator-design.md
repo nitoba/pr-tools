@@ -10,6 +10,7 @@ Criar uma ferramenta de linha de comando que gera automaticamente descricoes de 
 ## Problema
 
 O processo manual de escrever descricoes de PR e repetitivo e consome tempo. O desenvolvedor precisa:
+
 1. Analisar o diff manualmente
 2. Escrever a descricao seguindo um formato padrao
 3. Repetir para dois PRs (dev e sprint/N)
@@ -21,6 +22,7 @@ Um script shell + template externo + configuracao de providers que automatiza a 
 ## Requisitos
 
 ### Funcionais
+
 - Coletar contexto do git: `git diff`, `git log`, branch name
 - Detectar automaticamente a sprint vigente (branch `sprint/*` com maior numero no remote)
 - Gerar descricao de PR em portugues brasileiro
@@ -31,6 +33,7 @@ Um script shell + template externo + configuracao de providers que automatiza a 
 - Obter repositoryId do Azure DevOps via API REST (com PAT token) e cachear localmente
 
 ### Nao-funcionais
+
 - Executar em menos de 30 segundos (depende da API do provider)
 - Funcionar em macOS e Linux
 - Usar modelos gratuitos por padrao (OpenRouter e Groq oferecem modelos free)
@@ -47,6 +50,7 @@ Um script shell + template externo + configuracao de providers que automatiza a 
 ```
 
 ### Pre-requisitos
+
 - `git` disponivel no PATH
 - `curl` e `jq` disponiveis no PATH (para chamadas REST e parsing JSON)
 - Clipboard: `pbcopy` (macOS), `xclip` ou `xsel` (Linux). Opcional — se nenhum disponivel, apenas imprime no terminal
@@ -59,10 +63,10 @@ O script suporta multiplos providers com fallback configuravel via lista de prio
 
 ### Providers suportados
 
-| Provider | API Base URL | Var de API Key | Modelo padrao (gratuito) |
-|---|---|---|---|
-| OpenRouter | https://openrouter.ai/api/v1/chat/completions | OPENROUTER_API_KEY | meta-llama/llama-3.3-70b-instruct:free |
-| Groq | https://api.groq.com/openai/v1/chat/completions | GROQ_API_KEY | llama-3.3-70b-versatile |
+| Provider   | API Base URL                                    | Var de API Key     | Modelo padrao (gratuito)               |
+| ---------- | ----------------------------------------------- | ------------------ | -------------------------------------- |
+| OpenRouter | https://openrouter.ai/api/v1/chat/completions   | OPENROUTER_API_KEY | meta-llama/llama-3.3-70b-instruct:free |
+| Groq       | https://api.groq.com/openai/v1/chat/completions | GROQ_API_KEY       | llama-3.3-70b-versatile                |
 
 ### Configuracao
 
@@ -143,14 +147,14 @@ https://dev.azure.com/{org}/{project}/_git/{repo}/pullrequestcreate
 
 ### Obtencao dos parametros
 
-| Parametro | Como obter |
-|---|---|
-| org | Extrair da URL do remote origin: `git remote get-url origin` |
-| project | Extrair da URL do remote origin |
-| repo | Extrair da URL do remote origin |
-| branch_name | `git branch --show-current` |
-| target_branch | `dev` e `sprint/N` (dois links separados) |
-| repo_id | API REST do Azure DevOps (cacheado) |
+| Parametro     | Como obter                                                   |
+| ------------- | ------------------------------------------------------------ |
+| org           | Extrair da URL do remote origin: `git remote get-url origin` |
+| project       | Extrair da URL do remote origin                              |
+| repo          | Extrair da URL do remote origin                              |
+| branch_name   | `git branch --show-current`                                  |
+| target_branch | `dev` e `sprint/N` (dois links separados)                    |
+| repo_id       | API REST do Azure DevOps (cacheado)                          |
 
 ### Parsing da URL do remote
 
@@ -190,6 +194,7 @@ Isso permite que o script funcione com multiplos repos sem pedir o ID novamente.
 ### Fallback sem PAT
 
 Se AZURE_PAT nao estiver configurado:
+
 - Gera os links SEM os parametros repositoryId (pode funcionar, depende do Azure DevOps)
 - Exibe aviso: "Links gerados sem repositoryId. Configure AZURE_PAT para links completos."
 
@@ -207,6 +212,7 @@ sprint_number=$(git branch -r | grep 'origin/sprint/' | \
 ## Limites de Contexto
 
 Para evitar estourar o contexto do modelo:
+
 - Diff limitado a **8000 linhas** (truncado com nota informativa)
 - Log limitado a **50 commits**
 - Se truncado, o prompt inclui: `[diff truncado, mostrando primeiras 8000 linhas]`
@@ -230,6 +236,7 @@ brasileiro seguindo EXATAMENTE este formato:
 ### Componentes atualizados
 
 <Para cada componente/arquivo modificado significativamente, liste:>
+
 - **nome-do-componente**: <Descricao das mudancas neste componente, focando no
   que mudou funcionalmente, nao linha por linha>
 
@@ -250,6 +257,7 @@ Se nao houver, omita esta secao.>
 ---
 
 ## Regras:
+
 - Escreva em portugues brasileiro
 - Seja tecnico mas conciso
 - Foque no "o que" e "por que", nao no "como"
@@ -305,24 +313,24 @@ description=$(echo "$body" | jq -r '.choices[0].message.content')
 
 ## Tratamento de Erros
 
-| Condicao | Acao |
-|---|---|
-| Nao esta num repo git | Erro: "Nao e um repositorio git" (exit 1) |
-| `curl` ou `jq` nao instalados | Erro: "Dependencias nao encontradas: curl e jq sao necessarios." (exit 1) |
-| Nenhuma API key configurada | Erro: "Nenhuma API key configurada. Execute 'create-pr-description --init' e configure o .env." (exit 1) |
-| Branch e dev/main/master | Erro: "Voce esta na branch base. Mude para uma feature branch." (exit 1) |
-| Nenhuma branch sprint/* | Aviso: "Nenhuma branch sprint encontrada. Usando apenas dev como target." (exit 0) |
-| Diff vazio | Erro: "Nenhuma alteracao encontrada em relacao a dev." (exit 1) |
-| Provider retorna erro HTTP | Aviso: "Provider [X] falhou (HTTP [code]). Tentando proximo..." Tenta fallback. |
-| Todos os providers falharam | Erro: "Todos os providers falharam. Verifique suas API keys e conexao." (exit 1) |
-| Timeout na chamada (>60s) | Aviso: "Timeout no provider [X]. Tentando proximo..." Tenta fallback. |
-| Rate limit (HTTP 429) | Aviso: "Rate limit no provider [X]. Tentando proximo..." Tenta fallback. |
-| Clipboard nao disponivel | Aviso: "Nenhum comando de clipboard encontrado (pbcopy/xclip/xsel). Descricao exibida apenas no terminal." (exit 0) |
-| Template nao existe | Erro: "Template nao encontrado em ~/.config/pr-tools/pr-template.md. Execute 'create-pr-description --init' para criar." (exit 1) |
-| git fetch falha (offline/rede) | Aviso: "Falha ao fazer fetch do remote. Usando dados locais." Continua com branches locais. (exit 0) |
-| AZURE_PAT nao configurado | Aviso: "Links gerados sem repositoryId. Configure AZURE_PAT para links completos." (exit 0) |
-| API do Azure DevOps falha | Aviso: "Falha ao obter repositoryId. Links gerados sem repositoryId." (exit 0) |
-| Remote origin nao e Azure DevOps | Aviso: "Remote nao e Azure DevOps. Links de PR nao serao gerados." (exit 0) |
+| Condicao                         | Acao                                                                                                                              |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| Nao esta num repo git            | Erro: "Nao e um repositório git" (exit 1)                                                                                         |
+| `curl` ou `jq` nao instalados    | Erro: "Dependencias nao encontradas: curl e jq sao necessarios." (exit 1)                                                         |
+| Nenhuma API key configurada      | Erro: "Nenhuma API key configurada. Execute 'create-pr-description --init' e configure o .env." (exit 1)                          |
+| Branch e dev/main/master         | Erro: "Voce esta na branch base. Mude para uma feature branch." (exit 1)                                                          |
+| Nenhuma branch sprint/\*         | Aviso: "Nenhuma branch sprint encontrada. Usando apenas dev como target." (exit 0)                                                |
+| Diff vazio                       | Erro: "Nenhuma alteracao encontrada em relacao a dev." (exit 1)                                                                   |
+| Provider retorna erro HTTP       | Aviso: "Provider [X] falhou (HTTP [code]). Tentando proximo..." Tenta fallback.                                                   |
+| Todos os providers falharam      | Erro: "Todos os providers falharam. Verifique suas API keys e conexao." (exit 1)                                                  |
+| Timeout na chamada (>60s)        | Aviso: "Timeout no provider [X]. Tentando proximo..." Tenta fallback.                                                             |
+| Rate limit (HTTP 429)            | Aviso: "Rate limit no provider [X]. Tentando proximo..." Tenta fallback.                                                          |
+| Clipboard nao disponivel         | Aviso: "Nenhum comando de clipboard encontrado (pbcopy/xclip/xsel). Descricao exibida apenas no terminal." (exit 0)               |
+| Template nao existe              | Erro: "Template nao encontrado em ~/.config/pr-tools/pr-template.md. Execute 'create-pr-description --init' para criar." (exit 1) |
+| git fetch falha (offline/rede)   | Aviso: "Falha ao fazer fetch do remote. Usando dados locais." Continua com branches locais. (exit 0)                              |
+| AZURE_PAT nao configurado        | Aviso: "Links gerados sem repositoryId. Configure AZURE_PAT para links completos." (exit 0)                                       |
+| API do Azure DevOps falha        | Aviso: "Falha ao obter repositoryId. Links gerados sem repositoryId." (exit 0)                                                    |
+| Remote origin nao e Azure DevOps | Aviso: "Remote nao e Azure DevOps. Links de PR nao serao gerados." (exit 0)                                                       |
 
 ## Output Esperado
 
@@ -394,6 +402,7 @@ create-pr-description --target dev --target sprint
 ```
 
 Valores aceitos:
+
 - `dev` — gera link para a branch `dev`
 - `sprint` — gera link para a branch `sprint/N` (detectada automaticamente)
 

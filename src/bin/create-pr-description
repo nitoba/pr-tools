@@ -7,7 +7,7 @@ set -euo pipefail
 # from git context, with clickable Azure DevOps PR links.
 # ============================================================
 
-VERSION="2.8.0"
+VERSION="2.8.1"
 CONFIG_DIR="$HOME/.config/pr-tools"
 ENV_FILE="$CONFIG_DIR/.env"
 TEMPLATE_FILE="$CONFIG_DIR/pr-template.md"
@@ -592,7 +592,7 @@ do_init() {
 
 validate_git_repo() {
   if ! git rev-parse --is-inside-work-tree &>/dev/null; then
-    log_error "Não e um repositorio git."
+    log_error "Não e um repositório git."
     exit 1
   fi
 }
@@ -1095,14 +1095,14 @@ main() {
     step_done "Sem sprint ativo"
   fi
 
-  step_start "Resolvendo repositorio Azure DevOps"
+  step_start "Resolvendo repositório Azure DevOps"
   parse_azure_remote
   fetch_repo_id
   build_pr_links
   if [[ "$IS_AZURE_DEVOPS" == "true" ]]; then
-    step_done "Repositorio: $AZURE_ORG/$AZURE_PROJECT/$AZURE_REPO"
+    step_done "Repositório: $AZURE_ORG/$AZURE_PROJECT/$AZURE_REPO"
   else
-    step_done "Repositorio não-Azure (sem links de PR)"
+    step_done "Repositório não-Azure (sem links de PR)"
   fi
 
   detect_md_renderer
@@ -1162,7 +1162,7 @@ $GIT_DIFF"
   fi
 
   # Call LLM
-  step_start "Gerando descricao via LLM"
+  step_start "Gerando descrição via LLM"
   if [[ "$STREAM_MODE" == "true" ]]; then
     _spinner_stop
     _spinner_clear_line

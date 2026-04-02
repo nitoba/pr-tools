@@ -33,11 +33,13 @@ Na implementacao atual, qualquer HTTP diferente de `200` cai no tratamento gener
 Esta mudanca e restrita ao provider `groq`.
 
 Inclui:
+
 - detectar o erro especifico de incompatibilidade com `reasoning_format`
 - refazer a requisicao uma unica vez sem `reasoning_format`
 - manter o restante do payload identico entre a primeira chamada e o retry
 
 Nao inclui:
+
 - generalizar o comportamento para outros providers
 - introduzir mapeamento manual de modelos com ou sem suporte a reasoning
 - mudar flags, config ou UX externa da CLI
@@ -59,29 +61,35 @@ Se o erro for diferente, o comportamento continua igual ao atual: o provider fal
 Essa e a abordagem escolhida.
 
 Vantagens:
+
 - preserva o comportamento otimizado atual para modelos Groq que suportam `reasoning_format`
 - minimiza o escopo da mudanca
 - evita manter listas de compatibilidade por modelo
 
 Desvantagens:
+
 - depende da consistencia da mensagem/campos de erro retornados pela Groq
 
 ### 2. Remover `reasoning_format` de todas as chamadas Groq
 
 Vantagens:
+
 - simplifica o fluxo
 - elimina a necessidade de retry
 
 Desvantagens:
+
 - perde o beneficio atual para modelos que suportam reasoning e cujo output fica melhor com `reasoning_format: "hidden"`
 - altera comportamento valido que hoje funciona
 
 ### 3. Manter allowlist ou blocklist de modelos Groq
 
 Vantagens:
+
 - evita a primeira chamada falha em modelos ja conhecidos
 
 Desvantagens:
+
 - introduz manutencao manual
 - envelhece mal quando a Groq muda suporte ou catalogo de modelos
 - aumenta acoplamento entre codigo e nomes de modelos
@@ -91,6 +99,7 @@ Desvantagens:
 ### Ponto de mudanca
 
 O comportamento atual esta concentrado em `bin/create-pr-description`, principalmente dentro de `call_llm_api`, onde:
+
 - o payload base e montado com `jq`
 - `reasoning_format: "hidden"` e adicionado para `groq`
 - erros HTTP sao tratados de forma generica
@@ -98,12 +107,14 @@ O comportamento atual esta concentrado em `bin/create-pr-description`, principal
 ### Ajuste estrutural
 
 Separar a montagem do payload OpenAI-compatible da execucao HTTP, para permitir reaproveitar a mesma logica em dois modos:
+
 - com `reasoning_format`
 - sem `reasoning_format`
 
 O objetivo nao e reescrever a integracao, mas reduzir duplicacao suficiente para que o retry altere apenas um aspecto do payload.
 
 Para a implementacao ficar segura no arquivo atual, a spec recomenda uma divisao minima de responsabilidades:
+
 - um helper para montar o payload OpenAI-compatible, com opcao de incluir ou nao `reasoning_format`
 - um helper para executar a chamada HTTP e retornar `http_code` + `body`
 - um helper para classificar se o erro da Groq permite o retry especial
@@ -115,11 +126,13 @@ Essa divisao evita que o primeiro erro HTTP seja descartado antes da classificac
 O retry deve acontecer apenas quando o erro da Groq indicar de forma clara que o parametro `reasoning_format` nao e suportado.
 
 Sinal esperado, com base no erro observado:
+
 - `error.param == "reasoning_format"`
 - `error.message`, apos normalizacao para lowercase, contem `reasoning_format` e `not supported`
 - `error.type == "invalid_request_error"` pode ser usado como reforco, nao como gatilho isolado
 
 Regra booleana exata:
+
 - considerar retry especial apenas quando `provider_name == "groq"` **e** `http_code == "400"`
 - fazer retry somente se `error.param == "reasoning_format"` **e** `error.message`, apos lowercase, contiver `reasoning_format` **e** `not supported`
 - `error.type == "invalid_request_error"` pode ser validado como sinal adicional, mas nao substitui os dois criterios acima
@@ -166,6 +179,7 @@ Esse log deve aparecer apenas no caso de fallback especifico, sem expor payloads
 Em caso de falha tambem na segunda tentativa, a saida deve priorizar o resultado final do retry como a falha relevante do provider. O objetivo e evitar diagnosticos duplicados ou confusos para o usuario.
 
 Comportamento esperado de logs quando o retry especial dispara:
+
 - nao emitir primeiro o aviso HTTP generico da primeira resposta `400`
 - emitir apenas o aviso especifico informando que a Groq rejeitou `reasoning_format` e que a chamada sera refeita sem o parametro
 - se a segunda tentativa falhar, emitir o log normal de erro do provider com base nessa segunda resposta
@@ -184,6 +198,7 @@ Comportamento esperado de logs quando o retry especial dispara:
 ### Variacao da mensagem de erro
 
 A Groq pode variar o texto do erro no futuro. Para reduzir fragilidade:
+
 - priorizar `error.param == "reasoning_format"`
 - usar a mensagem como confirmacao adicional
 - manter a regra conservadora para evitar retries indevidos
@@ -191,6 +206,7 @@ A Groq pode variar o texto do erro no futuro. Para reduzir fragilidade:
 ### Acoplamento excessivo dentro de `call_llm_api`
 
 Se o retry for implementado diretamente no fluxo atual sem pequenas extracoes, o codigo pode ficar mais dificil de manter. A spec recomenda uma separacao minima entre:
+
 - montagem de payload
 - execucao HTTP
 - classificacao do erro
@@ -211,21 +227,24 @@ Se o retry for implementado diretamente no fluxo atual sem pequenas extracoes, o
 - confirmar que um erro Groq diferente nao dispara o retry especial
 - confirmar que corpo de erro nao-JSON, JSON malformado ou sem `error.param`/`error.message` nao dispara retry
 
-### Estrategia de verificacao no repositorio
+### Estrategia de verificacao no repositório
 
-Como este repositorio nao possui harness automatizado formal para APIs externas, a verificacao deve ser desenhada de forma segura e local. A spec recomenda que a implementacao permita testar a classificacao e o comportamento do retry sem depender de uma chamada real para a Groq.
+Como este repositório nao possui harness automatizado formal para APIs externas, a verificacao deve ser desenhada de forma segura e local. A spec recomenda que a implementacao permita testar a classificacao e o comportamento do retry sem depender de uma chamada real para a Groq.
 
 Caminhos aceitaveis:
+
 - extrair a classificacao do erro para uma funcao testavel com fixtures JSON inline
 - simular respostas HTTP com corpo e status controlados em uma verificacao shell local
 - complementar com validacao manual real apenas se houver credenciais e modelo adequados
 
 O importante e que exista pelo menos uma forma repetivel de validar:
+
 - erro-alvo gera retry
 - erro diferente nao gera retry
 - parse invalido nao gera retry
 
-Mecanismo concreto recomendado para este repositorio:
+Mecanismo concreto recomendado para este repositório:
+
 - extrair a classificacao do erro para um helper que receba `http_code`, `provider_name` e `body`
 - validar esse helper com um script shell local temporario ou funcao de verificacao alimentada por tres fixtures inline: erro-alvo, erro diferente e corpo invalido
 - usar essa verificacao local como prova principal do predicado de retry, deixando a chamada real para Groq como validacao complementar quando disponivel

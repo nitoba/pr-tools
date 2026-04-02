@@ -15,6 +15,7 @@
 ### Task 1: Create src/lib/ui.sh — spinner library
 
 **Files:**
+
 - Create: `src/lib/ui.sh`
 
 - [ ] **Step 1: Create `src/lib/ui.sh`**
@@ -197,6 +198,7 @@ git commit -m "feat: add spinner UI library (src/lib/ui.sh)"
 ### Task 2: Update download/install references to include ui.sh
 
 **Files:**
+
 - Modify: `src/bin/create-pr-description` — add `ui.sh` to auto-download and source lists
 - Modify: `src/bin/create-test-card` — add `ui.sh` to auto-download and source lists
 - Modify: `src/lib/common.sh` — add `ui.sh` to `do_update()` lib list
@@ -207,20 +209,25 @@ git commit -m "feat: add spinner UI library (src/lib/ui.sh)"
 In the `_pr_tools_ensure_libs` function, add `ui.sh` to both the check loop and the download loop. Then add `source "$LIB_DIR/ui.sh"` after the existing source lines.
 
 Find the line:
+
 ```bash
 for _lib in common.sh llm.sh azure.sh test-card-azure.sh test-card-llm.sh; do
 ```
+
 in the `_pr_tools_ensure_libs` function (the check loop around line 28) and add `ui.sh`:
+
 ```bash
 for _lib in common.sh llm.sh azure.sh test-card-azure.sh test-card-llm.sh ui.sh; do
 ```
 
 Do the same for the download loop (around line 34):
+
 ```bash
 for _lib in common.sh llm.sh azure.sh test-card-azure.sh test-card-llm.sh ui.sh; do
 ```
 
 Add this source line after the existing `source "$LIB_DIR/azure.sh"`:
+
 ```bash
 source "$LIB_DIR/ui.sh"
 ```
@@ -230,16 +237,19 @@ source "$LIB_DIR/ui.sh"
 Find the auto-download loops and add `ui.sh`. Then add `source "$LIB_DIR/ui.sh"` after the existing source lines.
 
 Check loop:
+
 ```bash
 for _required_lib in common.sh test-card-azure.sh test-card-llm.sh ui.sh; do
 ```
 
 Download loop:
+
 ```bash
 for _lib in common.sh llm.sh azure.sh test-card-azure.sh test-card-llm.sh ui.sh; do
 ```
 
 Add after `source "$LIB_DIR/test-card-llm.sh"`:
+
 ```bash
 source "$LIB_DIR/ui.sh"
 ```
@@ -247,10 +257,13 @@ source "$LIB_DIR/ui.sh"
 - [ ] **Step 3: Update `src/lib/common.sh` `do_update()`**
 
 Find the lib download loop in `do_update()`:
+
 ```bash
 for lib_file in common.sh llm.sh azure.sh test-card-azure.sh test-card-llm.sh; do
 ```
+
 Change to:
+
 ```bash
 for lib_file in common.sh llm.sh azure.sh test-card-azure.sh test-card-llm.sh ui.sh; do
 ```
@@ -258,10 +271,13 @@ for lib_file in common.sh llm.sh azure.sh test-card-azure.sh test-card-llm.sh ui
 - [ ] **Step 4: Update `install.sh`**
 
 Find the lib download loop:
+
 ```bash
 for lib_file in common.sh llm.sh azure.sh test-card-azure.sh test-card-llm.sh; do
 ```
+
 Change to:
+
 ```bash
 for lib_file in common.sh llm.sh azure.sh test-card-azure.sh test-card-llm.sh ui.sh; do
 ```
@@ -283,6 +299,7 @@ git commit -m "chore: add ui.sh to download, install, and source lists"
 ### Task 3: Integrate spinner into create-pr-description main()
 
 **Files:**
+
 - Modify: `src/bin/create-pr-description` — rewrite `main()` to use `step_start`/`step_done`
 
 - [ ] **Step 1: Rewrite main() with spinner steps**
@@ -338,14 +355,14 @@ main() {
     step_done "Sem sprint ativo"
   fi
 
-  step_start "Resolvendo repositorio Azure DevOps"
+  step_start "Resolvendo repositório Azure DevOps"
   parse_azure_remote
   fetch_repo_id
   build_pr_links
   if [[ "$IS_AZURE_DEVOPS" == "true" ]]; then
-    step_done "Repositorio: $AZURE_ORG/$AZURE_PROJECT/$AZURE_REPO"
+    step_done "Repositório: $AZURE_ORG/$AZURE_PROJECT/$AZURE_REPO"
   else
-    step_done "Repositorio nao-Azure (sem links de PR)"
+    step_done "Repositório nao-Azure (sem links de PR)"
   fi
 
   detect_md_renderer
@@ -455,6 +472,7 @@ git commit -m "feat: integrate spinner UI into create-pr-description"
 ### Task 4: Integrate spinner into create-test-card main()
 
 **Files:**
+
 - Modify: `src/bin/create-test-card` — rewrite `main()` to use `step_start`/`step_done`
 
 - [ ] **Step 1: Rewrite main() with spinner steps**
@@ -629,6 +647,7 @@ Expected: See spinners animate, green checkmarks, red X, and auto-complete behav
 - [ ] **Step 5: Verify dry-run still works (no spinners in dry-run output)**
 
 In a git repo on a feature branch:
+
 ```bash
 src/bin/create-pr-description --dry-run 2>/dev/null | head -5
 ```
