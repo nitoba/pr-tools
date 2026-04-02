@@ -7,7 +7,7 @@ set -euo pipefail
 # from PR + Work Item context, with best-effort creation.
 # ============================================================
 
-VERSION="0.3.7"
+VERSION="0.3.8"
 CONFIG_DIR="$HOME/.config/pr-tools"
 ENV_FILE="$CONFIG_DIR/.env"
 CACHE_FILE="$CONFIG_DIR/.cache"
@@ -623,11 +623,12 @@ EOF
   print_create_result
 
   if confirm_parent_test_qa_update; then
-    step_start "Atualizando work item para Test QA"
+    # No spinner here — update_parent_work_item_to_test_qa may prompt for
+    # required fields (Effort, Real Effort) via interactive read
     if update_parent_work_item_to_test_qa; then
-      step_done "Work item #$WORK_ITEM_ID atualizado para Test QA"
+      printf '  %b✓%b Work item #%s atualizado para Test QA\n' "$_UI_GREEN" "$_UI_NC" "$WORK_ITEM_ID" >&2
     else
-      step_fail "Falha ao atualizar work item"
+      printf '  %b✗%b Falha ao atualizar work item\n' "$_UI_RED" "$_UI_NC" >&2
     fi
   fi
 }
