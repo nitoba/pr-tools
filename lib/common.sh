@@ -389,7 +389,7 @@ do_update() {
   mkdir -p "$lib_dir"
 
   local lib_file lib_content
-  for lib_file in common.sh llm.sh azure.sh; do
+  for lib_file in common.sh llm.sh azure.sh test-card-azure.sh test-card-llm.sh; do
     lib_content=$(curl -fsSL "$repo_url/lib/$lib_file" 2>/dev/null || echo "")
     if [[ -n "$lib_content" ]]; then
       echo "$lib_content" > "$lib_dir/$lib_file"

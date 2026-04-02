@@ -81,7 +81,7 @@ LIB_INSTALL_DIR="$HOME/.local/lib/pr-tools"
 mkdir -p "$LIB_INSTALL_DIR"
 log_info "Diretorio de libs: $LIB_INSTALL_DIR"
 
-for lib_file in common.sh llm.sh azure.sh; do
+for lib_file in common.sh llm.sh azure.sh test-card-azure.sh test-card-llm.sh; do
   log_info "Baixando lib/$lib_file..."
   tmp_lib=$(mktemp)
   if curl -fsSL "$RAW_URL/lib/$lib_file" -o "$tmp_lib"; then
