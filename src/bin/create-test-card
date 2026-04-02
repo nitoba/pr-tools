@@ -529,23 +529,55 @@ main() {
     exit 0
   fi
 
+  step_start "Validando dependencias"
   validate_dependencies
+  step_done "Dependencias validadas"
+
+  step_start "Carregando configuracao"
   load_config
+  step_done "Configuracao carregada"
+
+  step_start "Validando Azure PAT"
   validate_azure_pat
+  step_done "Azure PAT validado"
+
+  step_start "Validando API keys"
   validate_provider_keys
+  step_done "API keys validadas"
+
+  step_start "Detectando contexto git"
   detect_git_context
   parse_azure_remote
-  log_info "Resolvendo contexto do Azure DevOps..."
+  step_done "Contexto git detectado"
+
+  step_start "Resolvendo contexto Azure DevOps"
   resolve_routing
+  step_done "Azure DevOps: $AZURE_ORG/$AZURE_PROJECT"
+
+  step_start "Resolvendo PR"
   resolve_pr
+  step_done "PR: #$PR_ID — $PR_TITLE"
+
+  step_start "Resolvendo work item"
   resolve_work_item
+  step_done "Work item: #$WORK_ITEM_ID — $WORK_ITEM_TITLE"
+
+  step_start "Buscando alteracoes do PR"
   fetch_pr_changes
+  step_done "Alteracoes coletadas"
+
+  step_start "Buscando exemplos de test case"
   fetch_example_test_cases
+  step_done "Exemplos coletados"
+
+  step_start "Preparando campos de criacao"
   resolve_creation_defaults
+  step_done "Campos resolvidos"
 
   local user_prompt
   user_prompt=$(build_user_prompt)
 
+  # Dry-run: keep EXACTLY as current code
   if [[ "$DRY_RUN" == "true" ]]; then
     if [[ "$RAW_OUTPUT" == "true" ]]; then
       printf '%s\n\n%s\n\n' "$DEFAULT_SYSTEM_PROMPT" "$user_prompt"
@@ -567,24 +599,34 @@ EOF
     exit 0
   fi
 
-  log_info "Gerando card de teste via LLM..."
+  step_start "Gerando card via LLM"
   call_with_fallback "$user_prompt"
   LLM_RESULT=$(strip_think_blocks "$LLM_RESULT")
   parse_llm_result
   GENERATED_HTML=$(markdown_to_html "$GENERATED_MARKDOWN")
   GENERATED_STEPS=$(markdown_to_azure_steps "$GENERATED_MARKDOWN")
+  step_done "Card gerado ($USED_PROVIDER/$USED_MODEL)"
+
   print_output
 
   if confirm_test_case_creation; then
+    step_start "Criando test case no Azure DevOps"
     if create_test_case; then
-      :
+      step_done "Test case criado: #$CREATED_TEST_CASE_ID"
+    else
+      step_fail "Falha ao criar test case"
     fi
   fi
 
   print_create_result
 
   if confirm_parent_test_qa_update; then
-    update_parent_work_item_to_test_qa || true
+    step_start "Atualizando work item para Test QA"
+    if update_parent_work_item_to_test_qa; then
+      step_done "Work item #$WORK_ITEM_ID atualizado para Test QA"
+    else
+      step_fail "Falha ao atualizar work item"
+    fi
   fi
 }
 
