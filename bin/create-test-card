@@ -7,7 +7,7 @@ set -euo pipefail
 # from PR + Work Item context, with best-effort creation.
 # ============================================================
 
-VERSION="0.1.8"
+VERSION="0.2.0"
 CONFIG_DIR="$HOME/.config/pr-tools"
 ENV_FILE="$CONFIG_DIR/.env"
 CACHE_FILE="$CONFIG_DIR/.cache"
@@ -43,6 +43,17 @@ if [[ ! -t 1 || -n "${NO_COLOR:-}" ]]; then
   BOLD=''
   DIM=''
   NC=''
+fi
+
+# ---- Source shared libs ----
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LIB_DIR="${SCRIPT_DIR}/../lib/pr-tools"
+if [[ ! -d "$LIB_DIR" ]]; then
+  LIB_DIR="${SCRIPT_DIR}/../lib"
+fi
+
+if [[ -f "$LIB_DIR/common.sh" ]]; then
+  source "$LIB_DIR/common.sh"
 fi
 
 ACTION=""
@@ -163,32 +174,6 @@ PR_PROVIDERS="openrouter,groq,gemini"
 # TEST_CARD_AREA_PATH="AGROTRACE\\Devops"
 # TEST_CARD_ASSIGNED_TO="nome@empresa.com"'
 
-log_error() {
-  echo -e "${RED}[ERRO]${NC} $1" >&2
-}
-
-log_warn() {
-  echo -e "${YELLOW}[AVISO]${NC} $1" >&2
-}
-
-log_info() {
-  if [[ "$RAW_OUTPUT" == "true" ]]; then
-    echo -e "${CYAN}[INFO]${NC} $1" >&2
-  else
-    echo -e "${CYAN}[INFO]${NC} $1"
-  fi
-}
-
-log_success() {
-  echo -e "${GREEN}[OK]${NC} $1"
-}
-
-debug_log() {
-  if [[ "$DEBUG_MODE" == "true" ]]; then
-    echo -e "${DIM}[DEBUG] $1${NC}" >&2
-  fi
-}
-
 show_help() {
   cat <<'HELP'
 create-test-card [opcoes]
@@ -221,190 +206,6 @@ Exemplos:
   create-test-card --no-create
   create-test-card --dry-run --debug
 HELP
-}
-
-set_env_var() {
-  local key="$1"
-  local value="$2"
-  local tmpfile found escaped
-
-  mkdir -p "$CONFIG_DIR"
-  touch "$ENV_FILE"
-  chmod 600 "$ENV_FILE"
-
-  found=false
-  escaped=$(printf '%s' "$value" | sed 's/\\/\\\\/g; s/"/\\"/g')
-  tmpfile="${ENV_FILE}.tmp"
-  > "$tmpfile"
-
-  while IFS= read -r line; do
-    if [[ "$line" =~ ^[#[:space:]]*${key}= ]]; then
-      echo "${key}=\"${escaped}\"" >> "$tmpfile"
-      found=true
-    else
-      echo "$line" >> "$tmpfile"
-    fi
-  done < "$ENV_FILE"
-
-  if [[ "$found" == "false" ]]; then
-    echo "${key}=\"${escaped}\"" >> "$tmpfile"
-  fi
-
-  mv "$tmpfile" "$ENV_FILE"
-  chmod 600 "$ENV_FILE"
-}
-
-ensure_env_key_comment() {
-  local key="$1"
-  local sample="$2"
-  mkdir -p "$CONFIG_DIR"
-  touch "$ENV_FILE"
-  if ! grep -q "^[#[:space:]]*${key}=" "$ENV_FILE" 2>/dev/null; then
-    printf '\n# %s="%s"\n' "$key" "$sample" >> "$ENV_FILE"
-  fi
-}
-
-do_update() {
-  local script_path remote_script remote_version tmpfile
-
-  if command -v realpath &>/dev/null; then
-    script_path=$(realpath "$0")
-  elif readlink -f "$0" &>/dev/null; then
-    script_path=$(readlink -f "$0")
-  else
-    script_path="$0"
-    if [[ "$script_path" != /* ]]; then
-      script_path="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
-    fi
-  fi
-
-  log_info "Verificando atualizacao..."
-  remote_script=$(curl -fsSL "$REPO_URL/bin/create-test-card" 2>/dev/null || echo "")
-
-  if [[ -z "$remote_script" ]]; then
-    log_error "Falha ao baixar atualizacao. Verifique sua conexao."
-    exit 1
-  fi
-
-  remote_version=$(printf '%s' "$remote_script" | grep '^VERSION=' | head -1 | cut -d'"' -f2 || true)
-  if [[ -z "$remote_version" ]]; then
-    remote_version="desconhecida"
-  fi
-
-  if [[ "$remote_version" == "$VERSION" ]]; then
-    log_success "Voce ja esta na versao mais recente (v$VERSION)."
-    return
-  fi
-
-  tmpfile=$(mktemp)
-  printf '%s' "$remote_script" > "$tmpfile"
-  chmod +x "$tmpfile"
-  mv "$tmpfile" "$script_path"
-  log_success "Atualizado para v$remote_version!"
-}
-
-prompt_value() {
-  local prompt_text="$1"
-  local current_value="${2:-}"
-  local is_secret="${3:-false}"
-  local result=""
-
-  if [[ -n "$current_value" ]]; then
-    if [[ "$is_secret" == "true" ]]; then
-      local masked="${current_value:0:4}...${current_value: -4}"
-      echo -en "  ${prompt_text} [${CYAN}${masked}${NC}]: " >&2
-    else
-      echo -en "  ${prompt_text} [${CYAN}${current_value}${NC}]: " >&2
-    fi
-  else
-    echo -en "  ${prompt_text}: " >&2
-  fi
-
-  if [[ "$is_secret" == "true" ]]; then
-    read -rs result
-    echo "" >&2
-  else
-    read -r result
-  fi
-
-  if [[ -z "$result" ]]; then
-    result="$current_value"
-  fi
-
-  echo "$result"
-}
-
-prompt_yn() {
-  local question="$1"
-  local default="${2:-n}"
-
-  if [[ "$default" == "y" ]]; then
-    echo -en "  ${question} [Y/n]: " >&2
-  else
-    echo -en "  ${question} [y/N]: " >&2
-  fi
-
-  local answer
-  read -r answer
-  answer="${answer:-$default}"
-  [[ "$answer" == "y" || "$answer" == "Y" ]]
-}
-
-test_azure_pat() {
-  local pat="$1"
-  local http_code
-  http_code=$(curl -s -o /dev/null -w "%{http_code}" \
-    --max-time 10 \
-    -u ":$pat" \
-    "https://dev.azure.com/_apis/profile/profiles/me?api-version=7.0" \
-    2>/dev/null || echo "000")
-  [[ "$http_code" == "200" ]]
-}
-
-test_provider_key() {
-  local provider="$1"
-  local key="$2"
-  local url=""
-  local model=""
-  local extra_headers=()
-
-  case "$provider" in
-    openrouter)
-      url="https://openrouter.ai/api/v1/chat/completions"
-      model="${OPENROUTER_MODEL:-$DEFAULT_OPENROUTER_MODEL}"
-      extra_headers=(-H "HTTP-Referer: https://github.com/create-test-card" -H "X-Title: create-test-card")
-      ;;
-    groq)
-      url="https://api.groq.com/openai/v1/chat/completions"
-      model="${GROQ_MODEL:-$DEFAULT_GROQ_MODEL}"
-      ;;
-    gemini)
-      local gemini_model http_code
-      gemini_model="${GEMINI_MODEL:-$DEFAULT_GEMINI_MODEL}"
-      http_code=$(curl -s -o /dev/null -w "%{http_code}" \
-        --max-time 15 \
-        -H "Content-Type: application/json" \
-        -d '{"contents":[{"parts":[{"text":"ok"}]}]}' \
-        "https://generativelanguage.googleapis.com/v1beta/models/${gemini_model}:generateContent?key=${key}" \
-        2>/dev/null || echo "000")
-      [[ "$http_code" == "200" || "$http_code" == "429" ]]
-      return $?
-      ;;
-    *)
-      return 1
-      ;;
-  esac
-
-  local payload http_code
-  payload=$(jq -n --arg model "$model" '{model:$model,messages:[{role:"user",content:"Responda apenas: ok"}],max_tokens:5}')
-  http_code=$(curl -s -o /dev/null -w "%{http_code}" \
-    --max-time 15 \
-    -H "Content-Type: application/json" \
-    -H "Authorization: Bearer $key" \
-    ${extra_headers[@]+"${extra_headers[@]}"} \
-    -d "$payload" \
-    "$url" 2>/dev/null || echo "000")
-  [[ "$http_code" == "200" || "$http_code" == "429" ]]
 }
 
 do_init() {
@@ -535,7 +336,7 @@ parse_args() {
         shift
         ;;
       --update)
-        do_update
+        do_update "create-test-card" "$VERSION" "$REPO_URL"
         exit 0
         ;;
       --help)
@@ -553,47 +354,6 @@ parse_args() {
         ;;
     esac
   done
-}
-
-validate_dependencies() {
-  local missing=()
-  local cmd
-  for cmd in curl jq awk sed sort diff od wc tr head tail; do
-    if ! command -v "$cmd" &>/dev/null; then
-      missing+=("$cmd")
-    fi
-  done
-  if [[ ${#missing[@]} -gt 0 ]]; then
-    log_error "Dependencias nao encontradas: ${missing[*]}"
-    exit 1
-  fi
-}
-
-load_config() {
-  if [[ -f "$ENV_FILE" ]]; then
-    while IFS= read -r line; do
-      [[ "$line" =~ ^[[:space:]]*# ]] && continue
-      [[ -z "${line// /}" ]] && continue
-      local key="${line%%=*}"
-      local value="${line#*=}"
-      key=$(echo "$key" | xargs)
-      if [[ ! "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
-        log_warn "Ignorando linha invalida no .env para a chave '$key'."
-        continue
-      fi
-      value="${value#\"}"; value="${value%\"}"
-      value="${value#\'}"; value="${value%\'}"
-      value=$(printf '%s' "$value" | sed 's/\\"/"/g; s/\\\\/\\/g')
-      if [[ -n "$key" && -z "${!key:-}" ]]; then
-        export "$key=$value"
-      fi
-    done < "$ENV_FILE"
-  fi
-
-  PR_PROVIDERS="${PR_PROVIDERS:-$DEFAULT_PROVIDERS}"
-  OPENROUTER_MODEL="${OPENROUTER_MODEL:-$DEFAULT_OPENROUTER_MODEL}"
-  GROQ_MODEL="${GROQ_MODEL:-$DEFAULT_GROQ_MODEL}"
-  GEMINI_MODEL="${GEMINI_MODEL:-$DEFAULT_GEMINI_MODEL}"
 }
 
 validate_provider_keys() {
