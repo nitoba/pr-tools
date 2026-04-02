@@ -101,7 +101,7 @@ ensure_env_key_comment() {
 confirm_overwrite() {
   local file="$1"
   if [[ -f "$file" ]]; then
-    echo -n "Arquivo '$file' ja existe. Sobrescrever? [y/N] "
+    echo -n "Arquivo '$file' já existe. Sobrescrever? [y/N] "
     read -r answer
     if [[ "$answer" != "y" && "$answer" != "Y" ]]; then
       log_info "Mantendo arquivo existente: $file"
@@ -270,7 +270,7 @@ validate_dependencies() {
     fi
   done
   if [[ ${#missing[@]} -gt 0 ]]; then
-    log_error "Dependencias nao encontradas: ${missing[*]}"
+    log_error "Dependências não encontradas: ${missing[*]}"
     exit 1
   fi
 }
@@ -348,13 +348,13 @@ do_update() {
     fi
   fi
 
-  log_info "Verificando atualizacao..."
+  log_info "Verificando atualização..."
 
   local remote_script
   remote_script=$(curl -fsSL "$repo_url/src/bin/$script_name" 2>/dev/null || echo "")
 
   if [[ -z "$remote_script" ]]; then
-    log_error "Falha ao baixar atualizacao. Verifique sua conexao."
+    log_error "Falha ao baixar atualização. Verifique sua conexão."
     exit 1
   fi
 
@@ -363,17 +363,17 @@ do_update() {
   remote_version=$(echo "$remote_script" | grep '^VERSION=' | head -1 | cut -d'"' -f2 || true)
 
   if [[ -z "$remote_version" ]]; then
-    log_warn "Nao foi possivel determinar a versao remota."
+    log_warn "Não foi possível determinar a versão remota."
     remote_version="desconhecida"
   fi
 
   if [[ "$remote_version" == "$current_version" ]]; then
-    log_success "Voce ja esta na versao mais recente (v$current_version)."
+    log_success "Você já está na versão mais recente (v$current_version)."
     return
   fi
 
-  log_info "Versao atual: v$current_version"
-  log_info "Versao disponivel: v$remote_version"
+  log_info "Versão atual: v$current_version"
+  log_info "Versão disponível: v$remote_version"
 
   echo "$remote_script" > "$script_path"
   chmod +x "$script_path"

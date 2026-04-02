@@ -19,7 +19,7 @@ parse_azure_remote() {
   remote_url=$(git remote get-url origin 2>/dev/null || echo "")
 
   if [[ -z "$remote_url" ]]; then
-    log_warn "Remote origin nao configurado. Links de PR nao serao gerados."
+    log_warn "Remote origin não configurado. Links de PR não serão gerados."
     return
   fi
 
@@ -55,7 +55,7 @@ parse_azure_remote() {
   if [[ "$IS_AZURE_DEVOPS" == "true" ]]; then
     log_info "Azure DevOps: $AZURE_ORG/$AZURE_PROJECT/$AZURE_REPO"
   else
-    log_warn "Remote nao e Azure DevOps. Links de PR nao serao gerados."
+    log_warn "Remote não é Azure DevOps. Links de PR não serão gerados."
   fi
 }
 
@@ -98,7 +98,7 @@ fetch_repo_id() {
 
   # Fetch from API if PAT is available
   if [[ -z "${AZURE_PAT:-}" ]]; then
-    log_warn "AZURE_PAT nao configurado. Links gerados sem repositoryId."
+    log_warn "AZURE_PAT não configurado. Links gerados sem repositoryId."
     return
   fi
 
@@ -211,12 +211,12 @@ create_pr_via_api() {
   local work_item_id="${5:-}"
 
   if [[ -z "${AZURE_PAT:-}" ]]; then
-    log_error "AZURE_PAT necessario para criar PR via API."
+    log_error "AZURE_PAT necessário para criar PR via API."
     return 1
   fi
 
   if [[ -z "$AZURE_REPO_ID" ]]; then
-    log_error "repositoryId nao disponivel. Execute novamente com AZURE_PAT configurado."
+    log_error "repositoryId não disponível. Execute novamente com AZURE_PAT configurado."
     return 1
   fi
 
@@ -230,7 +230,7 @@ create_pr_via_api() {
       reviewers_json="[{\"id\":\"$reviewer_id\",\"isRequired\":true}]"
       log_success "Reviewer resolvido: ${reviewer_id:0:8}..."
     else
-      log_warn "Nao foi possivel resolver reviewer '$reviewer_email'. PR sera criado sem reviewer."
+      log_warn "Não foi possível resolver reviewer '$reviewer_email'. PR será criado sem reviewer."
     fi
   fi
 

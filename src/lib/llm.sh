@@ -384,7 +384,7 @@ call_llm_api() {
     rm -f "$accumulator_file" "$error_file"
 
     if [[ -z "$content" ]]; then
-      log_warn "Resposta vazia ou invalida de $provider_name"
+      log_warn "Resposta vazia ou inválida de $provider_name"
       printf ''
       return 1
     fi
@@ -446,7 +446,7 @@ call_llm_api() {
   content=$(printf '%s' "$body" | jq -r '.choices[0].message.content // empty' 2>/dev/null | normalize_llm_content || printf '')
 
   if [[ -z "$content" || "$content" == "null" ]]; then
-    log_warn "Resposta vazia ou invalida de $provider_name"
+    log_warn "Resposta vazia ou inválida de $provider_name"
     printf ''
     return 1
   fi
@@ -525,7 +525,7 @@ call_gemini_api() {
     rm -f "$accumulator_file" "$error_file"
 
     if [[ -z "$content" ]]; then
-      log_warn "Resposta vazia ou invalida de gemini"
+      log_warn "Resposta vazia ou inválida de gemini"
       printf ''
       return 1
     fi
@@ -570,7 +570,7 @@ call_gemini_api() {
   content=$(printf '%s' "$body" | jq -r '.candidates[0].content.parts[0].text // empty' 2>/dev/null | normalize_llm_content || printf '')
 
   if [[ -z "$content" || "$content" == "null" ]]; then
-    log_warn "Resposta vazia ou invalida de gemini"
+    log_warn "Resposta vazia ou inválida de gemini"
     printf ''
     return 1
   fi
@@ -592,7 +592,7 @@ call_with_fallback() {
     get_provider_config "$provider"
 
     if [[ -z "$PROVIDER_KEY" ]]; then
-      log_warn "API key nao configurada para $provider. Pulando..."
+      log_warn "API key não configurada para $provider. Pulando..."
       continue
     fi
 
@@ -617,9 +617,9 @@ call_with_fallback() {
         fi
       fi
     fi
-    log_warn "Provider $provider falhou. Tentando proximo..."
+    log_warn "Provider $provider falhou. Tentando próximo..."
   done
 
-  log_error "Todos os providers falharam. Verifique suas API keys e conexao."
+  log_error "Todos os providers falharam. Verifique suas API keys e conexão."
   exit 1
 }

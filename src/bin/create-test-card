@@ -55,7 +55,7 @@ fi
 # Auto-download libs if missing (handles upgrade from monolithic version)
 for _required_lib in common.sh test-card-azure.sh test-card-llm.sh ui.sh; do
   if [[ ! -f "$LIB_DIR/$_required_lib" ]]; then
-    echo "[INFO] Bibliotecas nao encontradas. Baixando automaticamente..." >&2
+    echo "[INFO] Bibliotecas não encontradas. Baixando automaticamente..." >&2
     mkdir -p "$LIB_DIR"
     for _lib in common.sh llm.sh azure.sh test-card-azure.sh test-card-llm.sh ui.sh; do
       if ! curl -fsSL "$REPO_URL/src/lib/$_lib" -o "$LIB_DIR/$_lib" 2>/dev/null; then
@@ -141,9 +141,9 @@ CREATED_TEST_CASE_ID=""
 CREATED_TEST_CASE_URL=""
 UPDATED_PARENT_TO_TEST_QA=false
 
-DEFAULT_SYSTEM_PROMPT='Voce e um analista de QA tecnico.
+DEFAULT_SYSTEM_PROMPT='Voce é um analista de QA tecnico.
 
-Sua tarefa e gerar um card de teste em portugues brasileiro para Azure DevOps com base em:
+Sua tarefa é gerar um card de teste em portugues brasileiro para Azure DevOps com base em:
 1. Work item pai
 2. Pull request relacionado
 3. Arquivos alterados e resumo tecnico do PR
@@ -161,15 +161,15 @@ Depois disso, responda em Markdown com estas secoes nesta ordem:
 
 Regras:
 - Escreva em portugues brasileiro
-- Nao invente comportamento que nao esteja sustentado pelo contexto
+- Não invente comportamento que não esteja sustentado pelo contexto
 - Foque em cobertura funcional, validacoes e regressao quando fizer sentido
 - Seja especifico e tecnico, sem ser prolixo
 - O titulo deve ser curto e claro
 - O checklist deve ser acionavel para QA
 - Se houver limites, formatos aceitos, obrigatoriedade, bloqueios ou reaproveitamento de comportamento, inclua isso quando sustentado pelo contexto
-- Nao mencione detalhes tecnicos de implementacao na resposta final
-- Nao cite nomes de arquivos, componentes, classes, funcoes, migrations, APIs internas, queries ou trechos de codigo
-- Nao descreva a solucao como tarefa de desenvolvimento; descreva apenas cenarios observaveis e validaveis por QA
+- Não mencione detalhes tecnicos de implementacao na resposta final
+- Não cite nomes de arquivos, componentes, classes, funcoes, migrations, APIs internas, queries ou trechos de codigo
+- Não descreva a solucao como tarefa de desenvolvimento; descreva apenas cenarios observaveis e validaveis por QA
 - Transforme pistas tecnicas em comportamento funcional testavel pelo usuario final ou pelo analista de QA'
 
 DEFAULT_ENV='# Providers em ordem de prioridade
@@ -208,7 +208,7 @@ Opcoes:
   --area-path <path>    AreaPath para criacao do Test Case (override)
   --assigned-to <valor> Responsavel do Test Case (override)
   --examples <n>        Quantidade de exemplos no prompt (0-5, padrao: 2)
-  --no-create           Gera o card mas nao tenta criar o Test Case
+  --no-create           Gera o card mas não tenta criar o Test Case
   --dry-run             Mostra prompts e preview da criacao sem chamar LLM nem criar
   --raw                 Imprime somente o Markdown no stdout
   --debug               Exibe detalhes de diagnostico
@@ -366,7 +366,7 @@ parse_args() {
         exit 0
         ;;
       *)
-        log_error "Opcao desconhecida: $1"
+        log_error "Opção desconhecida: $1"
         show_help
         exit 1
         ;;
@@ -386,7 +386,7 @@ validate_provider_keys() {
 
 validate_azure_pat() {
   if [[ -z "${AZURE_PAT:-}" ]]; then
-    log_error "AZURE_PAT nao configurado. Execute 'create-test-card --init' ou ajuste $ENV_FILE."
+    log_error "AZURE_PAT não configurado. Execute 'create-test-card --init' ou ajuste $ENV_FILE."
     exit 1
   fi
 }
@@ -476,7 +476,7 @@ print_create_result() {
     log_success "Test Case criado com sucesso: #$CREATED_TEST_CASE_ID"
     echo "$CREATED_TEST_CASE_URL"
   elif [[ -n "$CREATE_ERROR" ]]; then
-    log_warn "Nao foi possivel criar o Test Case automaticamente."
+    log_warn "Não foi possivel criar o Test Case automaticamente."
     echo "$CREATE_ERROR"
     print_create_field_summary
     echo "Use o Markdown gerado acima para criar o card manualmente no Azure DevOps; isso costuma acontecer quando o processo exige campos customizados obrigatorios."
@@ -489,7 +489,7 @@ confirm_test_case_creation() {
   fi
 
   if [[ ! -t 0 || ! -t 1 ]]; then
-    log_warn "Ambiente nao interativo; pulando criacao automatica do Test Case. Rode interativamente para confirmar a criacao."
+    log_warn "Ambiente não interativo; pulando criacao automatica do Test Case. Rode interativamente para confirmar a criacao."
     return 1
   fi
 

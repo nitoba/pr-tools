@@ -33,42 +33,42 @@ build_user_prompt() {
 ## Contexto do Work Item
 
 ID: $WORK_ITEM_ID
-Titulo: $WORK_ITEM_TITLE
+Título: $WORK_ITEM_TITLE
 Tipo: $WORK_ITEM_TYPE
-Area: ${WORK_ITEM_AREA_PATH:-N/A}
-Iteracao: ${WORK_ITEM_ITERATION_PATH:-N/A}
+Área: ${WORK_ITEM_AREA_PATH:-N/A}
+Iteração: ${WORK_ITEM_ITERATION_PATH:-N/A}
 Prioridade: ${WORK_ITEM_PRIORITY:-N/A}
-Descricao:
-${work_desc:-"(sem descricao)"}
+Descrição:
+${work_desc:-"(sem descrição)"}
 
 ## Contexto do PR
 
 PR: $PR_ID
-Titulo: $PR_TITLE
+Título: $PR_TITLE
 Status: ${PR_STATUS:-N/A}
 Branch origem: ${PR_SOURCE_REF:-N/A}
 Branch destino: ${PR_TARGET_REF:-N/A}
-Repositorio: ${AZURE_REPO:-N/A}
-Descricao:
-${pr_desc:-"(sem descricao)"}
+Repositório: ${AZURE_REPO:-N/A}
+Descrição:
+${pr_desc:-"(sem descrição)"}
 
 ## Work Items vinculados ao PR
 
-${LINKED_WORK_ITEMS_SUMMARY:-"(nao disponivel)"}
+${LINKED_WORK_ITEMS_SUMMARY:-"(não disponível)"}
 
-## Arquivos alterados e resumo tecnico
+## Arquivos alterados e resumo técnico
 
-${DIFF_SUMMARY:-"(nao disponivel)"}
+${DIFF_SUMMARY:-"(não disponível)"}
 
 ## Exemplos de Test Case
 
-${EXAMPLES_SUMMARY:-"(nao disponivel)"}
+${EXAMPLES_SUMMARY:-"(não disponível)"}
 
-## Instrucoes finais
+## Instruções finais
 
 Gere um card de teste em Markdown, seguindo exatamente o formato pedido no system prompt.
-Nao invente comportamento fora do contexto.
-Use o contexto tecnico apenas para entender a mudanca; nao exponha detalhes de codigo, arquivos ou implementacao na resposta final.
+Não invente comportamento fora do contexto.
+Use o contexto técnico apenas para entender a mudança; não exponha detalhes de código, arquivos ou implementação na resposta final.
 EOF
 }
 
@@ -234,7 +234,7 @@ parse_llm_result() {
     # Fallback: use first non-empty line as title, full content as body
     GENERATED_TITLE=$(printf '%s' "$LLM_RESULT" | grep -m1 -v '^[[:space:]]*$' | sed 's/^#* *//')
     GENERATED_MARKDOWN="$LLM_RESULT"
-    debug_log "Resposta da LLM nao seguiu o formato TITULO:, aplicando recuperacao leve."
+    debug_log "Resposta da LLM não seguiu o formato TITULO:, aplicando recuperação leve."
   fi
 
   GENERATED_TITLE=$(printf '%s' "$GENERATED_TITLE" | sed 's/^ *//; s/ *$//')

@@ -29,7 +29,7 @@ _pr_tools_ensure_libs() {
     [[ ! -f "$LIB_DIR/$_lib" ]] && missing=true && break
   done
   if [[ "$missing" == "true" ]]; then
-    echo "[INFO] Bibliotecas nao encontradas. Baixando automaticamente..." >&2
+    echo "[INFO] Bibliotecas não encontradas. Baixando automaticamente..." >&2
     mkdir -p "$LIB_DIR"
     for _lib in common.sh llm.sh azure.sh test-card-azure.sh test-card-llm.sh ui.sh; do
       if ! curl -fsSL "$REPO_URL/src/lib/$_lib" -o "$LIB_DIR/$_lib" 2>/dev/null; then
@@ -77,7 +77,7 @@ STREAM_MODE=false
 
 # ---- Default Template ----
 
-DEFAULT_TEMPLATE='Analise o diff e log do git fornecidos e gere um TITULO e uma DESCRICAO de PR
+DEFAULT_TEMPLATE='Analise o diff e log do git fornecidos e gere um TITULO e uma DESCRIÇÃO de PR
 em portugues brasileiro.
 
 IMPORTANTE: A PRIMEIRA LINHA da sua resposta DEVE ser o titulo neste formato exato:
@@ -85,7 +85,7 @@ TITULO: <texto curto e descritivo, max 80 caracteres>
 
 Depois do titulo, siga este formato para a descricao:
 
-## Descricao
+## Descrição
 
 <Resumo conciso em 1-2 frases do que a mudanca faz e por que>
 
@@ -94,13 +94,13 @@ Depois do titulo, siga este formato para a descricao:
 ### Componentes atualizados
 
 <Para cada componente/arquivo modificado significativamente, liste:>
-- **nome-do-componente**: <Descricao das mudancas neste componente, focando no
-  que mudou funcionalmente, nao linha por linha>
+- **nome-do-componente**: <Descrição das mudancas neste componente, focando no
+  que mudou funcionalmente, não linha por linha>
 
 ### Correcoes / Melhorias tecnicas
 
 <Se houver correcoes de bugs, refatoracoes ou melhorias tecnicas, liste aqui.
-Se nao houver, omita esta secao.>
+Se não houver, omita esta secao.>
 
 ## Tipo de mudanca
 
@@ -118,10 +118,10 @@ Se nao houver, omita esta secao.>
 - Se um Work Item for fornecido no contexto (#numero), inclua "Relacionado a: #numero" no final da descricao
 - Escreva em portugues brasileiro
 - Seja tecnico mas conciso
-- Foque no "o que" e "por que", nao no "como"
+- Foque no "o que" e "por que", não no "como"
 - Use nomes reais de componentes/arquivos do diff
 - Se o diff for muito grande, agrupe mudancas relacionadas
-- Nao invente mudancas que nao estao no diff'
+- Não invente mudancas que não estao no diff'
 
 # ---- Default .env ----
 
@@ -132,7 +132,7 @@ PR_PROVIDERS="openrouter,groq"
 # OPENROUTER_API_KEY="sk-or-..."
 # GROQ_API_KEY="gsk_..."
 
-# Modelos (opcional - usa padrao gratuito se nao definir)
+# Modelos (opcional - usa padrao gratuito se não definir)
 # OPENROUTER_MODEL="meta-llama/llama-3.3-70b-instruct:free"
 # GROQ_MODEL="llama-3.3-70b-versatile"
 
@@ -269,7 +269,7 @@ parse_args() {
         exit 0
         ;;
       *)
-        log_error "Opcao desconhecida: $1"
+        log_error "Opção desconhecida: $1"
         show_help
         exit 1
         ;;
@@ -592,7 +592,7 @@ do_init() {
 
 validate_git_repo() {
   if ! git rev-parse --is-inside-work-tree &>/dev/null; then
-    log_error "Nao e um repositorio git."
+    log_error "Não e um repositorio git."
     exit 1
   fi
 }
@@ -605,7 +605,7 @@ validate_not_base_branch() {
     # Validate that the source branch exists
     if ! git rev-parse --verify "$branch" &>/dev/null && \
        ! git rev-parse --verify "origin/$branch" &>/dev/null; then
-      log_error "Branch '$branch' nao encontrada (local ou remota)."
+      log_error "Branch '$branch' não encontrada (local ou remota)."
       exit 1
     fi
   else
@@ -617,14 +617,14 @@ validate_not_base_branch() {
     exit 1
   fi
   if [[ -z "$branch" ]]; then
-    log_error "Nao foi possivel determinar a branch atual (detached HEAD?). Use --source para informar a branch."
+    log_error "Não foi possivel determinar a branch atual (detached HEAD?). Use --source para informar a branch."
     exit 1
   fi
 }
 
 validate_config() {
   if [[ ! -f "$TEMPLATE_FILE" ]]; then
-    log_error "Template nao encontrado em $TEMPLATE_FILE"
+    log_error "Template não encontrado em $TEMPLATE_FILE"
     log_error "Execute 'create-pr-description --init' para criar."
     exit 1
   fi
@@ -688,7 +688,7 @@ collect_git_context() {
   elif git rev-parse --verify main &>/dev/null; then
     base_ref="main"
   else
-    log_error "Branch base nao encontrada."
+    log_error "Branch base não encontrada."
     exit 1
   fi
 
@@ -765,7 +765,7 @@ collect_git_context() {
   elif git_log_result=$(git log "${base_ref}..${source_ref}" --oneline --max-count=50 2>/dev/null); then
     GIT_LOG="$git_log_result"
   else
-    GIT_LOG="(log nao disponivel)"
+    GIT_LOG="(log não disponivel)"
   fi
 }
 
@@ -836,7 +836,7 @@ detect_work_item() {
   # 3. Interactive prompt (only if terminal is interactive)
   if [[ -t 0 ]]; then
     echo ""
-    log_warn "Nao foi possivel extrair o work item ID da branch '$BRANCH_NAME'."
+    log_warn "Não foi possivel extrair o work item ID da branch '$BRANCH_NAME'."
     echo -en "  ID do work item (Enter para pular): "
     read -r user_input
     if [[ -n "$user_input" ]]; then
@@ -948,9 +948,9 @@ parse_title_and_body() {
     done <<< "$raw"
     PR_BODY="$body_lines"
   else
-    # Fallback: extract title from ## Descricao section's first sentence
+    # Fallback: extract title from ## Descrição section's first sentence
     local desc_line
-    desc_line=$(printf '%s' "$raw" | grep -A1 "^## Descricao" | tail -1 | sed 's/^[[:space:]]*//' || true)
+    desc_line=$(printf '%s' "$raw" | grep -A1 "^## Descrição" | tail -1 | sed 's/^[[:space:]]*//' || true)
     if [[ -n "$desc_line" && "$desc_line" != "##"* ]]; then
       # Truncate to 80 chars
       PR_TITLE="${desc_line:0:80}"
@@ -1006,7 +1006,7 @@ print_output() {
   echo ""
 
   # Body
-  echo -e "${BOLD}Descricao:${NC}"
+  echo -e "${BOLD}Descrição:${NC}"
   render_markdown "$PR_BODY"
   echo ""
 
@@ -1037,10 +1037,10 @@ print_output() {
   # Clipboard - copy body (description)
   detect_clipboard
   if copy_to_clipboard "$PR_BODY"; then
-    echo -e "${BOLD}Descricao copiada para o clipboard!${NC}"
+    echo -e "${BOLD}Descrição copiada para o clipboard!${NC}"
     echo -e "  Titulo disponivel acima para copiar manualmente."
   else
-    log_warn "Nenhum comando de clipboard encontrado (pbcopy/xclip/xsel). Descricao exibida apenas no terminal."
+    log_warn "Nenhum comando de clipboard encontrado (pbcopy/xclip/xsel). Descrição exibida apenas no terminal."
   fi
   echo -e "${BOLD}${separator}${NC}"
 }
@@ -1102,7 +1102,7 @@ main() {
   if [[ "$IS_AZURE_DEVOPS" == "true" ]]; then
     step_done "Repositorio: $AZURE_ORG/$AZURE_PROJECT/$AZURE_REPO"
   else
-    step_done "Repositorio nao-Azure (sem links de PR)"
+    step_done "Repositorio não-Azure (sem links de PR)"
   fi
 
   detect_md_renderer
@@ -1175,7 +1175,7 @@ $GIT_DIFF"
     echo "" >&2
     echo -e "${DIM}--- Resposta completa recebida ---${NC}" >&2
   fi
-  step_done "Descricao gerada ($USED_PROVIDER/$USED_MODEL)"
+  step_done "Descrição gerada ($USED_PROVIDER/$USED_MODEL)"
 
   # Output
   print_output "$LLM_RESULT"

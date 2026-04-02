@@ -43,7 +43,7 @@ resolve_routing() {
   if [[ -n "$CLI_REPO" ]]; then AZURE_REPO="$CLI_REPO"; fi
 
   if [[ -z "$AZURE_ORG" || -z "$AZURE_PROJECT" ]]; then
-    log_error "Nao foi possivel resolver org/project do Azure DevOps. Use --org e --project ou rode dentro de um repo Azure DevOps."
+    log_error "Não foi possível resolver org/project do Azure DevOps. Use --org e --project ou rode dentro de um repo Azure DevOps."
     exit 1
   fi
 
@@ -111,12 +111,12 @@ fetch_pr_by_id() {
   AZURE_REPO_ID=$(printf '%s' "$body" | jq -r '.repository.id // empty')
 
   if [[ -z "$PR_REPOSITORY_NAME" ]]; then
-    log_error "Nao foi possivel identificar o repositorio do PR #$PR_ID."
+    log_error "Não foi possível identificar o repositório do PR #$PR_ID."
     exit 1
   fi
 
   if [[ -n "$CLI_REPO" && "$CLI_REPO" != "$PR_REPOSITORY_NAME" ]]; then
-    log_error "O PR #$PR_ID pertence ao repositorio '$PR_REPOSITORY_NAME', diferente do --repo informado ('$CLI_REPO')."
+    log_error "O PR #$PR_ID pertence ao repositório '$PR_REPOSITORY_NAME', diferente do --repo informado ('$CLI_REPO')."
     exit 1
   fi
 
@@ -125,11 +125,11 @@ fetch_pr_by_id() {
 
 search_pr_by_branch() {
   if [[ -z "$AZURE_REPO" ]]; then
-    log_error "Nao foi possivel autodetectar o PR sem repositorio. Use --repo ou --pr explicitamente."
+    log_error "Não foi possível autodetectar o PR sem repositório. Use --repo ou --pr explicitamente."
     exit 1
   fi
   if [[ -z "$BRANCH_NAME" ]]; then
-    log_error "Nao foi possivel autodetectar o PR sem branch atual. Use --pr explicitamente."
+    log_error "Não foi possível autodetectar o PR sem branch atual. Use --pr explicitamente."
     exit 1
   fi
 
@@ -165,7 +165,7 @@ search_pr_by_branch() {
   fi
 
   if (( count > 1 )); then
-    debug_log "Multiplos PRs encontrados para a branch '$BRANCH_NAME'; selecionando por prioridade de status/data."
+    debug_log "Múltiplos PRs encontrados para a branch '$BRANCH_NAME'; selecionando por prioridade de status/data."
   fi
 
   ranking_tmp=$(mktemp)
@@ -205,7 +205,7 @@ search_pr_by_branch() {
   AZURE_REPO_ID=$(printf '%s' "$pr_json" | jq -r '.repository.id // empty')
 
   if [[ -z "$PR_ID" ]]; then
-    log_error "Falha ao selecionar um PR valido para a branch '$BRANCH_NAME'."
+    log_error "Falha ao selecionar um PR válido para a branch '$BRANCH_NAME'."
     exit 1
   fi
 }
@@ -237,11 +237,11 @@ resolve_pr() {
   fi
 
   if [[ "$IN_GIT_REPO" != "true" ]]; then
-    log_error "Fora de um repositorio git voce precisa informar --pr explicitamente."
+    log_error "Fora de um repositório git você precisa informar --pr explicitamente."
     exit 1
   fi
   if [[ -z "$BRANCH_NAME" ]]; then
-    log_error "Nao foi possivel identificar a branch atual (detached HEAD?). Use --pr explicitamente."
+    log_error "Não foi possível identificar a branch atual (detached HEAD?). Use --pr explicitamente."
     exit 1
   fi
 
@@ -262,7 +262,7 @@ fetch_pr_linked_workitems() {
 
   work_ids=$(printf '%s' "$body" | jq -r '.value[]?.id')
   if [[ -z "$work_ids" ]]; then
-    log_error "O PR #$PR_ID nao possui work items vinculados. Use --work-item explicitamente."
+    log_error "O PR #$PR_ID não possui work items vinculados. Use --work-item explicitamente."
     exit 1
   fi
 
@@ -285,13 +285,13 @@ fetch_pr_linked_workitems() {
   done <<< "$work_ids"
 
   if [[ -z "$ranked_ids" ]]; then
-    log_error "Nao foi possivel hidratar os work items vinculados ao PR #$PR_ID."
+    log_error "Não foi possível hidratar os work items vinculados ao PR #$PR_ID."
     exit 1
   fi
 
   selected_id=$(printf '%s' "$ranked_ids" | awk -F'|' '$2 != "Test Case" {print $1}' | sort -n | head -1)
   if [[ -z "$selected_id" ]]; then
-    debug_log "Todos os work items vinculados ao PR #$PR_ID sao do tipo Test Case; usando o menor ID como fallback."
+    debug_log "Todos os work items vinculados ao PR #$PR_ID são do tipo Test Case; usando o menor ID como fallback."
     selected_id=$(printf '%s' "$ranked_ids" | awk -F'|' '{print $1}' | sort -n | head -1)
   fi
 
@@ -326,7 +326,7 @@ resolve_work_item() {
   fi
 
   if [[ -z "$WORK_ITEM_ID" ]]; then
-    log_error "Nao foi possivel resolver o work item pai. Use --work-item explicitamente."
+    log_error "Não foi possível resolver o work item pai. Use --work-item explicitamente."
     exit 1
   fi
 
@@ -334,19 +334,19 @@ resolve_work_item() {
 }
 
 fetch_pr_changes() {
-  log_info "Buscando alteracoes do PR..."
+  log_info "Buscando alterações do PR..."
   local response code body iter_id changes_response changes_body changes_code
   response=$(azure_get "https://dev.azure.com/$AZURE_ORG_ENC/$AZURE_PROJECT_ENC/_apis/git/repositories/$AZURE_REPO_ENC/pullRequests/$PR_ID/iterations?api-version=7.0")
   code=$(response_code "$response")
   body=$(response_body "$response")
   if [[ "$code" != "200" ]]; then
-    log_warn "Nao foi possivel buscar iteracoes do PR #$PR_ID; o prompt sera gerado com contexto reduzido."
+    log_warn "Não foi possível buscar iterações do PR #$PR_ID; o prompt será gerado com contexto reduzido."
     return
   fi
 
   iter_id=$(printf '%s' "$body" | jq -r '.value | map(.id) | max // empty')
   if [[ -z "$iter_id" ]]; then
-    log_warn "PR #$PR_ID sem iteracao identificavel; seguindo sem resumo de changes."
+    log_warn "PR #$PR_ID sem iteração identificável; seguindo sem resumo de changes."
     return
   fi
 
@@ -354,7 +354,7 @@ fetch_pr_changes() {
   changes_code=$(response_code "$changes_response")
   changes_body=$(response_body "$changes_response")
   if [[ "$changes_code" != "200" ]]; then
-    log_warn "Nao foi possivel buscar changes do PR #$PR_ID; seguindo com contexto reduzido."
+    log_warn "Não foi possível buscar changes do PR #$PR_ID; seguindo com contexto reduzido."
     return
   fi
 
@@ -427,16 +427,16 @@ fetch_pr_changes() {
       if [[ "$change_type" == "edit" || "$change_type" == "rename" ]]; then
         if [[ "$old_ok" != "true" || "$new_ok" != "true" ]]; then
           rm -f "$tmp_old" "$tmp_new"
-          debug_log "Pulando patch de $file_path por falha ao buscar uma das versoes no Azure DevOps."
+          debug_log "Pulando patch de $file_path por falha ao buscar uma das versões no Azure DevOps."
           continue
         fi
       elif [[ "$change_type" == "add" && "$new_ok" != "true" ]]; then
         rm -f "$tmp_old" "$tmp_new"
-        debug_log "Pulando patch de $file_path por falha ao buscar a versao nova no Azure DevOps."
+        debug_log "Pulando patch de $file_path por falha ao buscar a versão nova no Azure DevOps."
         continue
       elif [[ "$change_type" == "delete" && "$old_ok" != "true" ]]; then
         rm -f "$tmp_old" "$tmp_new"
-        debug_log "Pulando patch de $file_path por falha ao buscar a versao removida no Azure DevOps."
+        debug_log "Pulando patch de $file_path por falha ao buscar a versão removida no Azure DevOps."
         continue
       fi
 
@@ -473,7 +473,7 @@ fetch_pr_changes() {
       if [[ -n "$diff_text" ]]; then
         local diff_lines
         diff_lines=$(printf '%s\n' "$diff_text" | wc -l | tr -d '[:space:]')
-        DIFF_SUMMARY+=$'\n\n## Patch local (truncado se necessario)\n'
+        DIFF_SUMMARY+=$'\n\n## Patch local (truncado se necessário)\n'
         if (( diff_lines > MAX_DIFF_LINES )); then
           diff_text=$(printf '%s\n' "$diff_text" | sed -n "1,${MAX_DIFF_LINES}p")
           diff_text+=$'\n\n[patch truncado por limite de linhas]'
@@ -494,7 +494,7 @@ fetch_pr_changes() {
 fetch_example_test_cases() {
   log_info "Buscando exemplos de Test Case..."
   if (( EXAMPLE_COUNT == 0 )); then
-    EXAMPLES_SUMMARY="(exemplos desabilitados pelo usuario)"
+    EXAMPLES_SUMMARY="(exemplos desabilitados pelo usuário)"
     return
   fi
 
@@ -512,8 +512,8 @@ EOF
   code=$(response_code "$response")
   body=$(response_body "$response")
   if [[ "$code" != "200" ]]; then
-    log_warn "Nao foi possivel buscar exemplos de Test Case; seguindo sem exemplos."
-    EXAMPLES_SUMMARY="(nao foi possivel buscar exemplos)"
+    log_warn "Não foi possível buscar exemplos de Test Case; seguindo sem exemplos."
+    EXAMPLES_SUMMARY="(não foi possível buscar exemplos)"
     return
   fi
 
@@ -535,8 +535,8 @@ EOF
     state=$(printf '%s' "$wi_body" | jq -r '.fields["System.State"] // empty')
     area=$(printf '%s' "$wi_body" | jq -r '.fields["System.AreaPath"] // empty')
     changed_date=$(printf '%s' "$wi_body" | jq -r '.fields["System.ChangedDate"] // empty')
-    has_desc=$(printf '%s' "$wi_body" | jq -r 'if .fields["System.Description"] then "sim" else "nao" end')
-    has_steps=$(printf '%s' "$wi_body" | jq -r 'if .fields["Microsoft.VSTS.TCM.Steps"] then "sim" else "nao" end')
+    has_desc=$(printf '%s' "$wi_body" | jq -r 'if .fields["System.Description"] then "sim" else "não" end')
+    has_steps=$(printf '%s' "$wi_body" | jq -r 'if .fields["Microsoft.VSTS.TCM.Steps"] then "sim" else "não" end')
     area_score=1
     title_score=0
     [[ "$area" == "$WORK_ITEM_AREA_PATH" ]] && area_score=0
@@ -555,13 +555,13 @@ EOF
 }
 
 resolve_creation_defaults() {
-  log_info "Resolvendo defaults de criacao do Test Case..."
+  log_info "Resolvendo defaults de criação do Test Case..."
   SELECTED_ASSIGNED_TO="$CLI_ASSIGNED_TO"
   if [[ -z "$SELECTED_ASSIGNED_TO" ]]; then
     SELECTED_ASSIGNED_TO="${TEST_CARD_ASSIGNED_TO:-}"
   fi
   if [[ -z "$SELECTED_ASSIGNED_TO" && "$NO_CREATE" == "false" ]]; then
-    log_warn "Nenhum responsavel padrao configurado para o Test Case. A criacao sera tentada sem atribuicao."
+    log_warn "Nenhum responsável padrão configurado para o Test Case. A criação será tentada sem atribuição."
   fi
 
   SELECTED_AREA_PATH="$CLI_AREA_PATH"
@@ -573,7 +573,7 @@ resolve_creation_defaults() {
   fi
 
   if [[ -z "$SELECTED_AREA_PATH" ]]; then
-    log_error "Nao foi possivel resolver o AreaPath do Test Case. Use --area-path ou configure TEST_CARD_AREA_PATH."
+    log_error "Não foi possível resolver o AreaPath do Test Case. Use --area-path ou configure TEST_CARD_AREA_PATH."
     exit 1
   fi
 
@@ -645,7 +645,7 @@ update_parent_work_item_to_test_qa() {
     local error_msg
     error_msg=$(extract_azure_error_message "$body")
     [[ -n "$error_msg" ]] || error_msg="Erro desconhecido ao atualizar work item."
-    log_warn "Nao foi possivel atualizar o work item #$WORK_ITEM_ID para Test QA."
+    log_warn "Não foi possível atualizar o work item #$WORK_ITEM_ID para Test QA."
     if [[ -n "$error_msg" ]]; then
       if [[ "$RAW_OUTPUT" == "true" ]]; then
         echo "Falha ao atualizar work item para Test QA: $error_msg" >&2
@@ -693,7 +693,7 @@ create_test_case() {
     ' > "$payload_tmp"
 
   if [[ "$DEBUG_MODE" == "true" ]]; then
-    debug_log "Payload de criacao do Test Case:"
+    debug_log "Payload de criação do Test Case:"
     cat "$payload_tmp" >&2
   fi
 
@@ -704,7 +704,7 @@ create_test_case() {
   body=$(response_body "$response")
   if [[ "$code" != "200" && "$code" != "201" ]]; then
     CREATE_ERROR=$(extract_azure_error_message "$body")
-    [[ -n "$CREATE_ERROR" ]] || CREATE_ERROR="Erro desconhecido na criacao do Test Case."
+    [[ -n "$CREATE_ERROR" ]] || CREATE_ERROR="Erro desconhecido na criação do Test Case."
     return 1
   fi
 
