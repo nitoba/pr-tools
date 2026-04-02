@@ -53,11 +53,11 @@ if [[ ! -d "$LIB_DIR" ]]; then
 fi
 
 # Auto-download libs if missing (handles upgrade from monolithic version)
-for _required_lib in common.sh test-card-azure.sh test-card-llm.sh; do
+for _required_lib in common.sh test-card-azure.sh test-card-llm.sh ui.sh; do
   if [[ ! -f "$LIB_DIR/$_required_lib" ]]; then
     echo "[INFO] Bibliotecas nao encontradas. Baixando automaticamente..." >&2
     mkdir -p "$LIB_DIR"
-    for _lib in common.sh llm.sh azure.sh test-card-azure.sh test-card-llm.sh; do
+    for _lib in common.sh llm.sh azure.sh test-card-azure.sh test-card-llm.sh ui.sh; do
       if ! curl -fsSL "$REPO_URL/src/lib/$_lib" -o "$LIB_DIR/$_lib" 2>/dev/null; then
         echo "[ERRO] Falha ao baixar $LIB_DIR/$_lib" >&2
         echo "[ERRO] Execute: curl -fsSL $REPO_URL/install.sh | bash" >&2
@@ -72,6 +72,7 @@ done
 source "$LIB_DIR/common.sh"
 source "$LIB_DIR/test-card-azure.sh"
 source "$LIB_DIR/test-card-llm.sh"
+source "$LIB_DIR/ui.sh"
 
 ACTION=""
 DRY_RUN=false
