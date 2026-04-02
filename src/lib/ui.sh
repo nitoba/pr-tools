@@ -53,11 +53,7 @@ _spinner_loop() {
   local title_msg="$3"
   local frame=0
 
-  local prefix="   "
-  [[ "$title_dist" -gt 0 ]] && prefix="\033[38;5;242m│\033[0m "
-
   local sparkle_frames=("✦" "✧" "✦" "·")
-  # Orange tones for title sparkle
   local sparkle_colors=(
     "\033[38;2;193;95;60m\033[1m"     # #c15f3c bold
     "\033[38;2;224;130;85m\033[1m"    # lighter orange bold
@@ -69,10 +65,20 @@ _spinner_loop() {
     local i=$(( frame % 4 ))
 
     # Animate spinner on current line
-    if (( frame % 2 == 0 )); then
-      printf '\r\033[2K %b %b●%b %s...' "$prefix" "\033[1;33m\033[1m" "\033[0m" "$msg" >&2
+    if [[ "$title_dist" -gt 0 ]]; then
+      # With title: "  │ ● msg..."  (│ at col 2, aligned after title icon)
+      if (( frame % 2 == 0 )); then
+        printf '\r\033[2K  \033[38;5;242m│\033[0m %b●%b %s...' "\033[1;33m\033[1m" "\033[0m" "$msg" >&2
+      else
+        printf '\r\033[2K  \033[38;5;242m│\033[0m %b●%b %s...' "\033[1;33m\033[2m" "\033[0m" "$msg" >&2
+      fi
     else
-      printf '\r\033[2K %b %b●%b %s...' "$prefix" "\033[1;33m\033[2m" "\033[0m" "$msg" >&2
+      # No title: "    ● msg..."
+      if (( frame % 2 == 0 )); then
+        printf '\r\033[2K    %b●%b %s...' "\033[1;33m\033[1m" "\033[0m" "$msg" >&2
+      else
+        printf '\r\033[2K    %b●%b %s...' "\033[1;33m\033[2m" "\033[0m" "$msg" >&2
+      fi
     fi
 
     # Animate title sparkle if active
@@ -143,9 +149,11 @@ step_start() {
     _SPINNER_PID=$!
     disown "$_SPINNER_PID" 2>/dev/null
   else
-    local prefix="   "
-    [[ "$_TITLE_ACTIVE" == "true" ]] && prefix="│  "
-    printf ' %s ● %s...\n' "$prefix" "$msg" >&2
+    if [[ "$_TITLE_ACTIVE" == "true" ]]; then
+      printf '  │ ● %s...\n' "$msg" >&2
+    else
+      printf '    ● %s...\n' "$msg" >&2
+    fi
   fi
 }
 
@@ -153,11 +161,11 @@ step_done() {
   local msg="${1:-$_SPINNER_MSG}"
   _spinner_stop
   _spinner_clear_line
-  local prefix="   "
   if [[ "$_TITLE_ACTIVE" == "true" ]]; then
-    prefix="${_UI_GRAY}│${_UI_NC} "
+    printf '  %b│%b %b✓%b %s\n' "$_UI_GRAY" "$_UI_NC" "$_UI_GREEN" "$_UI_NC" "$msg" >&2
+  else
+    printf '    %b✓%b %s\n' "$_UI_GREEN" "$_UI_NC" "$msg" >&2
   fi
-  printf ' %b %b✓%b %s\n' "$prefix" "$_UI_GREEN" "$_UI_NC" "$msg" >&2
   _SPINNER_MSG=""
   if [[ "$_TITLE_ACTIVE" == "true" ]]; then
     _TITLE_LINES_BELOW=$(( _TITLE_LINES_BELOW + 1 ))
@@ -168,11 +176,11 @@ step_fail() {
   local msg="${1:-$_SPINNER_MSG}"
   _spinner_stop
   _spinner_clear_line
-  local prefix="   "
   if [[ "$_TITLE_ACTIVE" == "true" ]]; then
-    prefix="${_UI_GRAY}│${_UI_NC} "
+    printf '  %b│%b %b✗%b %s\n' "$_UI_GRAY" "$_UI_NC" "$_UI_RED" "$_UI_NC" "$msg" >&2
+  else
+    printf '    %b✗%b %s\n' "$_UI_RED" "$_UI_NC" "$msg" >&2
   fi
-  printf ' %b %b✗%b %s\n' "$prefix" "$_UI_RED" "$_UI_NC" "$msg" >&2
   _SPINNER_MSG=""
   if [[ "$_TITLE_ACTIVE" == "true" ]]; then
     _TITLE_LINES_BELOW=$(( _TITLE_LINES_BELOW + 1 ))
