@@ -4,16 +4,15 @@
 [[ -n "${_PR_TOOLS_UI_SH:-}" ]] && return 0
 _PR_TOOLS_UI_SH=1
 
-# ---- Spinner state ----
+# ---- State ----
 _SPINNER_PID=""
 _SPINNER_MSG=""
 _SPINNER_ACTIVE=false
 _SPINNER_INTERACTIVE=true
 
-# ---- Title state ----
-_TITLE_PID=""
 _TITLE_MSG=""
 _TITLE_ACTIVE=false
+_TITLE_LINES_BELOW=0
 
 if [[ ! -t 2 || -n "${NO_COLOR:-}" ]]; then
   _SPINNER_INTERACTIVE=false
@@ -37,79 +36,39 @@ if [[ "$_SPINNER_INTERACTIVE" == "false" ]]; then
   _UI_CYAN=""
 fi
 
-# ---- Title: pulsing header above steps ----
-
-_title_loop() {
-  local msg="$1"
-  local frame=0
-  local frames=("✦" "✧" "✦" "·")
-  local colors=("$_UI_CYAN$_UI_BOLD" "$_UI_YELLOW$_UI_BOLD" "$_UI_CYAN$_UI_DIM" "$_UI_YELLOW$_UI_DIM")
-  while true; do
-    local i=$(( frame % ${#frames[@]} ))
-    printf '\r\033[2K%b%s%b %b%s%b' "${colors[$i]}" "${frames[$i]}" "$_UI_NC" "$_UI_DIM" "$msg" "$_UI_NC" >&2
-    frame=$(( frame + 1 ))
-    sleep 0.35
-  done
-}
-
-_title_stop() {
-  if [[ -n "$_TITLE_PID" ]]; then
-    kill "$_TITLE_PID" 2>/dev/null
-    wait "$_TITLE_PID" 2>/dev/null
-    _TITLE_PID=""
-  fi
-  _TITLE_ACTIVE=false
-}
-
-ui_title_start() {
-  local msg="$1"
-  _TITLE_MSG="$msg"
-  _TITLE_ACTIVE=true
-
-  if [[ "$_SPINNER_INTERACTIVE" == "true" ]]; then
-    _title_loop "$msg" &
-    _TITLE_PID=$!
-    disown "$_TITLE_PID" 2>/dev/null
-    # Wait a beat so the title renders before steps start printing below
-    sleep 0.1
-    # Move to next line so steps print below the title
-    printf '\n' >&2
-  else
-    printf '✦ %s\n' "$msg" >&2
-  fi
-}
-
-ui_title_done() {
-  local msg="${1:-$_TITLE_MSG}"
-  _title_stop
-  if [[ "$_SPINNER_INTERACTIVE" == "true" ]]; then
-    # Move cursor up to title line, clear it, print final title, move back down
-    printf '\033[s' >&2  # save cursor
-    # We need to go up to where the title is — it's above all the steps
-    # Instead, we just leave the title as-is since steps already printed below
-    # The title line was already printed and steps are below it
-    :
-  fi
-  _TITLE_MSG=""
-  _TITLE_ACTIVE=false
-}
-
-# ---- Spinner loop ----
+# ---- Single background loop: handles both title sparkle + step spinner ----
 
 _spinner_loop() {
   local msg="$1"
-  local toggle=0
+  local title_dist="$2"    # 0 = no title, >0 = title is N lines up
+  local title_msg="$3"
+  local frame=0
+
   local prefix="   "
-  if [[ "$_TITLE_ACTIVE" == "true" ]]; then
-    prefix="│  "
-  fi
+  [[ "$title_dist" -gt 0 ]] && prefix="│  "
+
+  local sparkle_frames=("✦" "✧" "✦" "·")
+  local sparkle_colors=("\033[0;36m\033[1m" "\033[1;33m\033[1m" "\033[0;36m\033[2m" "\033[1;33m\033[2m")
+
   while true; do
-    if (( toggle % 2 == 0 )); then
-      printf '\r%s %b●%b %s...' "$prefix" "$_UI_YELLOW$_UI_BOLD" "$_UI_NC" "$msg" >&2
+    local i=$(( frame % 4 ))
+
+    # Animate spinner on current line
+    if (( frame % 2 == 0 )); then
+      printf '\r\033[2K%s %b●%b %s...' "$prefix" "\033[1;33m\033[1m" "\033[0m" "$msg" >&2
     else
-      printf '\r%s %b●%b %s...' "$prefix" "$_UI_YELLOW$_UI_DIM" "$_UI_NC" "$msg" >&2
+      printf '\r\033[2K%s %b●%b %s...' "$prefix" "\033[1;33m\033[2m" "\033[0m" "$msg" >&2
     fi
-    toggle=$(( toggle + 1 ))
+
+    # Animate title sparkle if active (cursor up → rewrite → cursor down)
+    if [[ "$title_dist" -gt 0 && -n "$title_msg" ]]; then
+      printf '\033[s' >&2
+      printf '\033[%dA\r\033[2K' "$title_dist" >&2
+      printf '%b%s%b %b%s%b' "${sparkle_colors[$i]}" "${sparkle_frames[$i]}" "\033[0m" "\033[2m" "$title_msg" "\033[0m" >&2
+      printf '\033[u' >&2
+    fi
+
+    frame=$(( frame + 1 ))
     sleep 0.3
   done
 }
@@ -129,7 +88,29 @@ _spinner_clear_line() {
   fi
 }
 
-# ---- Public API ----
+# ---- Title API ----
+
+ui_title_start() {
+  local msg="$1"
+  _TITLE_MSG="$msg"
+  _TITLE_ACTIVE=true
+  _TITLE_LINES_BELOW=0
+
+  if [[ "$_SPINNER_INTERACTIVE" == "true" ]]; then
+    # Print static title (will be animated by the spinner loop)
+    printf '%b✦%b %b%s%b\n' "$_UI_CYAN$_UI_BOLD" "$_UI_NC" "$_UI_DIM" "$msg" "$_UI_NC" >&2
+  else
+    printf '✦ %s\n' "$msg" >&2
+  fi
+}
+
+ui_title_done() {
+  _TITLE_ACTIVE=false
+  _TITLE_MSG=""
+  _TITLE_LINES_BELOW=0
+}
+
+# ---- Step API ----
 
 step_start() {
   local msg="$1"
@@ -142,7 +123,9 @@ step_start() {
   _SPINNER_ACTIVE=true
 
   if [[ "$_SPINNER_INTERACTIVE" == "true" ]]; then
-    _spinner_loop "$msg" &
+    local dist=0
+    [[ "$_TITLE_ACTIVE" == "true" ]] && dist=$(( _TITLE_LINES_BELOW + 1 ))
+    _spinner_loop "$msg" "$dist" "$_TITLE_MSG" &
     _SPINNER_PID=$!
     disown "$_SPINNER_PID" 2>/dev/null
   else
@@ -160,6 +143,9 @@ step_done() {
   [[ "$_TITLE_ACTIVE" == "true" ]] && prefix="│ "
   printf '%s %b✓%b %s\n' "$prefix" "$_UI_GREEN" "$_UI_NC" "$msg" >&2
   _SPINNER_MSG=""
+  if [[ "$_TITLE_ACTIVE" == "true" ]]; then
+    _TITLE_LINES_BELOW=$(( _TITLE_LINES_BELOW + 1 ))
+  fi
 }
 
 step_fail() {
@@ -170,6 +156,9 @@ step_fail() {
   [[ "$_TITLE_ACTIVE" == "true" ]] && prefix="│ "
   printf '%s %b✗%b %s\n' "$prefix" "$_UI_RED" "$_UI_NC" "$msg" >&2
   _SPINNER_MSG=""
+  if [[ "$_TITLE_ACTIVE" == "true" ]]; then
+    _TITLE_LINES_BELOW=$(( _TITLE_LINES_BELOW + 1 ))
+  fi
 }
 
 # ---- Trap: cleanup on exit ----
@@ -184,7 +173,6 @@ _ui_cleanup() {
       _spinner_clear_line
     fi
   fi
-  _title_stop
 }
 trap '_ui_cleanup' EXIT
 
