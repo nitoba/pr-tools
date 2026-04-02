@@ -7,7 +7,7 @@ set -euo pipefail
 # from PR + Work Item context, with best-effort creation.
 # ============================================================
 
-VERSION="0.3.10"
+VERSION="0.3.11"
 CONFIG_DIR="$HOME/.config/pr-tools"
 ENV_FILE="$CONFIG_DIR/.env"
 CACHE_FILE="$CONFIG_DIR/.cache"
@@ -444,18 +444,16 @@ print_output() {
     return
   fi
 
-  echo ""
-  echo -e "${BOLD}========================================${NC}"
-  echo -e "${BOLD}Test Card - PR #$PR_ID${NC}"
-  echo -e "${BOLD}========================================${NC}"
-  echo -e "Provider: ${CYAN}${USED_PROVIDER:-n/a}${NC} (${USED_MODEL:-n/a})"
-  echo -e "Work Item pai: ${CYAN}#$WORK_ITEM_ID${NC} - $WORK_ITEM_TITLE"
-  echo -e "AreaPath Teste: ${CYAN}$SELECTED_AREA_PATH${NC}"
+  printf '\n %b✦%b %bTest Card — PR #%s%b\n' "$_UI_ORANGE$_UI_BOLD" "$_UI_NC" "$_UI_ORANGE_DIM" "$PR_ID" "$_UI_NC" >&2
+  printf '  %b│%b %bProvider:%b %s / %s\n' "$_UI_GRAY" "$_UI_NC" "$_UI_BOLD" "$_UI_NC" "${USED_PROVIDER:-n/a}" "${USED_MODEL:-n/a}" >&2
+  printf '  %b│%b %bWork Item:%b #%s — %s\n' "$_UI_GRAY" "$_UI_NC" "$_UI_BOLD" "$_UI_NC" "$WORK_ITEM_ID" "$WORK_ITEM_TITLE" >&2
+  printf '  %b│%b %bAreaPath:%b %s\n' "$_UI_GRAY" "$_UI_NC" "$_UI_BOLD" "$_UI_NC" "$SELECTED_AREA_PATH" >&2
   if [[ -n "$SELECTED_ASSIGNED_TO" ]]; then
-    echo -e "Responsavel: ${CYAN}$SELECTED_ASSIGNED_TO${NC}"
+    printf '  %b│%b %bResponsável:%b %s\n' "$_UI_GRAY" "$_UI_NC" "$_UI_BOLD" "$_UI_NC" "$SELECTED_ASSIGNED_TO" >&2
   fi
-  echo ""
-  echo -e "${BOLD}Titulo:${NC} $GENERATED_TITLE"
+  printf '  %b│%b\n' "$_UI_GRAY" "$_UI_NC" >&2
+  printf '  %b│%b %bTítulo:%b %s\n' "$_UI_GRAY" "$_UI_NC" "$_UI_BOLD" "$_UI_NC" "$GENERATED_TITLE" >&2
+  printf '  %b└%b\n' "$_UI_GRAY" "$_UI_NC" >&2
   echo ""
   printf '%s\n' "$GENERATED_MARKDOWN"
 }
@@ -471,15 +469,13 @@ print_create_result() {
     return
   fi
 
-  echo ""
   if [[ -n "$CREATED_TEST_CASE_ID" ]]; then
-    log_success "Test Case criado com sucesso: #$CREATED_TEST_CASE_ID"
-    echo "$CREATED_TEST_CASE_URL"
+    printf '  %b│%b   %b%s%b\n' "$_UI_GRAY" "$_UI_NC" "$_UI_DIM" "$CREATED_TEST_CASE_URL" "$_UI_NC" >&2
   elif [[ -n "$CREATE_ERROR" ]]; then
-    log_warn "Não foi possivel criar o Test Case automaticamente."
-    echo "$CREATE_ERROR"
-    print_create_field_summary
-    echo "Use o Markdown gerado acima para criar o card manualmente no Azure DevOps; isso costuma acontecer quando o processo exige campos customizados obrigatorios."
+    printf '  %b│%b %b⚠ Não foi possivel criar o Test Case automaticamente%b\n' "$_UI_GRAY" "$_UI_NC" "$_UI_YELLOW" "$_UI_NC" >&2
+    printf '  %b│%b   %s\n' "$_UI_GRAY" "$_UI_NC" "$CREATE_ERROR" >&2
+    print_create_field_summary >&2
+    printf '  %b│%b   %bUse o Markdown acima para criar o card manualmente no Azure DevOps.%b\n' "$_UI_GRAY" "$_UI_NC" "$_UI_DIM" "$_UI_NC" >&2
   fi
 }
 
@@ -493,9 +489,9 @@ confirm_test_case_creation() {
     return 1
   fi
 
-  echo ""
+  printf '  %b│%b\n' "$_UI_GRAY" "$_UI_NC" >&2
   if ! prompt_yn "Criar este Test Case no Azure DevOps?" "n"; then
-    log_info "Criacao do Test Case cancelada pelo usuario."
+    printf '  %b│%b %b(cancelado)%b\n' "$_UI_GRAY" "$_UI_NC" "$_UI_DIM" "$_UI_NC" >&2
     return 1
   fi
 
@@ -511,9 +507,9 @@ confirm_parent_test_qa_update() {
     return 1
   fi
 
-  echo ""
+  printf '  %b│%b\n' "$_UI_GRAY" "$_UI_NC" >&2
   if ! prompt_yn "Atualizar o work item #$WORK_ITEM_ID para Test QA?" "n"; then
-    log_info "Atualizacao do work item pai cancelada pelo usuario."
+    printf '  %b│%b %b(cancelado)%b\n' "$_UI_GRAY" "$_UI_NC" "$_UI_DIM" "$_UI_NC" >&2
     return 1
   fi
 
@@ -611,6 +607,7 @@ EOF
 
   print_output
 
+  ui_title_start "Publicar no Azure DevOps"
   if confirm_test_case_creation; then
     step_start "Criando test case no Azure DevOps"
     if create_test_case; then
@@ -626,11 +623,12 @@ EOF
     # No spinner here — update_parent_work_item_to_test_qa may prompt for
     # required fields (Effort, Real Effort) via interactive read
     if update_parent_work_item_to_test_qa; then
-      printf '  %b✓%b Work item #%s atualizado para Test QA\n' "$_UI_GREEN" "$_UI_NC" "$WORK_ITEM_ID" >&2
+      step_done "Work item #$WORK_ITEM_ID atualizado para Test QA"
     else
-      printf '  %b✗%b Falha ao atualizar work item\n' "$_UI_RED" "$_UI_NC" >&2
+      step_fail "Falha ao atualizar work item"
     fi
   fi
+  ui_title_done
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

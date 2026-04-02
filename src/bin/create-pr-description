@@ -7,7 +7,7 @@ set -euo pipefail
 # from git context, with clickable Azure DevOps PR links.
 # ============================================================
 
-VERSION="2.8.9"
+VERSION="2.8.10"
 CONFIG_DIR="$HOME/.config/pr-tools"
 ENV_FILE="$CONFIG_DIR/.env"
 TEMPLATE_FILE="$CONFIG_DIR/pr-template.md"
@@ -979,10 +979,6 @@ print_output() {
   # Parse title and body
   parse_title_and_body "$raw_result"
 
-  echo ""
-  echo -e "${BOLD}${separator}${NC}"
-  echo -e "${BOLD}PR - ${CYAN}${BRANCH_NAME}${NC}"
-
   # Show target branches
   local target_display=""
   for target in "${TARGETS[@]}"; do
@@ -993,12 +989,14 @@ print_output() {
     fi
   done
   target_display="${target_display%, }"
-  echo -e "${BOLD}Target branches: ${target_display}${NC}"
-  echo -e "${BOLD}Provider: ${USED_PROVIDER} (${USED_MODEL})${NC}"
+
+  printf '\n %b✦%b %bPR — %s%b\n' "$_UI_ORANGE$_UI_BOLD" "$_UI_NC" "$_UI_ORANGE_DIM" "$BRANCH_NAME" "$_UI_NC" >&2
+  printf '  %b│%b %bTarget:%b %s\n' "$_UI_GRAY" "$_UI_NC" "$_UI_BOLD" "$_UI_NC" "$target_display" >&2
+  printf '  %b│%b %bProvider:%b %s (%s)\n' "$_UI_GRAY" "$_UI_NC" "$_UI_BOLD" "$_UI_NC" "$USED_PROVIDER" "$USED_MODEL" >&2
   if [[ -n "$WORK_ITEM_ID" ]]; then
-    echo -e "${BOLD}Work Item: ${CYAN}#${WORK_ITEM_ID}${NC}"
+    printf '  %b│%b %bWork Item:%b #%s\n' "$_UI_GRAY" "$_UI_NC" "$_UI_BOLD" "$_UI_NC" "$WORK_ITEM_ID" >&2
   fi
-  echo -e "${BOLD}${separator}${NC}"
+  printf '  %b└%b\n' "$_UI_GRAY" "$_UI_NC" >&2
 
   # Title
   echo ""
@@ -1012,24 +1010,19 @@ print_output() {
 
   # PR Links and Work Item link
   if [[ ${#PR_LINKS[@]} -gt 0 || -n "$WORK_ITEM_ID" ]]; then
-    echo -e "${BOLD}${separator}${NC}"
-
+    echo ""
     if [[ -n "$WORK_ITEM_ID" && "$IS_AZURE_DEVOPS" == "true" ]]; then
-      echo -e "${BOLD}Work Item:${NC}"
-      echo -e "  -> ${CYAN}#${WORK_ITEM_ID}${NC}:"
-      echo -e "     https://dev.azure.com/$AZURE_ORG/$AZURE_PROJECT/_workitems/edit/$WORK_ITEM_ID"
-      echo ""
+      printf '  %b│%b %bWork Item:%b #%s\n' "$_UI_GRAY" "$_UI_NC" "$_UI_BOLD" "$_UI_NC" "$WORK_ITEM_ID" >&2
+      printf '  %b│%b   %bhttps://dev.azure.com/%s/%s/_workitems/edit/%s%b\n' "$_UI_GRAY" "$_UI_NC" "$_UI_DIM" "$AZURE_ORG" "$AZURE_PROJECT" "$WORK_ITEM_ID" "$_UI_NC" >&2
     fi
 
     if [[ ${#PR_LINKS[@]} -gt 0 ]]; then
-      echo -e "${BOLD}Abrir PR:${NC}"
-      echo ""
+      printf '  %b│%b %bAbrir PR:%b\n' "$_UI_GRAY" "$_UI_NC" "$_UI_BOLD" "$_UI_NC" >&2
       for link_entry in "${PR_LINKS[@]}"; do
         local target_ref="${link_entry%%|*}"
         local url="${link_entry#*|}"
-        echo -e "  -> ${CYAN}${target_ref}${NC}:"
-        echo -e "     ${url}"
-        echo ""
+        printf '  %b│%b   %b→ %s%b\n' "$_UI_GRAY" "$_UI_NC" "$_UI_BOLD" "$target_ref" "$_UI_NC" >&2
+        printf '  %b│%b     %b%s%b\n' "$_UI_GRAY" "$_UI_NC" "$_UI_DIM" "$url" "$_UI_NC" >&2
       done
     fi
   fi
@@ -1037,12 +1030,12 @@ print_output() {
   # Clipboard - copy body (description)
   detect_clipboard
   if copy_to_clipboard "$PR_BODY"; then
-    echo -e "${BOLD}Descrição copiada para o clipboard!${NC}"
-    echo -e "  Titulo disponivel acima para copiar manualmente."
+    printf '  %b│%b %b✓ Descrição copiada para o clipboard%b\n' "$_UI_GRAY" "$_UI_NC" "$_UI_GREEN" "$_UI_NC" >&2
+    printf '  %b│%b   %bTítulo disponível acima para copiar manualmente.%b\n' "$_UI_GRAY" "$_UI_NC" "$_UI_DIM" "$_UI_NC" >&2
   else
-    log_warn "Nenhum comando de clipboard encontrado (pbcopy/xclip/xsel). Descrição exibida apenas no terminal."
+    printf '  %b│%b %b⚠ Clipboard não disponível (pbcopy/xclip/xsel não encontrado)%b\n' "$_UI_GRAY" "$_UI_NC" "$_UI_YELLOW" "$_UI_NC" >&2
   fi
-  echo -e "${BOLD}${separator}${NC}"
+  printf '  %b└%b\n' "$_UI_GRAY" "$_UI_NC" >&2
 }
 
 # ---- Main ----

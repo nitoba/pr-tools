@@ -310,19 +310,17 @@ offer_pr_creation() {
     return
   fi
 
-  echo ""
-  local separator="=========================================="
-  echo -e "${BOLD}${separator}${NC}"
+  ui_title_start "Publicar no Azure DevOps"
 
+  printf '  %b│%b\n' "$_UI_GRAY" "$_UI_NC" >&2
   if ! prompt_yn "Criar PR(s) no Azure DevOps?" "n"; then
+    printf '  %b│%b %b(cancelado)%b\n' "$_UI_GRAY" "$_UI_NC" "$_UI_DIM" "$_UI_NC" >&2
+    ui_title_done
     return
   fi
 
-  echo ""
-
   for target in "${TARGETS[@]}"; do
     local target_ref=""
-    local reviewer_env_var=""
     local default_reviewer=""
 
     if [[ "$target" == "dev" ]]; then
@@ -335,19 +333,24 @@ offer_pr_creation() {
       continue
     fi
 
-    echo -e "  ${BOLD}PR -> ${CYAN}${target_ref}${NC}"
+    printf '  %b│%b\n' "$_UI_GRAY" "$_UI_NC" >&2
+    printf '  %b│%b %b→ PR para %s%b\n' "$_UI_GRAY" "$_UI_NC" "$_UI_BOLD" "$target_ref" "$_UI_NC" >&2
 
     # Ask/confirm reviewer
     local reviewer=""
     reviewer=$(prompt_value "Reviewer (email)" "$default_reviewer")
 
-    log_info "Criando PR para $target_ref..."
+    step_start "Criando PR → $target_ref"
     local pr_url
     if pr_url=$(create_pr_via_api "$target_ref" "$PR_TITLE" "$PR_BODY" "$reviewer" "$WORK_ITEM_ID"); then
+      step_done "PR criado → $target_ref"
       if [[ -n "$pr_url" ]]; then
-        echo -e "  ${GREEN}->$NC $pr_url"
+        printf '  %b│%b   %b%s%b\n' "$_UI_GRAY" "$_UI_NC" "$_UI_DIM" "$pr_url" "$_UI_NC" >&2
       fi
+    else
+      step_fail "Falha ao criar PR → $target_ref"
     fi
-    echo ""
   done
+
+  ui_title_done
 }
