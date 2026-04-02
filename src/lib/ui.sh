@@ -207,12 +207,17 @@ _ui_cleanup() {
 }
 trap '_ui_cleanup' EXIT
 
-# ---- Override log functions during spinner ----
+# ---- Override log functions for consistent UI ----
 
 if declare -f log_info >/dev/null 2>&1; then
   eval "$(echo '_original_log_info()'; declare -f log_info | tail -n +2)"
   log_info() {
     if [[ "$_SPINNER_ACTIVE" == "true" ]]; then
+      return 0
+    fi
+    if [[ "$_TITLE_ACTIVE" == "true" ]]; then
+      printf '  %b│%b %b%s%b\n' "$_UI_GRAY" "$_UI_NC" "$_UI_DIM" "$1" "$_UI_NC" >&2
+      _TITLE_LINES_BELOW=$(( _TITLE_LINES_BELOW + 1 ))
       return 0
     fi
     _original_log_info "$@"
@@ -226,6 +231,11 @@ if declare -f log_error >/dev/null 2>&1; then
       _spinner_stop
       _spinner_clear_line
     fi
+    if [[ "$_TITLE_ACTIVE" == "true" ]]; then
+      printf '  %b│%b %b✗ %s%b\n' "$_UI_GRAY" "$_UI_NC" "$_UI_RED" "$1" "$_UI_NC" >&2
+      _TITLE_LINES_BELOW=$(( _TITLE_LINES_BELOW + 1 ))
+      return 0
+    fi
     _original_log_error "$@"
   }
 fi
@@ -236,6 +246,11 @@ if declare -f log_warn >/dev/null 2>&1; then
     if [[ "$_SPINNER_ACTIVE" == "true" ]]; then
       _spinner_stop
       _spinner_clear_line
+    fi
+    if [[ "$_TITLE_ACTIVE" == "true" ]]; then
+      printf '  %b│%b %b⚠ %s%b\n' "$_UI_GRAY" "$_UI_NC" "$_UI_YELLOW" "$1" "$_UI_NC" >&2
+      _TITLE_LINES_BELOW=$(( _TITLE_LINES_BELOW + 1 ))
+      return 0
     fi
     _original_log_warn "$@"
   }
