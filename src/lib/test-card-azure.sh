@@ -550,7 +550,7 @@ EOF
   done <<< "$ids"
 
   ranked=$(printf '%s' "$lines" | sort -t$'\t' -k1,1 -k2,2r -k3,3n | head -n "$EXAMPLE_COUNT")
-  EXAMPLES_SUMMARY=$(printf '%s' "$ranked" | awk -F'\t' '{printf "- #%s %s (estado: %s, area: %s, descricao: %s, passos: %s)\n", $3, $4, $5, $6, $7, $8}')
+  EXAMPLES_SUMMARY=$(printf '%s' "$ranked" | awk -F'\t' '{printf "- #%s %s (estado: %s, area: %s, descrição: %s, passos: %s)\n", $3, $4, $5, $6, $7, $8}')
   [[ -n "$EXAMPLES_SUMMARY" ]] || EXAMPLES_SUMMARY="(nenhum exemplo resumido)"
 }
 

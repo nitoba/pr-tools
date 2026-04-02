@@ -422,7 +422,7 @@ $GIT_DIFF"
   fi
 
   # Call LLM
-  step_start "Gerando descricao via LLM"
+  step_start "Gerando descrição via LLM"
   if [[ "$STREAM_MODE" == "true" ]]; then
     _spinner_stop
     _spinner_clear_line
@@ -435,7 +435,7 @@ $GIT_DIFF"
     echo "" >&2
     echo -e "${DIM}--- Resposta completa recebida ---${NC}" >&2
   fi
-  step_done "Descricao gerada ($USED_PROVIDER/$USED_MODEL)"
+  step_done "Descrição gerada ($USED_PROVIDER/$USED_MODEL)"
 
   # Output
   print_output "$LLM_RESULT"

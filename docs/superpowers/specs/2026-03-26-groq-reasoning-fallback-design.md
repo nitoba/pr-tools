@@ -5,7 +5,7 @@
 
 ## Objetivo
 
-Evitar falha na geracao da descricao de PR quando a API da Groq rejeitar o parametro `reasoning_format` para modelos que nao suportam esse recurso, fazendo uma nova tentativa automatica sem esse campo.
+Evitar falha na geracao da descrição de PR quando a API da Groq rejeitar o parametro `reasoning_format` para modelos que nao suportam esse recurso, fazendo uma nova tentativa automatica sem esse campo.
 
 ## Problema
 
@@ -223,7 +223,7 @@ Se o retry for implementado diretamente no fluxo atual sem pequenas extracoes, o
 
 - confirmar que uma chamada Groq bem-sucedida com `reasoning_format` continua funcionando
 - confirmar que o erro especifico abaixo dispara retry sem `reasoning_format`
-- confirmar que, no retry bem-sucedido, a descricao do PR e produzida normalmente
+- confirmar que, no retry bem-sucedido, a descrição do PR e produzida normalmente
 - confirmar que um erro Groq diferente nao dispara o retry especial
 - confirmar que corpo de erro nao-JSON, JSON malformado ou sem `error.param`/`error.message` nao dispara retry
 
@@ -265,6 +265,6 @@ Erro-alvo para o fallback:
 
 - Dado o provider `groq` e um modelo que rejeita `reasoning_format`, o script detecta esse erro especifico e refaz a chamada sem o campo
 - O retry reutiliza o mesmo payload da primeira tentativa, removendo apenas `reasoning_format`
-- Se a segunda chamada funcionar, a descricao do PR e gerada normalmente
+- Se a segunda chamada funcionar, a descrição do PR e gerada normalmente
 - Se o erro nao estiver ligado a `reasoning_format`, o comportamento de falha atual e preservado
 - Nenhum outro provider passa a usar essa logica especial

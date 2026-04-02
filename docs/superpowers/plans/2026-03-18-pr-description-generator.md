@@ -121,7 +121,7 @@ show_help() {
   cat <<'HELP'
 create-pr-description [opcoes]
 
-Gera descricao de PR automaticamente a partir do contexto git,
+Gera descrição de PR automaticamente a partir do contexto git,
 usando LLM (OpenRouter/Groq) com fallback configuravel.
 
 Opcoes:
@@ -242,12 +242,12 @@ Add before the `main()` function:
 ```bash
 # ---- Default Template ----
 
-DEFAULT_TEMPLATE='Analise o diff e log do git fornecidos e gere uma descricao de PR em portugues
+DEFAULT_TEMPLATE='Analise o diff e log do git fornecidos e gere uma descrição de PR em portugues
 brasileiro seguindo EXATAMENTE este formato:
 
 ---
 
-## Descricao
+## Descrição
 
 <Resumo conciso em 1-2 frases do que a mudanca faz e por que>
 
@@ -256,7 +256,7 @@ brasileiro seguindo EXATAMENTE este formato:
 ### Componentes atualizados
 
 <Para cada componente/arquivo modificado significativamente, liste:>
-- **nome-do-componente**: <Descricao das mudancas neste componente, focando no
+- **nome-do-componente**: <Descrição das mudancas neste componente, focando no
   que mudou funcionalmente, nao linha por linha>
 
 ### Correcoes / Melhorias tecnicas
@@ -1129,9 +1129,9 @@ print_output() {
   # Clipboard
   detect_clipboard
   if copy_to_clipboard "$description"; then
-    echo -e "${BOLD}Descricao copiada para o clipboard!${NC}"
+    echo -e "${BOLD}Descrição copiada para o clipboard!${NC}"
   else
-    log_warn "Nenhum comando de clipboard encontrado (pbcopy/xclip/xsel). Descricao exibida apenas no terminal."
+    log_warn "Nenhum comando de clipboard encontrado (pbcopy/xclip/xsel). Descrição exibida apenas no terminal."
   fi
   echo -e "${BOLD}${separator}${NC}"
 }
@@ -1214,7 +1214,7 @@ $GIT_LOG
 $GIT_DIFF"
 
   # Call LLM
-  log_info "Gerando descricao do PR..."
+  log_info "Gerando descrição do PR..."
   call_with_fallback "$template_content" "$user_prompt"
 
   # Output

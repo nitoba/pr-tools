@@ -14,11 +14,11 @@
 
 ## File Structure
 
-| File | Responsibility |
-|---|---|
-| `bin/create-pr-description` | Build Groq/OpenAI-compatible payloads, execute HTTP calls, classify Groq retryable errors, and preserve provider fallback behavior |
-| `docs/superpowers/specs/2026-03-26-groq-reasoning-fallback-design.md` | Approved design reference for retry predicate, logging rules, and verification scope |
-| `docs/superpowers/plans/2026-03-26-groq-reasoning-fallback.md` | This implementation plan |
+| File                                                                  | Responsibility                                                                                                                     |
+| --------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `bin/create-pr-description`                                           | Build Groq/OpenAI-compatible payloads, execute HTTP calls, classify Groq retryable errors, and preserve provider fallback behavior |
+| `docs/superpowers/specs/2026-03-26-groq-reasoning-fallback-design.md` | Approved design reference for retry predicate, logging rules, and verification scope                                               |
+| `docs/superpowers/plans/2026-03-26-groq-reasoning-fallback.md`        | This implementation plan                                                                                                           |
 
 This change should stay in one runtime file. Do not add a new framework, test runner, or permanent helper script just for this fallback.
 
@@ -29,6 +29,7 @@ This change should stay in one runtime file. Do not add a new framework, test ru
 ### Task 1: Extract payload builder for OpenAI-compatible providers
 
 **Files:**
+
 - Modify: `bin/create-pr-description`
 
 - [ ] **Step 1: Add a payload builder helper near the LLM provider section**
@@ -102,6 +103,7 @@ git commit -m "refactor: extract openai payload builder for provider calls"
 ```
 
 Expected:
+
 - if the index already contains unrelated staged changes, do not create this commit yet
 - if `bin/create-pr-description` already contains unrelated user edits, skip this per-task commit and continue implementation without committing yet
 - only create this commit when the file is isolated enough that the staged diff contains only this task's intended changes
@@ -111,6 +113,7 @@ Expected:
 ### Task 2: Extract HTTP executor that returns status and body
 
 **Files:**
+
 - Modify: `bin/create-pr-description`
 
 - [ ] **Step 1: Add a helper that executes the HTTP call without discarding the body on non-200**
@@ -175,6 +178,7 @@ git commit -m "refactor: separate provider HTTP execution from response handling
 ```
 
 Expected:
+
 - if the index already contains unrelated staged changes, do not create this commit yet
 - if `bin/create-pr-description` already contains unrelated user edits, skip this per-task commit and continue implementation without committing yet
 - only create this commit when the file is isolated enough that the staged diff contains only this task's intended changes
@@ -184,11 +188,13 @@ Expected:
 ### Task 3: Add the conservative Groq retry classifier
 
 **Files:**
+
 - Modify: `bin/create-pr-description`
 
 - [ ] **Step 1: Add a helper that returns success only for the approved Groq retry case**
 
 Implement a helper that receives `provider_name`, `http_code`, and `body`, and returns zero only when all approved conditions are true:
+
 - `provider_name == "groq"`
 - `http_code == "400"`
 - `error.param == "reasoning_format"`
@@ -239,6 +245,7 @@ git commit -m "feat: add groq reasoning-format retry classifier"
 ```
 
 Expected:
+
 - if the index already contains unrelated staged changes, do not create this commit yet
 - if `bin/create-pr-description` already contains unrelated user edits, skip this per-task commit and continue implementation without committing yet
 - only create this commit when the file is isolated enough that the staged diff contains only this task's intended changes
@@ -250,11 +257,13 @@ Expected:
 ### Task 4: Add the single retry path inside `call_llm_api`
 
 **Files:**
+
 - Modify: `bin/create-pr-description`
 
 - [ ] **Step 1: Update `call_llm_api` to attempt Groq once with `reasoning_format` and retry once without it**
 
 Implement the flow exactly as approved in the spec:
+
 - first Groq attempt includes `reasoning_format: "hidden"`
 - if the classifier says the response is retryable, log one specific warning and rebuild the payload without `reasoning_format`
 - retry exactly once using the same URL, headers, timeout, method, and other payload fields
@@ -293,6 +302,7 @@ fi
 - [ ] **Step 2: Preserve the timeout and rate-limit branches exactly**
 
 Do not let the Groq retry path alter the current behavior for:
+
 - `000` timeout
 - `429` rate limit
 - other provider errors
@@ -315,6 +325,7 @@ git commit -m "fix: retry groq requests without reasoning_format when unsupporte
 ```
 
 Expected:
+
 - if the index already contains unrelated staged changes, do not create this commit yet
 - if `bin/create-pr-description` already contains unrelated user edits, skip this per-task commit and continue implementation without committing yet
 - only create this commit when the file is isolated enough that the staged diff contains only this task's intended changes
@@ -324,11 +335,13 @@ Expected:
 ### Task 5: Validate the retry predicate locally with inline fixtures
 
 **Files:**
+
 - Modify: `bin/create-pr-description` (only if a tiny helper extraction is still needed)
 
 - [ ] **Step 1: Run a local shell validation for the classifier with three fixtures**
 
 Use a one-off shell command from the repo root that sources the script helpers through the guarded entrypoint and validates:
+
 - target Groq error returns success
 - different Groq error returns failure
 - invalid JSON returns failure
@@ -362,6 +375,7 @@ Expected: command exits with status `0` and no unexpected output.
 - [ ] **Step 2: Run a local shell validation for the retry flow with stubbed request execution**
 
 Use a one-off shell command that sources the guarded script, temporarily overrides `execute_openai_http_request`, and writes observations to temp files so the proof survives command substitution inside `call_llm_api`:
+
 - target Groq error causes exactly one retry
 - non-target Groq error does not retry
 - invalid body does not retry
@@ -400,7 +414,7 @@ execute_openai_http_request() {
   fi
 
   if [[ "$TEST_CASE" == "target" && "$call_number" -eq 2 ]]; then
-    printf "%s\n200" "{\"choices\":[{\"message\":{\"content\":\"TITULO: teste\n\n## Descricao\n\nok\"}}]}"
+    printf "%s\n200" "{\"choices\":[{\"message\":{\"content\":\"TITULO: teste\n\n## Descrição\n\nok\"}}]}"
     return 0
   fi
 
@@ -446,6 +460,7 @@ Expected: command exits with status `0`; target case retries once, preserves req
 
 Run: `bash -n bin/create-pr-description && bin/create-pr-description --help && bin/create-pr-description --dry-run`
 Expected:
+
 - no syntax errors
 - help text renders normally
 - `--dry-run` still reaches the existing non-network flow until the current repo/config preconditions stop it
@@ -453,6 +468,7 @@ Expected:
 - [ ] **Step 4: If Groq credentials are available, do one manual live validation**
 
 Run the smallest realistic path you can safely execute with a Groq model known to reject `reasoning_format`, and confirm:
+
 - one retry warning appears
 - the request succeeds on the second attempt
 - PR description output is still parsed normally
@@ -462,6 +478,7 @@ If credentials or a suitable model are not available, document that verification
 - [ ] **Step 5: Record the verification results in the implementation handoff notes**
 
 Capture which of the following were actually run:
+
 - local fixture-based helper validation
 - syntax and CLI smoke checks
 - live Groq validation, if available
@@ -473,12 +490,14 @@ Capture which of the following were actually run:
 ### Task 6: Final repo verification
 
 **Files:**
+
 - Modify: `bin/create-pr-description`
 
 - [ ] **Step 1: Run final verification commands from the repo root**
 
 Run: `bash -n bin/create-pr-description && bash -n install.sh && bin/create-pr-description --help && bin/create-pr-description --dry-run`
 Expected:
+
 - no syntax errors in either script
 - CLI help works
 - `--dry-run` still exercises the safe non-network flow
@@ -487,6 +506,7 @@ Expected:
 
 Run: `git status --short && git log --oneline -n 5 && git diff -- bin/create-pr-description`
 Expected:
+
 - recent commits show the intended helper extraction and Groq retry work
 - working-tree diff only shows the helper extraction, Groq retry classifier, retry flow, entrypoint guard if added, and any tiny readability refactors required to support them
 - working-tree diff does not contain unrelated last-minute edits in `bin/create-pr-description`
@@ -498,6 +518,7 @@ git status --short
 ```
 
 Expected:
+
 - if the index already contains unrelated staged changes, do not create a final commit yet
 - if there are remaining implementation changes, stage only the intended file changes for this task, create one final non-empty commit, and do not include unrelated staged user changes
 - if the earlier task commits already cover the work, skip this step and avoid an empty commit
@@ -505,6 +526,7 @@ Expected:
 - [ ] **Step 4: Prepare implementation summary for handoff**
 
 Include:
+
 - where the retry predicate lives
 - how the retry preserves payload/curl invariants
 - which verification commands were actually run

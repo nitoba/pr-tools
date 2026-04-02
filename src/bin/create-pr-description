@@ -83,7 +83,7 @@ em portugues brasileiro.
 IMPORTANTE: A PRIMEIRA LINHA da sua resposta DEVE ser o titulo neste formato exato:
 TITULO: <texto curto e descritivo, max 80 caracteres>
 
-Depois do titulo, siga este formato para a descricao:
+Depois do titulo, siga este formato para a descrição:
 
 ## Descrição
 
@@ -115,7 +115,7 @@ Se não houver, omita esta secao.>
 
 ## Regras:
 - A primeira linha DEVE ser o titulo no formato: TITULO: <texto>
-- Se um Work Item for fornecido no contexto (#numero), inclua "Relacionado a: #numero" no final da descricao
+- Se um Work Item for fornecido no contexto (#numero), inclua "Relacionado a: #numero" no final da descrição
 - Escreva em portugues brasileiro
 - Seja tecnico mas conciso
 - Foque no "o que" e "por que", não no "como"
@@ -154,7 +154,7 @@ show_help() {
   cat <<'HELP'
 create-pr-description [opcoes]
 
-Gera descricao de PR automaticamente a partir do contexto git,
+Gera descrição de PR automaticamente a partir do contexto git,
 usando LLM (OpenRouter/Groq) com fallback configuravel.
 
 Opcoes:
@@ -166,7 +166,7 @@ Opcoes:
   --set-groq-model <modelo>           Salva modelo do Groq no .env
   --set-gemini-model <modelo>         Salva modelo do Google Gemini no .env
   --dry-run                           Mostra o prompt sem chamar a LLM
-  --raw                               Exibe a descricao sem renderizacao Markdown (texto puro)
+  --raw                               Exibe a descrição sem renderizacao Markdown (texto puro)
   --no-stream                          Desabilita streaming (exibe resposta apenas ao final)
   --update                            Atualiza o script para a versao mais recente
   --help                              Mostra esta ajuda
@@ -826,7 +826,7 @@ detect_work_item() {
     return
   fi
 
-  # 2. Try to extract from branch name: tipo/NUMERO-descricao
+  # 2. Try to extract from branch name: tipo/NUMERO-descrição
   if [[ "$BRANCH_NAME" =~ ^[a-zA-Z]+/([0-9]+) ]]; then
     WORK_ITEM_ID="${BASH_REMATCH[1]}"
     log_info "Work item (branch): #$WORK_ITEM_ID"
@@ -1056,7 +1056,7 @@ main() {
   fi
 
   # Validation
-  ui_title_start "Gerando descricao do PR..."
+  ui_title_start "Gerando descrição do PR..."
   step_start "Validando dependencias"
   validate_dependencies
   validate_git_repo

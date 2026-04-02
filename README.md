@@ -256,7 +256,7 @@ Se a criação falhar por regra do processo no Azure DevOps, o comando mantém o
 
 1. Coleta `git diff` e `git log` da branch atual vs branch base (sprint ou dev)
 2. Detecta a sprint vigente (maior número em `origin/sprint/*`)
-3. Detecta o work item a partir do nome da branch (ex: `feat/1234-descricao`) ou via `--work-item`
+3. Detecta o work item a partir do nome da branch (ex: `feat/1234-descrição`) ou via `--work-item`
 4. Parseia o remote para extrair org/project/repo do Azure DevOps
 5. Envia o contexto para um LLM via API REST (com fallback entre providers)
 6. Extrai título e descrição da resposta do LLM
@@ -270,11 +270,11 @@ O fluxo do `create-test-card` está documentado nas seções `Uso` e `Output`, i
 
 ## Providers suportados
 
-| Provider | Modelo padrão (gratuito) |
-|---|---|
-| [OpenRouter](https://openrouter.ai) | `meta-llama/llama-3.3-70b-instruct:free` |
-| [Groq](https://console.groq.com) | `llama-3.3-70b-versatile` |
-| [Google Gemini](https://aistudio.google.com) | `gemini-3.1-flash-lite-preview` |
+| Provider                                     | Modelo padrão (gratuito)                 |
+| -------------------------------------------- | ---------------------------------------- |
+| [OpenRouter](https://openrouter.ai)          | `meta-llama/llama-3.3-70b-instruct:free` |
+| [Groq](https://console.groq.com)             | `llama-3.3-70b-versatile`                |
+| [Google Gemini](https://aistudio.google.com) | `gemini-3.1-flash-lite-preview`          |
 
 Você pode trocar o modelo via `.env` ou variável de ambiente:
 

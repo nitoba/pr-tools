@@ -12,12 +12,12 @@ Criar uma ferramenta de linha de comando que gera automaticamente descricoes de 
 O processo manual de escrever descricoes de PR e repetitivo e consome tempo. O desenvolvedor precisa:
 
 1. Analisar o diff manualmente
-2. Escrever a descricao seguindo um formato padrao
+2. Escrever a descrição seguindo um formato padrao
 3. Repetir para dois PRs (dev e sprint/N)
 
 ## Solucao
 
-Um script shell + template externo + configuracao de providers que automatiza a geracao da descricao. Suporta multiplos providers de LLM (OpenRouter, Groq) com fallback configuravel.
+Um script shell + template externo + configuracao de providers que automatiza a geracao da descrição. Suporta multiplos providers de LLM (OpenRouter, Groq) com fallback configuravel.
 
 ## Requisitos
 
@@ -25,8 +25,8 @@ Um script shell + template externo + configuracao de providers que automatiza a 
 
 - Coletar contexto do git: `git diff`, `git log`, branch name
 - Detectar automaticamente a sprint vigente (branch `sprint/*` com maior numero no remote)
-- Gerar descricao de PR em portugues brasileiro
-- Seguir template fixo com secoes: Descricao, Alteracoes, Correcoes, Tipo de mudanca
+- Gerar descrição de PR em portugues brasileiro
+- Seguir template fixo com secoes: Descrição, Alteracoes, Correcoes, Tipo de mudanca
 - Imprimir output no terminal e copiar para clipboard (`pbcopy`)
 - Informar as target branches: `dev` e `sprint/N`
 - Gerar links clickaveis para abertura de PR no Azure DevOps (um para dev, um para sprint/N)
@@ -44,7 +44,7 @@ Um script shell + template externo + configuracao de providers que automatiza a 
 
 ```
 ~/.local/bin/create-pr-description    # Script principal (executavel, no PATH)
-~/.config/pr-tools/pr-template.md     # Template da descricao do PR
+~/.config/pr-tools/pr-template.md     # Template da descrição do PR
 ~/.config/pr-tools/.env               # API keys e configuracao de providers
 ~/.config/pr-tools/.cache             # Cache de dados (repositoryId, etc.)
 ```
@@ -125,9 +125,9 @@ Variaveis de ambiente sobrescrevem o arquivo `.env` (precedencia: env var > .env
     c. Parsear resposta com jq
     d. Se falha: logar aviso, tentar proximo provider
 16. Imprimir cabecalho com info da branch, targets e provider usado
-17. Imprimir descricao gerada
+17. Imprimir descrição gerada
 18. Imprimir links de abertura de PR (clickaveis no terminal)
-19. Copiar descricao para clipboard (pbcopy)
+19. Copiar descrição para clipboard (pbcopy)
 20. Mostrar confirmacao de copia
 ```
 
@@ -222,12 +222,12 @@ Para evitar estourar o contexto do modelo:
 O template e armazenado em `~/.config/pr-tools/pr-template.md` e funciona como instrucao para o LLM. Conteudo:
 
 ```markdown
-Analise o diff e log do git fornecidos e gere uma descricao de PR em portugues
+Analise o diff e log do git fornecidos e gere uma descrição de PR em portugues
 brasileiro seguindo EXATAMENTE este formato:
 
 ---
 
-## Descricao
+## Descrição
 
 <Resumo conciso em 1-2 frases do que a mudanca faz e por que>
 
@@ -237,7 +237,7 @@ brasileiro seguindo EXATAMENTE este formato:
 
 <Para cada componente/arquivo modificado significativamente, liste:>
 
-- **nome-do-componente**: <Descricao das mudancas neste componente, focando no
+- **nome-do-componente**: <Descrição das mudancas neste componente, focando no
   que mudou funcionalmente, nao linha por linha>
 
 ### Correcoes / Melhorias tecnicas
@@ -325,7 +325,7 @@ description=$(echo "$body" | jq -r '.choices[0].message.content')
 | Todos os providers falharam      | Erro: "Todos os providers falharam. Verifique suas API keys e conexao." (exit 1)                                                  |
 | Timeout na chamada (>60s)        | Aviso: "Timeout no provider [X]. Tentando proximo..." Tenta fallback.                                                             |
 | Rate limit (HTTP 429)            | Aviso: "Rate limit no provider [X]. Tentando proximo..." Tenta fallback.                                                          |
-| Clipboard nao disponivel         | Aviso: "Nenhum comando de clipboard encontrado (pbcopy/xclip/xsel). Descricao exibida apenas no terminal." (exit 0)               |
+| Clipboard nao disponivel         | Aviso: "Nenhum comando de clipboard encontrado (pbcopy/xclip/xsel). Descrição exibida apenas no terminal." (exit 0)               |
 | Template nao existe              | Erro: "Template nao encontrado em ~/.config/pr-tools/pr-template.md. Execute 'create-pr-description --init' para criar." (exit 1) |
 | git fetch falha (offline/rede)   | Aviso: "Falha ao fazer fetch do remote. Usando dados locais." Continua com branches locais. (exit 0)                              |
 | AZURE_PAT nao configurado        | Aviso: "Links gerados sem repositoryId. Configure AZURE_PAT para links completos." (exit 0)                                       |
@@ -341,7 +341,7 @@ Target branches: dev, sprint/97
 Provider: openrouter (meta-llama/llama-3.3-70b-instruct:free)
 ==========================================
 
-## Descricao
+## Descrição
 
 Adiciona suporte ao tema escuro (dark mode) em multiplos componentes
 da home page e do dashboard...
@@ -366,7 +366,7 @@ Abrir PR:
   -> sprint/97:
      https://dev.azure.com/ibsbiosistemico/AGROTRACE/_git/agrotrace-v3/pullrequestcreate?sourceRef=feature/dark-mode&targetRef=sprint/97&sourceRepositoryId=a7b263e4-...&targetRepositoryId=a7b263e4-...
 
-Descricao copiada para o clipboard!
+Descrição copiada para o clipboard!
 ==========================================
 ```
 
@@ -421,7 +421,7 @@ Opcoes:
 
 ## Fora de Escopo
 
-- Criacao automatica do PR no Azure DevOps (gera descricao + links, mas nao cria o PR)
+- Criacao automatica do PR no Azure DevOps (gera descrição + links, mas nao cria o PR)
 - Suporte a multiplos templates por projeto
 - Configuracao de base branch diferente de `dev`
 - Streaming da resposta (aguarda resposta completa)

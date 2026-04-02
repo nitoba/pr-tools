@@ -39,7 +39,7 @@ A UI library exposing 3 functions:
 5. `step_start "Detectando work item"` → `step_done "Work item: #ID"`
 6. `step_start "Detectando sprint"` → `step_done "Sprint: N"` or `step_done "Sem sprint ativo"`
 7. `step_start "Resolvendo repositório Azure DevOps"` → `step_done "Repositório resolvido"`
-8. `step_start "Gerando descricao via LLM"` → `step_done "Descricao gerada (provider)"`
+8. `step_start "Gerando descrição via LLM"` → `step_done "Descrição gerada (provider)"`
 9. Output formatting (no spinner — just prints)
 10. (optional) `step_start "Criando PR no Azure DevOps"` → `step_done "PR criado"`
 
