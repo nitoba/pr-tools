@@ -1056,20 +1056,55 @@ main() {
   fi
 
   # Validation
+  step_start "Validando dependencias"
   validate_dependencies
   validate_git_repo
+  step_done "Dependencias validadas"
+
+  step_start "Carregando configuracao"
   load_config
   validate_config
+  step_done "Configuracao carregada"
+
+  step_start "Validando API keys"
   validate_api_keys
+  step_done "API keys validadas"
+
+  step_start "Validando branch"
   validate_not_base_branch
+  step_done "Branch: $BRANCH_NAME"
 
   # Collect context
+  step_start "Coletando contexto git"
   collect_git_context
+  step_done "Contexto git coletado"
+
+  step_start "Detectando work item"
   detect_work_item
+  if [[ -n "$WORK_ITEM_ID" ]]; then
+    step_done "Work item: #$WORK_ITEM_ID"
+  else
+    step_done "Sem work item detectado"
+  fi
+
+  step_start "Detectando sprint"
   detect_sprint
+  if [[ -n "$SPRINT_NUMBER" ]]; then
+    step_done "Sprint: $SPRINT_NUMBER"
+  else
+    step_done "Sem sprint ativo"
+  fi
+
+  step_start "Resolvendo repositorio Azure DevOps"
   parse_azure_remote
   fetch_repo_id
   build_pr_links
+  if [[ "$IS_AZURE_DEVOPS" == "true" ]]; then
+    step_done "Repositorio: $AZURE_ORG/$AZURE_PROJECT/$AZURE_REPO"
+  else
+    step_done "Repositorio nao-Azure (sem links de PR)"
+  fi
+
   detect_md_renderer
 
   # Read template
@@ -1127,8 +1162,10 @@ $GIT_DIFF"
   fi
 
   # Call LLM
-  log_info "Gerando descricao do PR..."
+  step_start "Gerando descricao via LLM"
   if [[ "$STREAM_MODE" == "true" ]]; then
+    _spinner_stop
+    _spinner_clear_line
     echo "" >&2
     echo -e "${DIM}--- Streaming resposta do LLM ---${NC}" >&2
     echo "" >&2
@@ -1136,8 +1173,9 @@ $GIT_DIFF"
   call_with_fallback "$template_content" "$user_prompt"
   if [[ "$STREAM_MODE" == "true" ]]; then
     echo "" >&2
-    echo -e "${DIM}--- Resposta completa recebida. Formatando... ---${NC}" >&2
+    echo -e "${DIM}--- Resposta completa recebida ---${NC}" >&2
   fi
+  step_done "Descricao gerada ($USED_PROVIDER/$USED_MODEL)"
 
   # Output
   print_output "$LLM_RESULT"
