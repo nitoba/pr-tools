@@ -22,12 +22,28 @@ if [[ ! -d "$LIB_DIR" ]]; then
   LIB_DIR="${SCRIPT_DIR}/../lib"
 fi
 
-for _lib in common.sh llm.sh azure.sh; do
-  if [[ ! -f "$LIB_DIR/$_lib" ]]; then
-    echo "[ERRO] Biblioteca nao encontrada: $LIB_DIR/$_lib" >&2
-    echo "[ERRO] Execute o instalador novamente ou verifique a estrutura do projeto." >&2
-    exit 1
+# Auto-download libs if missing (handles upgrade from monolithic version)
+_pr_tools_ensure_libs() {
+  local missing=false
+  for _lib in common.sh llm.sh azure.sh; do
+    [[ ! -f "$LIB_DIR/$_lib" ]] && missing=true && break
+  done
+  if [[ "$missing" == "true" ]]; then
+    echo "[INFO] Bibliotecas nao encontradas. Baixando automaticamente..." >&2
+    mkdir -p "$LIB_DIR"
+    for _lib in common.sh llm.sh azure.sh; do
+      if ! curl -fsSL "$REPO_URL/lib/$_lib" -o "$LIB_DIR/$_lib" 2>/dev/null; then
+        echo "[ERRO] Falha ao baixar $LIB_DIR/$_lib" >&2
+        echo "[ERRO] Execute: curl -fsSL $REPO_URL/install.sh | bash" >&2
+        exit 1
+      fi
+    done
+    echo "[OK] Bibliotecas instaladas em $LIB_DIR" >&2
   fi
+}
+_pr_tools_ensure_libs
+
+for _lib in common.sh llm.sh azure.sh; do
   source "$LIB_DIR/$_lib"
 done
 

@@ -52,9 +52,21 @@ if [[ ! -d "$LIB_DIR" ]]; then
   LIB_DIR="${SCRIPT_DIR}/../lib"
 fi
 
-if [[ -f "$LIB_DIR/common.sh" ]]; then
-  source "$LIB_DIR/common.sh"
+# Auto-download libs if missing (handles upgrade from monolithic version)
+if [[ ! -f "$LIB_DIR/common.sh" ]]; then
+  echo "[INFO] Bibliotecas nao encontradas. Baixando automaticamente..." >&2
+  mkdir -p "$LIB_DIR"
+  for _lib in common.sh llm.sh azure.sh; do
+    if ! curl -fsSL "$REPO_URL/lib/$_lib" -o "$LIB_DIR/$_lib" 2>/dev/null; then
+      echo "[ERRO] Falha ao baixar $LIB_DIR/$_lib" >&2
+      echo "[ERRO] Execute: curl -fsSL $REPO_URL/install.sh | bash" >&2
+      exit 1
+    fi
+  done
+  echo "[OK] Bibliotecas instaladas em $LIB_DIR" >&2
 fi
+
+source "$LIB_DIR/common.sh"
 
 ACTION=""
 DRY_RUN=false

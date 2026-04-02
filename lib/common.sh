@@ -377,5 +377,25 @@ do_update() {
 
   echo "$remote_script" > "$script_path"
   chmod +x "$script_path"
-  log_success "Atualizado para v$remote_version!"
+  log_success "Script atualizado para v$remote_version!"
+
+  # Update lib files alongside the script
+  local script_dir
+  script_dir="$(cd "$(dirname "$script_path")" && pwd)"
+  local lib_dir="${script_dir}/../lib/pr-tools"
+  if [[ ! -d "$lib_dir" ]]; then
+    lib_dir="${script_dir}/../lib"
+  fi
+  mkdir -p "$lib_dir"
+
+  local lib_file lib_content
+  for lib_file in common.sh llm.sh azure.sh; do
+    lib_content=$(curl -fsSL "$repo_url/lib/$lib_file" 2>/dev/null || echo "")
+    if [[ -n "$lib_content" ]]; then
+      echo "$lib_content" > "$lib_dir/$lib_file"
+      log_success "Lib atualizada: $lib_file"
+    else
+      log_warn "Falha ao baixar lib/$lib_file. Tente reinstalar: curl -fsSL $repo_url/install.sh | bash"
+    fi
+  done
 }
