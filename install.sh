@@ -101,18 +101,47 @@ fi
 
 # Run --init if config doesn't exist
 CONFIG_DIR="$HOME/.config/pr-tools"
-if [[ ! -f "$CONFIG_DIR/.env" ]]; then
+ENV_FILE="$CONFIG_DIR/.env"
+if [[ ! -f "$ENV_FILE" ]]; then
   echo ""
   log_info "Iniciando configuracao..."
-  log_info "Se houver TTY disponivel, o wizard vai te guiar na configuracao das credenciais."
-  echo ""
   if [[ -t 0 && -t 1 ]]; then
+    log_info "O wizard vai te guiar na configuracao das credenciais."
+    echo ""
     "$INSTALL_DIR/create-pr-description" --init
     "$INSTALL_DIR/create-test-card" --init
   else
-    log_warn "Sem TTY interativo; pulando o wizard automatico."
-    echo -e "  Proximo passo: ${CYAN}create-pr-description --init${NC}"
-    echo -e "  Proximo passo: ${CYAN}create-test-card --init${NC}"
+    # Non-interactive: create default .env so the scripts are usable
+    mkdir -p "$CONFIG_DIR"
+    cat > "$ENV_FILE" <<'ENVEOF'
+# Providers em ordem de prioridade (tenta o primeiro, se falhar vai pro proximo)
+PR_PROVIDERS="openrouter,groq,gemini"
+
+# API Keys (descomente e preencha)
+# OPENROUTER_API_KEY="sk-or-..."
+# GROQ_API_KEY="gsk_..."
+# GEMINI_API_KEY="..."
+
+# Modelos (opcional)
+# OPENROUTER_MODEL="meta-llama/llama-3.3-70b-instruct:free"
+# GROQ_MODEL="llama-3.3-70b-versatile"
+# GEMINI_MODEL="gemini-3.1-flash-lite-preview"
+
+# Streaming (exibe tokens em tempo real; padrao: false)
+PR_STREAM="false"
+
+# Azure DevOps
+# AZURE_PAT="your-pat-token"
+
+# Test cards
+# TEST_CARD_AREA_PATH="AGROTRACE\\Devops"
+# TEST_CARD_ASSIGNED_TO="nome@empresa.com"
+ENVEOF
+    chmod 600 "$ENV_FILE"
+    log_success "Arquivo .env criado: $ENV_FILE"
+    log_warn "Edite $ENV_FILE e preencha suas API keys."
+    echo -e "  Para configurar interativamente: ${CYAN}create-pr-description --init${NC}"
+    echo -e "  Para configurar test cards:      ${CYAN}create-test-card --init${NC}"
   fi
 else
   log_info "Configuracao existente encontrada em $CONFIG_DIR"

@@ -7,7 +7,7 @@ set -euo pipefail
 # from git context, with clickable Azure DevOps PR links.
 # ============================================================
 
-VERSION="2.6.5"
+VERSION="2.6.6"
 CONFIG_DIR="$HOME/.config/pr-tools"
 ENV_FILE="$CONFIG_DIR/.env"
 TEMPLATE_FILE="$CONFIG_DIR/pr-template.md"
@@ -128,8 +128,8 @@ PR_PROVIDERS="openrouter,groq"
 # OPENROUTER_MODEL="meta-llama/llama-3.3-70b-instruct:free"
 # GROQ_MODEL="llama-3.3-70b-versatile"
 
-# Streaming (exibe tokens em tempo real; padrao: true)
-PR_STREAM="true"
+# Streaming (exibe tokens em tempo real; padrao: false)
+PR_STREAM="false"
 
 # Azure DevOps (para gerar links de PR com repositoryId)
 # AZURE_PAT="your-pat-token"'
@@ -806,18 +806,20 @@ do_init() {
     log_success "Cache criado: $CACHE_FILE"
   fi
 
-  # Interactive setup or default .env
+  # Ensure .env exists before any wizard or interactive setup
+  if [[ ! -f "$ENV_FILE" ]]; then
+    echo "$DEFAULT_ENV" > "$ENV_FILE"
+    chmod 600 "$ENV_FILE"
+    log_success "Arquivo .env criado: $ENV_FILE"
+  fi
+
+  # Interactive setup
   if [[ -t 0 ]]; then
     # Interactive terminal: run wizard
     run_setup_wizard
   else
-    # Non-interactive (piped): create default .env
-    if [[ ! -f "$ENV_FILE" ]]; then
-      echo "$DEFAULT_ENV" > "$ENV_FILE"
-      chmod 600 "$ENV_FILE"
-      log_success "Arquivo .env criado: $ENV_FILE"
-      log_warn "Edite $ENV_FILE e preencha suas API keys."
-    fi
+    # Non-interactive (piped): just warn
+    log_warn "Edite $ENV_FILE e preencha suas API keys."
   fi
 
   echo ""
@@ -934,9 +936,9 @@ load_config() {
   GROQ_MODEL="${GROQ_MODEL:-$DEFAULT_GROQ_MODEL}"
   GEMINI_MODEL="${GEMINI_MODEL:-$DEFAULT_GEMINI_MODEL}"
 
-  # Support PR_STREAM env var for streaming mode (default: true)
-  if [[ "${PR_STREAM:-}" == "false" ]]; then
-    STREAM_MODE=false
+  # Support PR_STREAM env var for streaming mode (default: false)
+  if [[ "${PR_STREAM:-}" == "true" ]]; then
+    STREAM_MODE=true
   fi
 }
 
