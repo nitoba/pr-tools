@@ -94,7 +94,7 @@ if git rev-parse "$TAG" &>/dev/null; then
 fi
 
 # ---- Confirm ----
-CURRENT_VERSION="$(cat "$SCRIPT_DIR/VERSION" 2>/dev/null || echo "unknown")"
+CURRENT_VERSION="$(cat "$SCRIPT_DIR/apps/cli/VERSION" 2>/dev/null || echo "unknown")"
 
 if [[ "$CURRENT_VERSION" == "$VERSION" ]]; then
   log_warn "A versao atual ($CURRENT_VERSION) ja e a mesma que a informada ($VERSION)."
@@ -134,13 +134,13 @@ log_success "Branch criada"
 
 # ---- Update VERSION file ----
 log_info "Atualizando VERSION para $VERSION..."
-printf '%s\n' "$VERSION" > "$SCRIPT_DIR/VERSION"
+printf '%s\n' "$VERSION" > "$SCRIPT_DIR/apps/cli/VERSION"
 log_success "VERSION atualizado"
 
 # ---- Update hardcoded versions in CLI scripts ----
 log_info "Atualizando versao hardcoded nos scripts..."
 
-for script in "$SCRIPT_DIR/src/bin/create-pr-description" "$SCRIPT_DIR/src/bin/create-test-card"; do
+for script in "$SCRIPT_DIR/apps/cli/src/bin/create-pr-description" "$SCRIPT_DIR/apps/cli/src/bin/create-test-card"; do
   if [[ -f "$script" ]]; then
     # Update the fallback VERSION line (VERSION="X.Y.Z")
     sed -i "s/^VERSION=\"[0-9]\+\.[0-9]\+\.[0-9]\+\"$/VERSION=\"$VERSION\"/" "$script"
@@ -159,7 +159,7 @@ fi
 
 # ---- Commit ----
 log_info "Criando commit..."
-git add VERSION src/bin/create-pr-description src/bin/create-test-card CHANGELOG.md
+git add apps/cli/VERSION apps/cli/src/bin/create-pr-description apps/cli/src/bin/create-test-card CHANGELOG.md
 git commit -m "chore: bump version to $TAG"
 log_success "Commit criado"
 
