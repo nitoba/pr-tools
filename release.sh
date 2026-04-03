@@ -31,7 +31,7 @@ log_error()   { echo -e "${RED}[ERRO]${NC} $1" >&2; }
 
 # ---- Validate input ----
 if [[ $# -lt 1 ]]; then
-  log_error "Uso: $0 <versao>"
+  log_error "Uso: $0 <versão>"
   log_error "Exemplo: $0 2.9.1"
   exit 1
 fi
@@ -40,7 +40,7 @@ VERSION="$1"
 
 # Validate semver format
 if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  log_error "Versao invalida: $VERSION"
+  log_error "Versão inválida: $VERSION"
   log_error "Use o formato SemVer: MAJOR.MINOR.PATCH (ex: 2.9.1)"
   exit 1
 fi
@@ -55,7 +55,7 @@ fi
 
 # Check for uncommitted changes
 if [[ -n "$(git status --porcelain)" ]]; then
-  log_error "Existem alteracoes nao commitadas. Commit ou stash antes de criar uma release."
+  log_error "Existem alterações não commitadas. Commit ou stash antes de criar uma release."
   exit 1
 fi
 
@@ -82,8 +82,8 @@ echo ""
 echo -e "${BOLD}Release $TAG${NC}"
 echo -e "${BOLD}==================${NC}"
 echo ""
-echo -e "Versao atual:  $CURRENT_VERSION"
-echo -e "Nova versao:   $VERSION"
+echo -e "Versão atual:  $CURRENT_VERSION"
+echo -e "Nova versão:   $VERSION"
 echo -e "Tag:           $TAG"
 echo ""
 read -rp "Continuar? (y/N) " confirm
@@ -100,7 +100,7 @@ printf '%s\n' "$VERSION" > "$SCRIPT_DIR/VERSION"
 log_success "VERSION atualizado"
 
 # ---- Update hardcoded versions in CLI scripts ----
-log_info "Atualizando versao hardcoded nos scripts..."
+log_info "Atualizando versão hardcoded nos scripts..."
 
 for script in "$SCRIPT_DIR/src/bin/create-pr-description" "$SCRIPT_DIR/src/bin/create-test-card"; do
   if [[ -f "$script" ]]; then
@@ -116,7 +116,7 @@ if command -v git-cliff &>/dev/null; then
   git-cliff > "$SCRIPT_DIR/CHANGELOG.md"
   log_success "CHANGELOG.md atualizado"
 else
-  log_warn "git-cliff nao encontrado. CHANGELOG.md sera gerado pelo workflow de release."
+  log_warn "git-cliff não encontrado. CHANGELOG.md será gerado pelo workflow de release."
 fi
 
 # ---- Commit ----
@@ -140,7 +140,7 @@ echo ""
 echo -e "${BOLD}========================================${NC}"
 echo -e "${GREEN}Release $TAG publicada com sucesso!${NC}"
 echo ""
-echo -e "O workflow de release ira:"
+echo -e "O workflow de release irá:"
 echo -e "  1. Gerar o changelog com git-cliff"
 echo -e "  2. Criar o GitHub Release"
 echo -e "  3. Fazer upload dos scripts como assets"
