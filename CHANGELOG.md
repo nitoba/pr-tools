@@ -5,6 +5,14 @@
 
 ### Bug Fixes
 
+- Package release assets into a single zip archive (`c574fdd`)
+
+
+## 2.9.1 — 2026-04-03
+
+
+### Bug Fixes
+
 - Add .shellcheckrc and fix SC2064 trap quoting (`8e535a5`)
 
 - Prevent subshells from killing parent's spinner process (`165ec64`)
@@ -80,6 +88,8 @@
 
 
 ### Chores
+
+- Bump version to v2.9.1 (`82d6f0a`)
 
 - Localize release script messages to Portuguese with accents (`7d0dde2`)
 
