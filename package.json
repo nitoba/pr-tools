@@ -11,7 +11,9 @@
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
     "dev:www": "bun --filter @pr-tools/www dev",
-    "build:www": "bun --filter @pr-tools/www build"
+    "build:www": "bun --filter @pr-tools/www build",
+    "dev:docs": "bun --filter @pr-tools/docs dev",
+    "build:docs": "bun --filter @pr-tools/docs build"
   },
   "devDependencies": {
     "oxfmt": "^0.43.0",
