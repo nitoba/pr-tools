@@ -1,23 +1,20 @@
-import {
-  HeadContent,
-  Outlet,
-  Scripts,
-  createRootRoute,
-} from '@tanstack/react-router';
-import * as React from 'react';
-import { RootProvider } from 'fumadocs-ui/provider/tanstack';
-import '../styles/app.css';
+import { HeadContent, Outlet, Scripts, createRootRoute } from '@tanstack/react-router'
+import { RootProvider } from 'fumadocs-ui/provider/tanstack'
+import * as React from 'react'
+import 'fumadocs-ui/css/neutral.css'
+import 'fumadocs-ui/css/preset.css'
+import '../styles/app.css'
 
 export const Route = createRootRoute({
-  component: RootComponent,
-});
+  component: RootComponent
+})
 
 function RootComponent() {
   return (
     <RootDocument>
       <Outlet />
     </RootDocument>
-  );
+  )
 }
 
 function RootDocument({ children }: { children: React.ReactNode }) {
@@ -31,5 +28,5 @@ function RootDocument({ children }: { children: React.ReactNode }) {
         <Scripts />
       </body>
     </html>
-  );
+  )
 }
