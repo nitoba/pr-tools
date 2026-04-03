@@ -2,42 +2,29 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Converter o repositório flat em um monorepo Bun com apps/cli, apps/www (Astro scaffold) e apps/docs (Mintlify stubs), com oxlint e oxformat configurados na raiz.
+**Goal:** Converter o repositório flat em um monorepo Bun com apps/cli, apps/www (Astro scaffold) e apps/docs (Mintlify scaffold), com oxlint e oxfmt configurados na raiz.
 
-**Architecture:** Bun workspaces na raiz agrupa `apps/*` e `packages/*`. O código bash existente migra para `apps/cli/` sem alterações funcionais. `apps/www` é um projeto Astro 5 SSR com Tailwind CSS 4 e React, sem conteúdo implementado. `apps/docs` é só `mint.json` + arquivos MDX stub — sem package.json, pois o Mintlify é um serviço externo.
+**Architecture:** Bun workspaces na raiz agrupa `apps/*` e `packages/*`. O código bash migra para `apps/cli/`. `apps/www` é scaffoldado via `bun create astro` e configurado com os integrações Astro (Tailwind CSS 4, React, Node adapter). `apps/docs` é scaffoldado via `mint new` e tem seu `docs.json` substituído pela navegação definitiva + stubs MDX criados.
 
-**Tech Stack:** Bun (workspaces), Astro 5, Tailwind CSS 4 (`@tailwindcss/vite`), `@astrojs/react`, `@astrojs/node`, TypeScript strict, oxlint, oxformat (Oxc project)
+**Tech Stack:** Bun (workspaces), Astro 5 (`bun create astro` + `astro add`), Tailwind CSS 4 (via `astro add tailwind`), `@astrojs/react` (via `astro add react`), `@astrojs/node` (via `astro add node`), TypeScript strict, oxlint (via `oxlint --init`), oxfmt (formatter do Oxc — pacote `oxfmt`)
 
 ---
 
 ## Mapa de arquivos
 
 ### Criar
-- `package.json` — root workspace Bun
+- `package.json` — root workspace Bun com scripts de lint/format
 - `bunfig.toml` — config global do Bun
-- `oxlint.json` — config do oxlint (raiz)
-- `packages/.gitkeep` — mantém o diretório no git
-- `apps/cli/package.json` — workspace entry para o CLI
-- `apps/www/package.json` — dependências do Astro
-- `apps/www/astro.config.mjs` — SSR + Tailwind + React + Node adapter
-- `apps/www/src/env.d.ts` — tipos do Astro
-- `apps/www/src/pages/index.astro` — placeholder
-- `apps/www/src/styles/global.css` — `@import "tailwindcss"`
-- `apps/www/tsconfig.json` — TypeScript strict
-- `apps/docs/mint.json` — navegação e tema Mintlify
-- `apps/docs/getting-started/introduction.mdx`
-- `apps/docs/getting-started/installation.mdx`
-- `apps/docs/getting-started/quickstart.mdx`
-- `apps/docs/getting-started/configuration.mdx`
-- `apps/docs/commands/create-pr-description.mdx`
-- `apps/docs/commands/create-test-card.mdx`
-- `apps/docs/guides/azure-devops.mdx`
-- `apps/docs/guides/ai-providers.mdx`
-- `apps/docs/guides/markdown-rendering.mdx`
-- `apps/docs/guides/advanced-examples.mdx`
-- `apps/docs/reference/environment-variables.mdx`
-- `apps/docs/reference/troubleshooting.mdx`
-- `apps/docs/reference/changelog.mdx`
+- `packages/.gitkeep` — mantém diretório no git
+- `apps/cli/package.json` — workspace entry do CLI (sem deps JS)
+- Gerados por `bun create astro apps/www` → modificar apenas:
+  - `apps/www/astro.config.mjs` — adicionar `output: 'server'`, confirmar adapter/React/Tailwind
+  - `apps/www/tsconfig.json` — garantir strict mode
+  - `apps/www/src/styles/global.css` — `@import "tailwindcss"`
+  - `apps/www/src/pages/index.astro` — substituir por placeholder mínimo
+- Gerados por `mint new apps/docs` → substituir/criar:
+  - `apps/docs/docs.json` — navegação e tema definitivos
+  - 13 arquivos `.mdx` stub (deletar exemplos do starter, criar os nossos)
 
 ### Mover
 - `src/` → `apps/cli/src/`
@@ -49,7 +36,7 @@
 - `release.sh` — atualizar todos os paths para `apps/cli/`
 - `.github/workflows/release.yml` — atualizar paths para `apps/cli/`
 - `.github/workflows/auto-tag.yml` — atualizar path do `VERSION`
-- `.gitignore` — adicionar `.superpowers/`, `node_modules/`, `.astro/`
+- `.gitignore` — adicionar `.superpowers/`, `node_modules/`, `.astro/`, `dist/`
 
 ---
 
@@ -58,6 +45,7 @@
 **Files:**
 - Create: `package.json`
 - Create: `bunfig.toml`
+- Create: `packages/.gitkeep`
 - Modify: `.gitignore`
 
 - [ ] **Step 1: Criar package.json raiz**
@@ -68,19 +56,18 @@
   "private": true,
   "workspaces": ["apps/*", "packages/*"],
   "scripts": {
-    "lint": "oxlint .",
-    "format": "oxformat .",
     "dev:www": "bun --filter @pr-tools/www dev",
     "build:www": "bun --filter @pr-tools/www build"
   }
 }
 ```
 
+> Scripts de lint/format serão adicionados na Task 2 após instalar as ferramentas.
+
 - [ ] **Step 2: Criar bunfig.toml**
 
 ```toml
 [install]
-# Usa node_modules linkado (compatível com Astro e Tailwind)
 link-native-bins = true
 ```
 
@@ -101,155 +88,94 @@ dist/
 .superpowers/
 ```
 
-- [ ] **Step 5: Verificar**
+- [ ] **Step 5: Verificar e commitar**
 
 ```bash
 bun install
-```
-
-Expected: Bun instala workspaces sem erros. Pode mostrar `workspace:apps/cli`, `workspace:apps/www` pendentes — normal, serão criados nas próximas tasks.
-
-- [ ] **Step 6: Commit**
-
-```bash
 git add package.json bunfig.toml packages/.gitkeep .gitignore
 git commit -m "chore: initialize bun monorepo workspace"
 ```
 
+Expected: `bun install` completa sem erros (workspaces ainda vazios, normal).
+
 ---
 
-## Task 2: Configurar oxlint
+## Task 2: Configurar oxlint + oxfmt na raiz
 
 **Files:**
-- Create: `oxlint.json`
+- Create: `.oxlintrc.json` (gerado por `oxlint --init`)
+- Modify: `package.json` (adicionar scripts lint/format)
 
-- [ ] **Step 1: Instalar oxlint**
+- [ ] **Step 1: Instalar oxlint e oxfmt**
 
 ```bash
-bun add -D oxlint
+bun add -D oxlint oxfmt
 ```
 
-- [ ] **Step 2: Criar oxlint.json na raiz**
+- [ ] **Step 2: Inicializar config do oxlint**
+
+```bash
+bunx oxlint --init
+```
+
+Expected: cria `.oxlintrc.json` na raiz com config base.
+
+- [ ] **Step 3: Editar .oxlintrc.json para ignorar apps/cli**
+
+Abrir `.oxlintrc.json` gerado e atualizar:
 
 ```json
 {
   "$schema": "https://raw.githubusercontent.com/oxc-project/oxc/main/npm/oxlint/configuration_schema.json",
-  "plugins": [],
-  "rules": {},
   "ignorePatterns": [
     "node_modules",
     "dist",
     ".astro",
     "apps/cli"
-  ]
+  ],
+  "rules": {}
 }
 ```
 
-> `apps/cli` é ignorado pois contém apenas bash scripts, não TypeScript/JavaScript.
+> `apps/cli` é ignorado pois contém apenas bash scripts.
 
-- [ ] **Step 3: Verificar que oxlint roda**
-
-```bash
-bun lint
-```
-
-Expected: `oxlint .` executa sem erros de configuração. Pode não encontrar arquivos TS ainda — ok.
-
-- [ ] **Step 4: Commit**
-
-```bash
-git add oxlint.json package.json bun.lock
-git commit -m "chore: add oxlint to monorepo root"
-```
-
----
-
-## Task 3: Configurar oxformat
-
-**Files:**
-- Create: `.oxlintrc.json` ou config dedicada conforme versão disponível
-
-- [ ] **Step 1: Verificar disponibilidade do oxformat**
-
-```bash
-npm info oxformat
-```
-
-Se disponível: `bun add -D oxformat`  
-Se não disponível (pacote ainda em desenvolvimento): usar `@biomejs/biome` apenas para formatação e anotar no README que oxformat será adotado quando estabilizar.
-
-- [ ] **Step 2a: Se oxformat disponível — instalar e configurar**
-
-```bash
-bun add -D oxformat
-```
-
-Criar `oxformat.json` na raiz:
+- [ ] **Step 4: Adicionar scripts de lint e format ao package.json**
 
 ```json
 {
-  "ignore": ["node_modules", "dist", ".astro", "apps/cli"]
-}
-```
-
-- [ ] **Step 2b: Se oxformat NÃO disponível — usar Biome para formatação**
-
-```bash
-bun add -D @biomejs/biome
-bunx biome init
-```
-
-Atualizar `package.json` — script format:
-
-```json
-{
+  "name": "pr-tools",
+  "private": true,
+  "workspaces": ["apps/*", "packages/*"],
   "scripts": {
     "lint": "oxlint .",
-    "format": "biome format --write .",
+    "lint:check": "oxlint . --deny-warnings",
+    "format": "oxfmt .",
+    "format:check": "oxfmt --check .",
     "dev:www": "bun --filter @pr-tools/www dev",
     "build:www": "bun --filter @pr-tools/www build"
   }
 }
 ```
 
-Criar `biome.json` na raiz:
-
-```json
-{
-  "$schema": "https://biomejs.dev/schemas/1.9.0/schema.json",
-  "formatter": {
-    "enabled": true,
-    "indentStyle": "space",
-    "indentWidth": 2
-  },
-  "linter": {
-    "enabled": false
-  },
-  "files": {
-    "ignore": ["node_modules", "dist", ".astro", "apps/cli"]
-  }
-}
-```
-
-> oxlint cuida do linting; Biome cuida apenas de formatação neste cenário.
-
-- [ ] **Step 3: Verificar que o formatter roda**
+- [ ] **Step 5: Verificar que lint e format rodam**
 
 ```bash
+bun lint
 bun format
 ```
 
-Expected: formata arquivos `.ts`, `.astro`, `.js` sem erros.
+Expected: ambos executam sem erros de configuração.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add . && git commit -m "chore: add formatter to monorepo root"
+git add .oxlintrc.json package.json bun.lock
+git commit -m "chore: add oxlint and oxfmt to monorepo root"
 ```
 
 ---
 
-## Task 4: Migrar código do CLI para apps/cli
+## Task 3: Migrar CLI para apps/cli
 
 **Files:**
 - Create: `apps/cli/package.json`
@@ -258,13 +184,11 @@ git add . && git commit -m "chore: add formatter to monorepo root"
 - Move: `install.sh` → `apps/cli/install.sh`
 - Move: `VERSION` → `apps/cli/VERSION`
 
-- [ ] **Step 1: Criar diretório apps/cli**
+- [ ] **Step 1: Criar apps/cli com package.json**
 
 ```bash
 mkdir -p apps/cli
 ```
-
-- [ ] **Step 2: Criar apps/cli/package.json**
 
 ```json
 {
@@ -275,9 +199,9 @@ mkdir -p apps/cli
 }
 ```
 
-> Sem scripts JS — o CLI é bash puro. O package.json existe apenas para o workspace Bun reconhecer o app.
+> Sem scripts JS — o CLI é bash puro. O package.json existe para o workspace Bun reconhecer o app.
 
-- [ ] **Step 3: Mover src/, tests/, install.sh e VERSION**
+- [ ] **Step 2: Mover arquivos com git mv**
 
 ```bash
 git mv src apps/cli/src
@@ -286,135 +210,123 @@ git mv install.sh apps/cli/install.sh
 git mv VERSION apps/cli/VERSION
 ```
 
-- [ ] **Step 4: Verificar estrutura**
+- [ ] **Step 3: Verificar estrutura**
 
 ```bash
 ls apps/cli/
 ```
 
-Expected:
-```
-install.sh  package.json  src/  tests/  VERSION
-```
+Expected: `install.sh  package.json  src/  tests/  VERSION`
 
 ```bash
 ls apps/cli/src/bin/
 ```
 
-Expected: `create-pr-description  create-test-card  azure.sh  common.sh  llm.sh  ...`
+Expected: `create-pr-description  create-test-card  azure.sh  common.sh  llm.sh  test-card-azure.sh  test-card-llm.sh  ui.sh  create-test-card-azure-patch.sh  create-test-card-steps.sh`
+
+- [ ] **Step 4: Verificar sintaxe dos scripts bash**
+
+```bash
+bash -n apps/cli/src/bin/create-pr-description
+bash -n apps/cli/src/bin/create-test-card
+```
+
+Expected: sem erros de sintaxe em ambos.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add apps/cli/ package.json
+git add apps/cli/
 git commit -m "chore: migrate cli code to apps/cli"
 ```
 
 ---
 
-## Task 5: Atualizar release.sh e workflows para novos paths
+## Task 4: Atualizar release.sh e workflows para novos paths
 
 **Files:**
 - Modify: `release.sh`
 - Modify: `.github/workflows/release.yml`
 - Modify: `.github/workflows/auto-tag.yml`
 
-- [ ] **Step 1: Atualizar release.sh — leitura do VERSION**
+- [ ] **Step 1: Atualizar release.sh — VERSION**
 
-Em `release.sh`, localizar:
+Localizar e substituir:
+
 ```bash
+# ANTES
 CURRENT_VERSION="$(cat "$SCRIPT_DIR/VERSION" 2>/dev/null || echo "unknown")"
 ```
-Substituir por:
 ```bash
+# DEPOIS
 CURRENT_VERSION="$(cat "$SCRIPT_DIR/apps/cli/VERSION" 2>/dev/null || echo "unknown")"
 ```
 
-Localizar:
 ```bash
+# ANTES
 printf '%s\n' "$VERSION" > "$SCRIPT_DIR/VERSION"
 ```
-Substituir por:
 ```bash
+# DEPOIS
 printf '%s\n' "$VERSION" > "$SCRIPT_DIR/apps/cli/VERSION"
 ```
 
-- [ ] **Step 2: Atualizar release.sh — paths dos scripts CLI**
+- [ ] **Step 2: Atualizar release.sh — loop dos scripts CLI**
 
-Localizar:
+Localizar e substituir:
+
 ```bash
+# ANTES
 for script in "$SCRIPT_DIR/src/bin/create-pr-description" "$SCRIPT_DIR/src/bin/create-test-card"; do
 ```
-Substituir por:
 ```bash
+# DEPOIS
 for script in "$SCRIPT_DIR/apps/cli/src/bin/create-pr-description" "$SCRIPT_DIR/apps/cli/src/bin/create-test-card"; do
 ```
 
 - [ ] **Step 3: Atualizar release.sh — git add**
 
-Localizar:
+Localizar e substituir:
+
 ```bash
+# ANTES
 git add VERSION src/bin/create-pr-description src/bin/create-test-card CHANGELOG.md
 ```
-Substituir por:
 ```bash
+# DEPOIS
 git add apps/cli/VERSION apps/cli/src/bin/create-pr-description apps/cli/src/bin/create-test-card CHANGELOG.md
 ```
 
 - [ ] **Step 4: Atualizar release.yml — Package release assets**
 
-Localizar o step `Package release assets` em `.github/workflows/release.yml`:
+Localizar o bloco `run` do step `Package release assets` e substituir:
 
 ```yaml
-- name: Package release assets
-  run: |
-    TAG=${GITHUB_REF#refs/tags/}
-    DIST_DIR="pr-tools-$TAG"
-    mkdir -p "$DIST_DIR/bin" "$DIST_DIR/lib"
-
-    cp install.sh "$DIST_DIR/"
-    cp src/bin/create-pr-description "$DIST_DIR/bin/"
-    cp src/bin/create-test-card "$DIST_DIR/bin/"
-    cp src/lib/*.sh "$DIST_DIR/lib/"
-
-    zip -r "$DIST_DIR.zip" "$DIST_DIR"
-    echo "DIST_FILE=$DIST_DIR.zip" >> "$GITHUB_ENV"
+# ANTES
+cp install.sh "$DIST_DIR/"
+cp src/bin/create-pr-description "$DIST_DIR/bin/"
+cp src/bin/create-test-card "$DIST_DIR/bin/"
+cp src/lib/*.sh "$DIST_DIR/lib/"
 ```
-
-Substituir por:
-
 ```yaml
-- name: Package release assets
-  run: |
-    TAG=${GITHUB_REF#refs/tags/}
-    DIST_DIR="pr-tools-$TAG"
-    mkdir -p "$DIST_DIR/bin" "$DIST_DIR/lib"
-
-    cp apps/cli/install.sh "$DIST_DIR/"
-    cp apps/cli/src/bin/create-pr-description "$DIST_DIR/bin/"
-    cp apps/cli/src/bin/create-test-card "$DIST_DIR/bin/"
-    cp apps/cli/src/lib/*.sh "$DIST_DIR/lib/"
-
-    zip -r "$DIST_DIR.zip" "$DIST_DIR"
-    echo "DIST_FILE=$DIST_DIR.zip" >> "$GITHUB_ENV"
+# DEPOIS
+cp apps/cli/install.sh "$DIST_DIR/"
+cp apps/cli/src/bin/create-pr-description "$DIST_DIR/bin/"
+cp apps/cli/src/bin/create-test-card "$DIST_DIR/bin/"
+cp apps/cli/src/lib/*.sh "$DIST_DIR/lib/"
 ```
 
 - [ ] **Step 5: Atualizar auto-tag.yml — leitura do VERSION**
 
-Localizar o step `Verify VERSION file matches` em `.github/workflows/auto-tag.yml`:
+Localizar e substituir:
 
 ```yaml
-- name: Verify VERSION file matches
-  run: |
-    FILE_VERSION="$(cat VERSION | tr -d '[:space:]')"
+# ANTES
+FILE_VERSION="$(cat VERSION | tr -d '[:space:]')"
 ```
-
-Substituir por:
-
 ```yaml
-- name: Verify VERSION file matches
-  run: |
-    FILE_VERSION="$(cat apps/cli/VERSION | tr -d '[:space:]')"
+# DEPOIS
+FILE_VERSION="$(cat apps/cli/VERSION | tr -d '[:space:]')"
 ```
 
 - [ ] **Step 6: Verificar sintaxe do release.sh**
@@ -434,47 +346,59 @@ git commit -m "chore: update release paths to apps/cli"
 
 ---
 
-## Task 6: Scaffold apps/www (Astro 5 + Tailwind 4 + React)
+## Task 5: Scaffold apps/www com Astro CLI
 
-**Files:**
-- Create: `apps/www/package.json`
-- Create: `apps/www/astro.config.mjs`
-- Create: `apps/www/tsconfig.json`
-- Create: `apps/www/src/env.d.ts`
-- Create: `apps/www/src/pages/index.astro`
+**Files (todos gerados pela CLI — apenas modificar conforme indicado):**
+- Modify: `apps/www/astro.config.mjs`
+- Modify: `apps/www/tsconfig.json`
+- Modify: `apps/www/src/pages/index.astro`
 - Create: `apps/www/src/styles/global.css`
 
-- [ ] **Step 1: Criar package.json do apps/www**
-
-```json
-{
-  "name": "@pr-tools/www",
-  "private": true,
-  "version": "0.0.0",
-  "type": "module",
-  "scripts": {
-    "dev": "astro dev",
-    "build": "astro build",
-    "preview": "astro preview"
-  }
-}
-```
-
-- [ ] **Step 2: Instalar dependências do apps/www**
+- [ ] **Step 1: Criar projeto Astro com Bun**
 
 ```bash
-cd apps/www && bun add astro @astrojs/node @astrojs/react react react-dom @tailwindcss/vite tailwindcss
-bun add -D typescript @types/react @types/react-dom
+bun create astro@latest apps/www
 ```
 
-- [ ] **Step 3: Criar astro.config.mjs**
+Durante o wizard interativo, selecionar:
+- Template: **Empty** (minimal starter)
+- TypeScript: **Strict**
+- Install dependencies: **Yes**
+
+- [ ] **Step 2: Adicionar Tailwind CSS 4**
+
+```bash
+cd apps/www && bunx astro add tailwind
+```
+
+Expected: instala `@tailwindcss/vite` e `tailwindcss`, atualiza `astro.config.mjs` automaticamente.
+
+- [ ] **Step 3: Adicionar integração React**
+
+```bash
+bunx astro add react
+```
+
+Expected: instala `@astrojs/react`, `react`, `react-dom` e atualiza `astro.config.mjs`.
+
+- [ ] **Step 4: Adicionar adapter Node.js para SSR**
+
+```bash
+bunx astro add node
+```
+
+Expected: instala `@astrojs/node` e atualiza `astro.config.mjs`.
+
+- [ ] **Step 5: Garantir output SSR no astro.config.mjs**
+
+Abrir `apps/www/astro.config.mjs` gerado. Verificar se `output: 'server'` está presente e o adapter node está configurado com `mode: 'standalone'`. Se não estiver, ajustar para:
 
 ```js
 // apps/www/astro.config.mjs
 import { defineConfig } from 'astro/config';
-import node from '@astrojs/node';
-import react from '@astrojs/react';
 import tailwindcss from '@tailwindcss/vite';
+import react from '@astrojs/react';
+import node from '@astrojs/node';
 
 export default defineConfig({
   output: 'server',
@@ -486,31 +410,20 @@ export default defineConfig({
 });
 ```
 
-- [ ] **Step 4: Criar tsconfig.json**
-
-```json
-{
-  "extends": "astro/tsconfigs/strict",
-  "compilerOptions": {
-    "strictNullChecks": true,
-    "baseUrl": "."
-  }
-}
-```
-
-- [ ] **Step 5: Criar src/env.d.ts**
-
-```ts
-/// <reference path="../.astro/types.d.ts" />
-```
+> A estrutura exata pode variar conforme o que `astro add` gerou. O objetivo é garantir que `output: 'server'`, o adapter node com `mode: 'standalone'`, o React e o Tailwind estejam todos configurados.
 
 - [ ] **Step 6: Criar src/styles/global.css**
 
+```bash
+mkdir -p src/styles
+```
+
 ```css
+/* apps/www/src/styles/global.css */
 @import "tailwindcss";
 ```
 
-- [ ] **Step 7: Criar src/pages/index.astro (placeholder)**
+- [ ] **Step 7: Substituir index.astro por placeholder mínimo**
 
 ```astro
 ---
@@ -537,10 +450,10 @@ import '../styles/global.css';
 - [ ] **Step 8: Verificar que o dev server sobe**
 
 ```bash
-cd apps/www && bun dev
+bun dev
 ```
 
-Expected: Astro inicia em `http://localhost:4321` sem erros. Página exibe "pr-tools — em construção" com fundo escuro.
+Expected: Astro inicia em `http://localhost:4321`. Página exibe "pr-tools — em construção" com fundo escuro.
 
 - [ ] **Step 9: Commit**
 
@@ -552,24 +465,49 @@ git commit -m "feat: scaffold apps/www with Astro 5, Tailwind CSS 4 and React"
 
 ---
 
-## Task 7: Scaffold apps/docs (Mintlify)
+## Task 6: Scaffold apps/docs com Mintlify CLI
 
 **Files:**
-- Create: `apps/docs/mint.json`
-- Create: 13 arquivos MDX stub (listados abaixo)
+- Modify: `apps/docs/docs.json` (substituir conteúdo do starter pelo definitivo)
+- Delete: arquivos de exemplo do starter kit
+- Create: 13 arquivos `.mdx` stub
 
-> `apps/docs` não tem `package.json` — o Mintlify é serviço externo com integração GitHub.
+> O config do Mintlify agora usa `docs.json` (não `mint.json`).
+> `apps/docs` não tem `package.json` — Mintlify é serviço externo com integração GitHub.
 
-- [ ] **Step 1: Criar apps/docs/mint.json**
+- [ ] **Step 1: Instalar Mintlify CLI globalmente**
+
+```bash
+bun add -g mint
+```
+
+- [ ] **Step 2: Criar projeto Mintlify**
+
+Da raiz do repositório:
+
+```bash
+mint new apps/docs
+```
+
+Expected: clona o starter kit do Mintlify em `apps/docs/` com `docs.json` e páginas de exemplo.
+
+- [ ] **Step 3: Limpar arquivos de exemplo do starter**
+
+```bash
+cd apps/docs
+# Remover todo conteúdo MDX de exemplo (manter apenas docs.json)
+find . -name "*.mdx" -not -path "./.git/*" -delete
+find . -name "*.png" -not -path "./.git/*" -delete 2>/dev/null || true
+find . -name "*.svg" -not -path "./.git/*" -delete 2>/dev/null || true
+```
+
+- [ ] **Step 4: Substituir docs.json pela configuração definitiva**
 
 ```json
 {
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "mint",
   "name": "pr-tools",
-  "logo": {
-    "dark": "/logo/dark.svg",
-    "light": "/logo/light.svg"
-  },
-  "favicon": "/favicon.svg",
   "colors": {
     "primary": "#7c3aed",
     "light": "#a78bfa",
@@ -626,9 +564,13 @@ git commit -m "feat: scaffold apps/www with Astro 5, Tailwind CSS 4 and React"
 }
 ```
 
-- [ ] **Step 2: Criar stubs de Primeiros passos**
+- [ ] **Step 5: Criar stubs de Primeiros passos**
 
-`apps/docs/getting-started/introduction.mdx`:
+```bash
+mkdir -p getting-started
+```
+
+`getting-started/introduction.mdx`:
 ```mdx
 ---
 title: "Introdução"
@@ -640,7 +582,7 @@ description: "O que é o pr-tools e para quem é indicado"
 Conteúdo em breve.
 ```
 
-`apps/docs/getting-started/installation.mdx`:
+`getting-started/installation.mdx`:
 ```mdx
 ---
 title: "Instalação"
@@ -652,7 +594,7 @@ description: "Como instalar o pr-tools em macOS, Linux e Windows WSL"
 Conteúdo em breve.
 ```
 
-`apps/docs/getting-started/quickstart.mdx`:
+`getting-started/quickstart.mdx`:
 ```mdx
 ---
 title: "Quickstart"
@@ -664,7 +606,7 @@ description: "Gere seu primeiro PR em menos de 5 minutos"
 Conteúdo em breve.
 ```
 
-`apps/docs/getting-started/configuration.mdx`:
+`getting-started/configuration.mdx`:
 ```mdx
 ---
 title: "Configuração"
@@ -676,9 +618,13 @@ description: "Como configurar API keys, providers e defaults"
 Conteúdo em breve.
 ```
 
-- [ ] **Step 3: Criar stubs de Comandos**
+- [ ] **Step 6: Criar stubs de Comandos**
 
-`apps/docs/commands/create-pr-description.mdx`:
+```bash
+mkdir -p commands
+```
+
+`commands/create-pr-description.mdx`:
 ```mdx
 ---
 title: "create-pr-description"
@@ -690,7 +636,7 @@ description: "Gera descrições de PR via LLM a partir do git diff"
 Conteúdo em breve.
 ```
 
-`apps/docs/commands/create-test-card.mdx`:
+`commands/create-test-card.mdx`:
 ```mdx
 ---
 title: "create-test-card"
@@ -702,9 +648,13 @@ description: "Gera cards de teste a partir de PR e Work Item do Azure DevOps"
 Conteúdo em breve.
 ```
 
-- [ ] **Step 4: Criar stubs de Guias**
+- [ ] **Step 7: Criar stubs de Guias**
 
-`apps/docs/guides/azure-devops.mdx`:
+```bash
+mkdir -p guides
+```
+
+`guides/azure-devops.mdx`:
 ```mdx
 ---
 title: "Configurando o Azure DevOps"
@@ -716,7 +666,7 @@ description: "Como configurar o PAT e as permissões necessárias"
 Conteúdo em breve.
 ```
 
-`apps/docs/guides/ai-providers.mdx`:
+`guides/ai-providers.mdx`:
 ```mdx
 ---
 title: "Escolhendo providers de IA"
@@ -728,7 +678,7 @@ description: "Comparação entre OpenRouter, Groq e Google Gemini"
 Conteúdo em breve.
 ```
 
-`apps/docs/guides/markdown-rendering.mdx`:
+`guides/markdown-rendering.mdx`:
 ```mdx
 ---
 title: "Renderizando Markdown no terminal"
@@ -740,7 +690,7 @@ description: "Como usar glow, bat ou texto puro para visualizar a saída"
 Conteúdo em breve.
 ```
 
-`apps/docs/guides/advanced-examples.mdx`:
+`guides/advanced-examples.mdx`:
 ```mdx
 ---
 title: "Exemplos avançados"
@@ -752,9 +702,13 @@ description: "Casos de uso avançados com flags e variáveis de ambiente"
 Conteúdo em breve.
 ```
 
-- [ ] **Step 5: Criar stubs de Referência**
+- [ ] **Step 8: Criar stubs de Referência**
 
-`apps/docs/reference/environment-variables.mdx`:
+```bash
+mkdir -p reference
+```
+
+`reference/environment-variables.mdx`:
 ```mdx
 ---
 title: "Variáveis de ambiente"
@@ -766,7 +720,7 @@ description: "Referência completa de todas as variáveis configuráveis"
 Conteúdo em breve.
 ```
 
-`apps/docs/reference/troubleshooting.mdx`:
+`reference/troubleshooting.mdx`:
 ```mdx
 ---
 title: "Troubleshooting"
@@ -778,7 +732,7 @@ description: "Soluções para problemas comuns"
 Conteúdo em breve.
 ```
 
-`apps/docs/reference/changelog.mdx`:
+`reference/changelog.mdx`:
 ```mdx
 ---
 title: "Changelog"
@@ -790,30 +744,25 @@ description: "Histórico de versões do pr-tools"
 Conteúdo em breve.
 ```
 
-- [ ] **Step 6: Verificar estrutura**
+- [ ] **Step 9: Verificar preview local**
 
 ```bash
-find apps/docs -name "*.mdx" | sort
+mint dev
 ```
 
-Expected: 13 arquivos MDX listados.
+Expected: servidor Mintlify sobe em `http://localhost:3000` com a navegação definida e 13 páginas stub acessíveis.
+
+- [ ] **Step 10: Commit**
 
 ```bash
-cat apps/docs/mint.json | jq '.navigation | length'
-```
-
-Expected: `4`
-
-- [ ] **Step 7: Commit**
-
-```bash
+cd ../..
 git add apps/docs/
-git commit -m "feat: scaffold apps/docs with Mintlify config and MDX stubs"
+git commit -m "feat: scaffold apps/docs with Mintlify and MDX stubs"
 ```
 
 ---
 
-## Task 8: Verificação final do monorepo
+## Task 7: Verificação final do monorepo
 
 - [ ] **Step 1: Instalar todas as dependências do workspace**
 
@@ -821,44 +770,50 @@ git commit -m "feat: scaffold apps/docs with Mintlify config and MDX stubs"
 bun install
 ```
 
-Expected: todas as dependências instaladas sem erros.
+Expected: completa sem erros.
 
-- [ ] **Step 2: Verificar workspaces reconhecidos**
-
-```bash
-bun workspaces list 2>/dev/null || bun pm ls
-```
-
-Expected: `@pr-tools/cli` e `@pr-tools/www` listados como workspaces.
-
-- [ ] **Step 3: Rodar lint no monorepo**
+- [ ] **Step 2: Rodar lint**
 
 ```bash
 bun lint
 ```
 
-Expected: oxlint roda sem erros de configuração. Pode não encontrar problemas — ok.
+Expected: oxlint roda sem erros de configuração.
 
-- [ ] **Step 4: Verificar que apps/www builda**
+- [ ] **Step 3: Verificar build do www**
 
 ```bash
 bun build:www
 ```
 
-Expected: Astro faz build do site placeholder sem erros em `apps/www/dist/`.
+Expected: Astro faz build do placeholder sem erros.
 
-- [ ] **Step 5: Verificar que os scripts bash do CLI não foram corrompidos**
+- [ ] **Step 4: Verificar scripts bash não corrompidos**
 
 ```bash
 bash -n apps/cli/src/bin/create-pr-description
 bash -n apps/cli/src/bin/create-test-card
 ```
 
-Expected: sem erros de sintaxe em ambos.
+Expected: sem erros de sintaxe.
 
-- [ ] **Step 6: Commit final**
+- [ ] **Step 5: Verificar estrutura final**
+
+```bash
+find apps -maxdepth 2 -name "package.json" -o -name "docs.json" | sort
+```
+
+Expected:
+```
+apps/cli/package.json
+apps/www/package.json
+apps/docs/docs.json
+```
+
+- [ ] **Step 6: Commit de encerramento**
 
 ```bash
 git add .
-git commit -m "chore: monorepo foundation complete"
+git status  # confirmar que não há arquivos inesperados
+git commit -m "chore: monorepo foundation complete" --allow-empty
 ```
