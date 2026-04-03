@@ -11,7 +11,7 @@ set -euo pipefail
 # Read from VERSION file if available (when running from repo), fallback to hardcoded
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." 2>/dev/null && pwd)"
-VERSION="2.9.2"
+VERSION="2.9.3"
 if [[ -f "$REPO_ROOT/VERSION" ]]; then
   VERSION="$(tr -d '[:space:]' < "$REPO_ROOT/VERSION")"
 fi
@@ -21,10 +21,11 @@ ENV_FILE="$CONFIG_DIR/.env"
 CACHE_FILE="$CONFIG_DIR/.cache"
 REPO_URL="https://raw.githubusercontent.com/nitoba/pr-tools/main"
 
-DEFAULT_PROVIDERS="openrouter,groq,gemini"
+DEFAULT_PROVIDERS="openrouter,groq,gemini,ollama"
 DEFAULT_OPENROUTER_MODEL="meta-llama/llama-3.3-70b-instruct:free"
 DEFAULT_GROQ_MODEL="llama-3.3-70b-versatile"
 DEFAULT_GEMINI_MODEL="gemini-3.1-flash-lite-preview"
+DEFAULT_OLLAMA_MODEL="qwen3.5:cloud"
 DEFAULT_AGROTRACE_AREA_PATH="AGROTRACE\\Devops"
 DEFAULT_AGROTRACE_PRIORITY="2"
 DEFAULT_AGROTRACE_TEAM="DevOps"
@@ -187,11 +188,13 @@ PR_PROVIDERS="openrouter,groq,gemini"
 # OPENROUTER_API_KEY="sk-or-..."
 # GROQ_API_KEY="gsk_..."
 # GEMINI_API_KEY="..."
+# OLLAMA_API_KEY="oa-..."
 
 # Modelos (opcional)
 # OPENROUTER_MODEL="meta-llama/llama-3.3-70b-instruct:free"
 # GROQ_MODEL="llama-3.3-70b-versatile"
 # GEMINI_MODEL="gemini-3.1-flash-lite-preview"
+# OLLAMA_MODEL="qwen3.5:cloud"
 
 # Azure DevOps
 # AZURE_PAT="your-pat-token"
