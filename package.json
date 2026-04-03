@@ -1,0 +1,9 @@
+{
+  "name": "pr-tools",
+  "private": true,
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "dev:www": "bun --filter @pr-tools/www dev",
+    "build:www": "bun --filter @pr-tools/www build"
+  }
+}
