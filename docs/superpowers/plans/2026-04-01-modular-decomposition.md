@@ -15,6 +15,7 @@
 ### Task 1: Create lib/common.sh — shared utilities
 
 **Files:**
+
 - Create: `lib/common.sh`
 
 This file contains all logging, prompting, env persistence, config loading, validation, and update functions shared between both scripts.
@@ -57,6 +58,7 @@ git commit -m "refactor: extract shared utilities into lib/common.sh"
 ### Task 2: Create lib/llm.sh — LLM provider logic
 
 **Files:**
+
 - Create: `lib/llm.sh`
 
 Extract all LLM-related functions from `bin/create-pr-description`. These functions depend on globals (`STREAM_MODE`, `PR_PROVIDERS`, API keys, model names, `USED_PROVIDER`, `USED_MODEL`, `LLM_RESULT`) which remain defined in the orchestrator.
@@ -99,6 +101,7 @@ git commit -m "refactor: extract LLM provider logic into lib/llm.sh"
 ### Task 3: Create lib/azure.sh — Azure DevOps integration
 
 **Files:**
+
 - Create: `lib/azure.sh`
 
 Extract Azure DevOps functions from `bin/create-pr-description`. These handle remote URL parsing, repo ID caching, PR link building, and PR creation via API.
@@ -137,6 +140,7 @@ git commit -m "refactor: extract Azure DevOps integration into lib/azure.sh"
 ### Task 4: Rewrite bin/create-pr-description as orchestrator
 
 **Files:**
+
 - Modify: `bin/create-pr-description`
 
 Replace the 2401-line monolith with a ~700-line orchestrator that sources the three libs and keeps only script-specific logic.
@@ -216,6 +220,7 @@ fi
 ```
 
 Key changes:
+
 1. Add lib sourcing preamble (~15 lines)
 2. Remove all functions now in lib/common.sh, lib/llm.sh, lib/azure.sh
 3. Keep all script-specific functions verbatim
@@ -256,6 +261,7 @@ git commit -m "refactor: rewrite create-pr-description as orchestrator sourcing 
 ### Task 5: Update bin/create-test-card to source lib/common.sh
 
 **Files:**
+
 - Modify: `bin/create-test-card`
 
 Replace duplicated utility functions with sourced versions from `lib/common.sh`. Keep the script's own LLM and Azure API code unchanged.
@@ -281,6 +287,7 @@ Note: `create-test-card` uses a soft source (if exists) so it can still work sta
 - [ ] **Step 2: Remove duplicated functions**
 
 Remove these functions from `create-test-card` since they now come from `lib/common.sh`:
+
 - `log_error()` (lines 166-168)
 - `log_warn()` (lines 170-172)
 - `log_info()` (lines 174-180)
@@ -341,6 +348,7 @@ git commit -m "refactor: use lib/common.sh for shared utilities in create-test-c
 ### Task 6: Update install.sh
 
 **Files:**
+
 - Modify: `install.sh`
 
 Add download and installation of `lib/` files to `~/.local/lib/pr-tools/`.

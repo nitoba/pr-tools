@@ -12,20 +12,21 @@
 
 ## File Map
 
-| File | Change |
-|------|--------|
-| `src/lib/common.sh` | Add `ollama` case in `test_provider_key()`; add `OLLAMA_MODEL` default in `load_config()` |
-| `src/lib/llm.sh` | Add `ollama` case in `get_provider_config()` |
-| `src/lib/test-card-llm.sh` | Add `ollama` case in `call_with_fallback()` |
+| File                            | Change                                                                                                                                          |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/lib/common.sh`             | Add `ollama` case in `test_provider_key()`; add `OLLAMA_MODEL` default in `load_config()`                                                       |
+| `src/lib/llm.sh`                | Add `ollama` case in `get_provider_config()`                                                                                                    |
+| `src/lib/test-card-llm.sh`      | Add `ollama` case in `call_with_fallback()`                                                                                                     |
 | `src/bin/create-pr-description` | Add `DEFAULT_OLLAMA_MODEL`; update `DEFAULT_PROVIDERS` and `DEFAULT_ENV`; add wizard block; add `--set-ollama-model` flag; update `show_help()` |
-| `src/bin/create-test-card` | Add `DEFAULT_OLLAMA_MODEL`; update `DEFAULT_PROVIDERS` and `DEFAULT_ENV` |
-| `VERSION` | Bump from `2.9.2` → `2.9.3` |
+| `src/bin/create-test-card`      | Add `DEFAULT_OLLAMA_MODEL`; update `DEFAULT_PROVIDERS` and `DEFAULT_ENV`                                                                        |
+| `VERSION`                       | Bump from `2.9.2` → `2.9.3`                                                                                                                     |
 
 ---
 
 ## Task 1: Add Ollama support to `src/lib/common.sh`
 
 **Files:**
+
 - Modify: `src/lib/common.sh`
 
 Two changes: (a) add `ollama` to `test_provider_key()` so the wizard can validate the key; (b) add `OLLAMA_MODEL` default application in `load_config()`.
@@ -130,6 +131,7 @@ bash -c '
 ```
 
 Expected output:
+
 ```
 URL: https://ollama.com/v1/chat/completions
 MODEL: qwen3.5:cloud
@@ -147,6 +149,7 @@ git commit -m "feat: add ollama to test_provider_key and load_config in common.s
 ## Task 2: Add Ollama to `get_provider_config()` in `src/lib/llm.sh`
 
 **Files:**
+
 - Modify: `src/lib/llm.sh`
 
 - [ ] **Step 1: Verify Ollama is not yet in `get_provider_config()`**
@@ -242,6 +245,7 @@ bash -c '
 ```
 
 Expected output:
+
 ```
 URL: https://ollama.com/v1/chat/completions
 KEY: oa-test-key
@@ -261,6 +265,7 @@ git commit -m "feat: add ollama case to get_provider_config in llm.sh"
 ## Task 3: Add Ollama to `call_with_fallback()` in `src/lib/test-card-llm.sh`
 
 **Files:**
+
 - Modify: `src/lib/test-card-llm.sh`
 
 - [ ] **Step 1: Verify Ollama is not yet in `test-card-llm.sh`**
@@ -347,6 +352,7 @@ git commit -m "feat: add ollama case to call_with_fallback in test-card-llm.sh"
 ## Task 4: Update `src/bin/create-pr-description`
 
 **Files:**
+
 - Modify: `src/bin/create-pr-description`
 
 Four sub-changes: (a) add `DEFAULT_OLLAMA_MODEL`; (b) update `DEFAULT_PROVIDERS`; (c) update `DEFAULT_ENV`; (d) add wizard block; (e) add `--set-ollama-model` flag; (f) update `show_help()`.
@@ -377,6 +383,7 @@ DEFAULT_OLLAMA_MODEL="qwen3.5:cloud"
 - [ ] **Step 2: Update `DEFAULT_ENV` to include commented Ollama entries**
 
 Find the `DEFAULT_ENV` block (around line 135). The current value ends with:
+
 ```
 # GROQ_MODEL="llama-3.3-70b-versatile"
 
@@ -722,6 +729,7 @@ git commit -m "feat: add ollama provider support to create-pr-description wizard
 ## Task 5: Update `src/bin/create-test-card`
 
 **Files:**
+
 - Modify: `src/bin/create-test-card`
 
 Two sub-changes: (a) add `DEFAULT_OLLAMA_MODEL`; (b) update `DEFAULT_PROVIDERS`; (c) update `DEFAULT_ENV`.
@@ -819,6 +827,7 @@ git commit -m "feat: add ollama provider support to create-test-card config"
 ## Task 6: Bump VERSION
 
 **Files:**
+
 - Modify: `VERSION`
 
 - [ ] **Step 1: Verify current version**

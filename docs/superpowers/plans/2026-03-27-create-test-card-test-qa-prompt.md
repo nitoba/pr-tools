@@ -13,6 +13,7 @@
 ### Task 1: Add post-create confirmation flow
 
 **Files:**
+
 - Modify: `bin/create-test-card`
 
 - [ ] **Step 1: Write a failing test for the new prompt helper behavior**
@@ -24,6 +25,7 @@
 ### Task 2: Add Azure DevOps state update
 
 **Files:**
+
 - Modify: `bin/create-test-card`
 
 - [ ] **Step 1: Write a failing test for the parent work item update payload/path**
@@ -35,6 +37,7 @@
 ### Task 3: Verify behavior
 
 **Files:**
+
 - Modify: `bin/create-test-card`
 
 - [ ] **Step 1: Run syntax verification**

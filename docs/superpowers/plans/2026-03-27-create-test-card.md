@@ -23,6 +23,7 @@
 ### Task 1: Create the command skeleton
 
 **Files:**
+
 - Create: `bin/create-test-card`
 - Reference: `bin/create-pr-description`
 
@@ -97,6 +98,7 @@ Expected: no output
 ### Task 2: Add startup dependency validation
 
 **Files:**
+
 - Modify: `bin/create-test-card`
 - Reference: `bin/create-pr-description`
 
@@ -130,6 +132,7 @@ Expected: no output
 ### Task 3: Load `.env` and defaults in the same style as the PR tool
 
 **Files:**
+
 - Modify: `bin/create-test-card`
 - Reference: `bin/create-pr-description`
 
@@ -196,6 +199,7 @@ Expected: no output
 ### Task 4: Add branch detection and git-optional execution behavior
 
 **Files:**
+
 - Modify: `bin/create-test-card`
 
 - [ ] **Step 1: Detect whether the command is inside a git repo**
@@ -260,6 +264,7 @@ Then run a negative case outside a git repo without routing flags and verify it 
 ### Task 5: Implement PR lookup by explicit ID or current branch
 
 **Files:**
+
 - Modify: `bin/create-test-card`
 
 - [ ] **Step 1: Add project-scoped PR-by-ID lookup**
@@ -323,6 +328,7 @@ Run with a branch/PR combination that should not resolve and verify the command 
 ### Task 6: Implement work item resolution from CLI or PR links
 
 **Files:**
+
 - Modify: `bin/create-test-card`
 
 - [ ] **Step 1: Add linked work item fetch for resolved PR**
@@ -377,6 +383,7 @@ Verify the command exits non-zero with explicit guidance when the PR has no link
 ### Task 7: Build prompt context inputs
 
 **Files:**
+
 - Modify: `bin/create-test-card`
 
 - [ ] **Step 1: Add PR changes retrieval**
@@ -435,6 +442,7 @@ Simulate or force a PR-changes/examples failure path and verify the command logs
 ### Task 8: Generate Markdown test cards with the existing provider model
 
 **Files:**
+
 - Modify: `bin/create-test-card`
 - Reference: `bin/create-pr-description`
 
@@ -534,6 +542,7 @@ Test the parser helper with a mocked malformed response string and verify it pre
 ### Task 9: Implement best-effort Azure DevOps creation
 
 **Files:**
+
 - Modify: `bin/create-test-card`
 
 - [ ] **Step 1: Add a minimal Markdown-to-HTML converter**
@@ -611,6 +620,7 @@ Expected: dry-run still behaves consistently and never attempts create logic
 ### Task 10: Wire the command into the repo experience
 
 **Files:**
+
 - Modify: `install.sh`
 - Modify: `README.md`
 
@@ -663,6 +673,7 @@ Expected: no output
 ### Task 11: Verify the full delivery surface
 
 **Files:**
+
 - Modify: `bin/create-test-card`
 - Modify: `README.md`
 - Modify: `install.sh`

@@ -17,8 +17,7 @@
     "fumadocs-mdx": "^14.2.11",
     "fumadocs-ui": "^16.7.10",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0",
-    "tailwindcss": "^4.2.2"
+    "react-dom": "^19.0.0"
   },
   "devDependencies": {
     "@types/mdx": "^2.0.13",

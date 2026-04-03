@@ -21,6 +21,7 @@
 ### Task 1: Stop inheriting invalid create fields from the parent item
 
 **Files:**
+
 - Modify: `bin/create-test-card`
 
 - [ ] **Step 1: Identify the create payload fields currently inherited from the parent**
@@ -72,6 +73,7 @@ Expected: no output
 ### Task 2: Make long-running stages visible in normal mode
 
 **Files:**
+
 - Modify: `bin/create-test-card`
 
 - [ ] **Step 1: Add normal-mode start logs for each major phase**
@@ -109,6 +111,7 @@ Expected: progress logs plus prompt preview
 ### Task 3: Make Azure DevOps validation failures easier to understand
 
 **Files:**
+
 - Modify: `bin/create-test-card`
 
 - [ ] **Step 1: Add a concise create-field summary for failures**
@@ -149,6 +152,7 @@ Run a command that reaches the dry-run create preview and inspect the summary fi
 ### Task 4: Document the follow-up defaults and progress behavior
 
 **Files:**
+
 - Modify: `README.md`
 
 - [ ] **Step 1: Document AGROTRACE create defaults**

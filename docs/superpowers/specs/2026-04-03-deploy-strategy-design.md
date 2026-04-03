@@ -117,16 +117,19 @@ curl -fsSL https://raw.githubusercontent.com/nitoba/pr-tools/main/install.sh | b
 ## Data Flow
 
 ### CI
+
 ```
 PR/Push → GitHub Actions → shellcheck + bash -n + --help/--version → Pass/Fail
 ```
 
 ### Release
+
 ```
 git tag vX.Y.Z → git push --tags → GitHub Actions → git-cliff → GitHub Release + assets
 ```
 
 ### Install
+
 ```
 curl install.sh | bash → download scripts da tag ou main → instalar em ~/.local/bin
 ```
@@ -134,16 +137,19 @@ curl install.sh | bash → download scripts da tag ou main → instalar em ~/.lo
 ## Error Handling
 
 ### CI
+
 - Se shellcheck falhar, PR é bloqueado
 - Se syntax check falhar, PR é bloqueado
 - Se smoke test falhar, PR é bloqueado
 
 ### Release
+
 - Se tag não seguir pattern `v*`, workflow não roda
 - Se `git-cliff` falhar (ex: tag não existe), workflow falha com erro claro
 - Se upload de assets falhar, release é criada mas sem assets (partial success)
 
 ### Install
+
 - Se versão não existe, `curl` retorna 404 e script aborta com mensagem clara
 - Fallback para `main` se `VERSION` não for definido
 
@@ -175,14 +181,14 @@ curl install.sh | bash → download scripts da tag ou main → instalar em ~/.lo
 
 ## Files Created/Modified
 
-| Arquivo | Ação | Propósito |
-|---------|------|-----------|
-| `.github/workflows/ci.yml` | Create | CI workflow |
-| `.github/workflows/release.yml` | Create | Release workflow |
-| `cliff.toml` | Create | git-cliff config |
-| `CHANGELOG.md` | Create | Generated changelog |
-| `VERSION` | Create | Single source of truth for version |
-| `install.sh` | Modify | Support INSTALL_VERSION env var |
-| `src/bin/create-pr-description` | Modify | Read version from VERSION file |
-| `src/bin/create-test-card` | Modify | Read version from VERSION file |
-| `README.md` | Modify | Document release process |
+| Arquivo                         | Ação   | Propósito                          |
+| ------------------------------- | ------ | ---------------------------------- |
+| `.github/workflows/ci.yml`      | Create | CI workflow                        |
+| `.github/workflows/release.yml` | Create | Release workflow                   |
+| `cliff.toml`                    | Create | git-cliff config                   |
+| `CHANGELOG.md`                  | Create | Generated changelog                |
+| `VERSION`                       | Create | Single source of truth for version |
+| `install.sh`                    | Modify | Support INSTALL_VERSION env var    |
+| `src/bin/create-pr-description` | Modify | Read version from VERSION file     |
+| `src/bin/create-test-card`      | Modify | Read version from VERSION file     |
+| `README.md`                     | Modify | Document release process           |

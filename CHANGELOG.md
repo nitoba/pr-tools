@@ -2,35 +2,27 @@
 
 ## Unreleased
 
-
 ### Bug Fixes
 
 - Add workflow_dispatch trigger to release workflow (`eb49f0f`)
 
-
 ## 2.9.7 — 2026-04-03
-
 
 ### Bug Fixes
 
 - Explicitly trigger Release workflow after auto-tag creation (`eef62f0`)
 
-
 ### Chores
 
 - Bump version to v2.9.7 (`77c8cf9`)
 
-
 ## 2.9.6 — 2026-04-03
-
 
 ### Chores
 
 - Bump version to v2.9.6 (`85c4bbf`)
 
-
 ## 2.9.5 — 2026-04-03
-
 
 ### Chores
 
@@ -38,19 +30,15 @@
 
 - Bump version to v2.9.6 (`e9adf71`)
 
-
 ### Features
 
 - Switch release flow to PR-based workflow with auto-tagging (`6716c87`)
 
-
 ## 2.9.4 — 2026-04-03
-
 
 ### Bug Fixes
 
 - Include OLLAMA_API_KEY in validate_api_keys and validate_provider_keys (`df04b6d`)
-
 
 ### Chores
 
@@ -60,13 +48,11 @@
 
 - Bump version to v2.9.3 (`93bdef5`)
 
-
 ### Documentation
 
 - Add Ollama Cloud provider implementation plan (`d9f58c5`)
 
 - Add Ollama Cloud provider design spec (`e88dbce`)
-
 
 ### Features
 
@@ -80,22 +66,17 @@
 
 - Add ollama to test_provider_key and load_config in common.sh (`9d6fa25`)
 
-
 ## 2.9.2 — 2026-04-03
-
 
 ### Bug Fixes
 
 - Package release assets into a single zip archive (`c574fdd`)
 
-
 ### Chores
 
 - Bump version to v2.9.2 (`1ef8ace`)
 
-
 ## 2.9.1 — 2026-04-03
-
 
 ### Bug Fixes
 
@@ -163,7 +144,6 @@
 
 - Prompt functions now display correctly in interactive wizard (`ac0f6f9`)
 
-
 ### CI/CD
 
 - Add release workflow with git-cliff changelog generation (`26d6823`)
@@ -171,7 +151,6 @@
 - Add CI workflow with shellcheck, syntax check, and smoke tests (`c789be7`)
 
 - Add opencode workflow (`4baa452`)
-
 
 ### Chores
 
@@ -207,7 +186,6 @@
 
 - Bump version to 1.1.0 (`4de5fe9`)
 
-
 ### Documentation
 
 - Document versioned installation and release process (`92196d9`)
@@ -225,7 +203,6 @@
 - Add groq reasoning fallback spec and plan (`a5089ff`)
 
 - Update README with Gemini support, auto PR creation, and all CLI flags (`626bcc0`)
-
 
 ### Features
 
@@ -281,10 +258,9 @@
 
 - Add PR title generation, --dry-run and --update flags (`56dd80d`)
 
-- Add interactive setup wizard and --set-*-model flags (`62418c6`)
+- Add interactive setup wizard and --set-\*-model flags (`62418c6`)
 
 - Initial release - PR description generator with LLM support (`a16b688`)
-
 
 ### Refactoring
 
@@ -305,5 +281,3 @@
 - Extract shared utilities into lib/common.sh (`011e294`)
 
 - Improve test card generation to focus on observable behavior (`d5e987a`)
-
-

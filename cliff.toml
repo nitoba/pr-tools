@@ -26,6 +26,6 @@ commit_parsers = [
   { message = "^ci", group = "CI/CD" },
   { message = "^refactor", group = "Refactoring" },
   { message = "^perf", group = "Performance" },
-  { message = "^test", group = "Tests" },
+  { message = "^test", group = "Tests" }
 ]
 sort_commits = "newest"

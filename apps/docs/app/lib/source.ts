@@ -1,1 +1,1 @@
-export { source } from '../../lib/source';
+export { source } from '../../lib/source'

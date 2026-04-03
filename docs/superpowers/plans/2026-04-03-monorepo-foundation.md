@@ -13,6 +13,7 @@
 ## Mapa de arquivos
 
 ### Criar
+
 - `package.json` — root workspace Bun com scripts de lint/format
 - `bunfig.toml` — config global do Bun
 - `packages/.gitkeep` — mantém diretório no git
@@ -27,12 +28,14 @@
   - 13 arquivos `.mdx` stub (substituir exemplos do starter pelos nossos)
 
 ### Mover
+
 - `src/` → `apps/cli/src/`
 - `tests/` → `apps/cli/tests/`
 - `install.sh` → `apps/cli/install.sh`
 - `VERSION` → `apps/cli/VERSION`
 
 ### Modificar
+
 - `release.sh` — atualizar todos os paths para `apps/cli/`
 - `.github/workflows/release.yml` — atualizar paths para `apps/cli/`
 - `.github/workflows/auto-tag.yml` — atualizar path do `VERSION`
@@ -43,6 +46,7 @@
 ## Task 1: Monorepo root — Bun workspace
 
 **Files:**
+
 - Create: `package.json`
 - Create: `bunfig.toml`
 - Create: `packages/.gitkeep`
@@ -103,6 +107,7 @@ Expected: `bun install` completa sem erros (workspaces ainda vazios, normal).
 ## Task 2: Configurar oxlint + oxfmt na raiz
 
 **Files:**
+
 - Create: `.oxlintrc.json` (gerado por `oxlint --init`)
 - Modify: `package.json` (adicionar scripts lint/format)
 
@@ -127,12 +132,7 @@ Abrir `.oxlintrc.json` gerado e atualizar:
 ```json
 {
   "$schema": "https://raw.githubusercontent.com/oxc-project/oxc/main/npm/oxlint/configuration_schema.json",
-  "ignorePatterns": [
-    "node_modules",
-    "dist",
-    ".astro",
-    "apps/cli"
-  ],
+  "ignorePatterns": ["node_modules", "dist", ".astro", "apps/cli"],
   "rules": {}
 }
 ```
@@ -178,6 +178,7 @@ git commit -m "chore: add oxlint and oxfmt to monorepo root"
 ## Task 3: Migrar CLI para apps/cli
 
 **Files:**
+
 - Create: `apps/cli/package.json`
 - Move: `src/` → `apps/cli/src/`
 - Move: `tests/` → `apps/cli/tests/`
@@ -245,6 +246,7 @@ git commit -m "chore: migrate cli code to apps/cli"
 ## Task 4: Atualizar release.sh e workflows para novos paths
 
 **Files:**
+
 - Modify: `release.sh`
 - Modify: `.github/workflows/release.yml`
 - Modify: `.github/workflows/auto-tag.yml`
@@ -257,6 +259,7 @@ Localizar e substituir:
 # ANTES
 CURRENT_VERSION="$(cat "$SCRIPT_DIR/VERSION" 2>/dev/null || echo "unknown")"
 ```
+
 ```bash
 # DEPOIS
 CURRENT_VERSION="$(cat "$SCRIPT_DIR/apps/cli/VERSION" 2>/dev/null || echo "unknown")"
@@ -266,6 +269,7 @@ CURRENT_VERSION="$(cat "$SCRIPT_DIR/apps/cli/VERSION" 2>/dev/null || echo "unkno
 # ANTES
 printf '%s\n' "$VERSION" > "$SCRIPT_DIR/VERSION"
 ```
+
 ```bash
 # DEPOIS
 printf '%s\n' "$VERSION" > "$SCRIPT_DIR/apps/cli/VERSION"
@@ -279,6 +283,7 @@ Localizar e substituir:
 # ANTES
 for script in "$SCRIPT_DIR/src/bin/create-pr-description" "$SCRIPT_DIR/src/bin/create-test-card"; do
 ```
+
 ```bash
 # DEPOIS
 for script in "$SCRIPT_DIR/apps/cli/src/bin/create-pr-description" "$SCRIPT_DIR/apps/cli/src/bin/create-test-card"; do
@@ -292,6 +297,7 @@ Localizar e substituir:
 # ANTES
 git add VERSION src/bin/create-pr-description src/bin/create-test-card CHANGELOG.md
 ```
+
 ```bash
 # DEPOIS
 git add apps/cli/VERSION apps/cli/src/bin/create-pr-description apps/cli/src/bin/create-test-card CHANGELOG.md
@@ -308,6 +314,7 @@ cp src/bin/create-pr-description "$DIST_DIR/bin/"
 cp src/bin/create-test-card "$DIST_DIR/bin/"
 cp src/lib/*.sh "$DIST_DIR/lib/"
 ```
+
 ```yaml
 # DEPOIS
 cp apps/cli/install.sh "$DIST_DIR/"
@@ -324,6 +331,7 @@ Localizar e substituir:
 # ANTES
 FILE_VERSION="$(cat VERSION | tr -d '[:space:]')"
 ```
+
 ```yaml
 # DEPOIS
 FILE_VERSION="$(cat apps/cli/VERSION | tr -d '[:space:]')"
@@ -349,6 +357,7 @@ git commit -m "chore: update release paths to apps/cli"
 ## Task 5: Scaffold apps/www com Astro CLI
 
 **Files (todos gerados pela CLI — apenas modificar conforme indicado):**
+
 - Modify: `apps/www/astro.config.mjs`
 - Modify: `apps/www/tsconfig.json`
 - Modify: `apps/www/src/pages/index.astro`
@@ -361,6 +370,7 @@ bun create astro@latest apps/www
 ```
 
 Durante o wizard interativo, selecionar:
+
 - Template: **Empty** (minimal starter)
 - TypeScript: **Strict**
 - Install dependencies: **Yes**
@@ -395,19 +405,19 @@ Abrir `apps/www/astro.config.mjs` gerado. Verificar se `output: 'server'` está 
 
 ```js
 // apps/www/astro.config.mjs
-import { defineConfig } from 'astro/config';
-import tailwindcss from '@tailwindcss/vite';
-import react from '@astrojs/react';
-import node from '@astrojs/node';
+import { defineConfig } from 'astro/config'
+import tailwindcss from '@tailwindcss/vite'
+import react from '@astrojs/react'
+import node from '@astrojs/node'
 
 export default defineConfig({
   output: 'server',
   adapter: node({ mode: 'standalone' }),
   integrations: [react()],
   vite: {
-    plugins: [tailwindcss()],
-  },
-});
+    plugins: [tailwindcss()]
+  }
+})
 ```
 
 > A estrutura exata pode variar conforme o que `astro add` gerou. O objetivo é garantir que `output: 'server'`, o adapter node com `mode: 'standalone'`, o React e o Tailwind estejam todos configurados.
@@ -420,7 +430,7 @@ mkdir -p src/styles
 
 ```css
 /* apps/www/src/styles/global.css */
-@import "tailwindcss";
+@import 'tailwindcss';
 ```
 
 - [ ] **Step 7: Substituir index.astro por placeholder mínimo**
@@ -468,6 +478,7 @@ git commit -m "feat: scaffold apps/www with Astro 5, Tailwind CSS 4 and React"
 ## Task 6: Scaffold apps/docs com Fumadocs + Vite
 
 **Files (criar manualmente em `apps/docs/`):**
+
 - `package.json`
 - `vite.config.ts`
 - `source.config.ts`
@@ -488,6 +499,7 @@ mkdir -p apps/docs
 ```
 
 `apps/docs/package.json`:
+
 ```json
 {
   "name": "@pr-tools/docs",
@@ -532,31 +544,34 @@ cd ../..
 - [ ] **Step 3: Criar source.config.ts**
 
 `apps/docs/source.config.ts`:
+
 ```ts
-import { defineDocs } from 'fumadocs-mdx/config';
+import { defineDocs } from 'fumadocs-mdx/config'
 
 export const docs = defineDocs({
-  dir: 'content/docs',
-});
+  dir: 'content/docs'
+})
 ```
 
 - [ ] **Step 4: Criar vite.config.ts**
 
 `apps/docs/vite.config.ts`:
+
 ```ts
-import { defineConfig } from 'vite';
-import react from '@vitejs/plugin-react';
-import mdx from 'fumadocs-mdx/vite';
-import * as MdxConfig from './source.config';
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+import mdx from 'fumadocs-mdx/vite'
+import * as MdxConfig from './source.config'
 
 export default defineConfig({
-  plugins: [mdx(MdxConfig), react()],
-});
+  plugins: [mdx(MdxConfig), react()]
+})
 ```
 
 - [ ] **Step 5: Criar tsconfig.json**
 
 `apps/docs/tsconfig.json`:
+
 ```json
 {
   "compilerOptions": {
@@ -587,14 +602,15 @@ mkdir -p apps/docs/lib
 ```
 
 `apps/docs/lib/source.ts`:
+
 ```ts
-import { docs } from 'collections/server';
-import { loader } from 'fumadocs-core/source';
+import { docs } from 'collections/server'
+import { loader } from 'fumadocs-core/source'
 
 export const source = loader({
   baseUrl: '/docs',
-  source: docs.toFumadocsSource(),
-});
+  source: docs.toFumadocsSource()
+})
 ```
 
 - [ ] **Step 7: Criar Bun preload para MDX**
@@ -604,15 +620,17 @@ mkdir -p apps/docs/scripts
 ```
 
 `apps/docs/scripts/preload.ts`:
-```ts
-import { createMdxPlugin } from 'fumadocs-mdx/bun';
 
-Bun.plugin(createMdxPlugin());
+```ts
+import { createMdxPlugin } from 'fumadocs-mdx/bun'
+
+Bun.plugin(createMdxPlugin())
 ```
 
 Adicionar ao `apps/docs/package.json` o campo bunfig (ou criar `apps/docs/bunfig.toml`):
 
 `apps/docs/bunfig.toml`:
+
 ```toml
 preload = ["./scripts/preload.ts"]
 ```
@@ -620,6 +638,7 @@ preload = ["./scripts/preload.ts"]
 - [ ] **Step 8: Criar index.html e src/main.tsx mínimos**
 
 `apps/docs/index.html`:
+
 ```html
 <!DOCTYPE html>
 <html lang="pt-BR">
@@ -640,15 +659,16 @@ mkdir -p apps/docs/src
 ```
 
 `apps/docs/src/main.tsx`:
+
 ```tsx
-import { StrictMode } from 'react';
-import { createRoot } from 'react-dom/client';
+import { StrictMode } from 'react'
+import { createRoot } from 'react-dom/client'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <p>pr-tools docs — em construção</p>
-  </StrictMode>,
-);
+  </StrictMode>
+)
 ```
 
 - [ ] **Step 9: Verificar que Vite sobe sem erros de configuração**
@@ -667,15 +687,11 @@ mkdir -p apps/docs/content/docs
 ```
 
 `apps/docs/content/docs/meta.json`:
+
 ```json
 {
   "title": "pr-tools",
-  "pages": [
-    "getting-started",
-    "commands",
-    "guides",
-    "reference"
-  ]
+  "pages": ["getting-started", "commands", "guides", "reference"]
 }
 ```
 
@@ -686,6 +702,7 @@ mkdir -p apps/docs/content/docs/getting-started
 ```
 
 `apps/docs/content/docs/getting-started/meta.json`:
+
 ```json
 {
   "title": "Primeiros passos",
@@ -694,6 +711,7 @@ mkdir -p apps/docs/content/docs/getting-started
 ```
 
 `apps/docs/content/docs/getting-started/introduction.mdx`:
+
 ```mdx
 ---
 title: Introdução
@@ -706,6 +724,7 @@ Conteúdo em breve.
 ```
 
 `apps/docs/content/docs/getting-started/installation.mdx`:
+
 ```mdx
 ---
 title: Instalação
@@ -718,6 +737,7 @@ Conteúdo em breve.
 ```
 
 `apps/docs/content/docs/getting-started/quickstart.mdx`:
+
 ```mdx
 ---
 title: Quickstart
@@ -730,6 +750,7 @@ Conteúdo em breve.
 ```
 
 `apps/docs/content/docs/getting-started/configuration.mdx`:
+
 ```mdx
 ---
 title: Configuração
@@ -748,6 +769,7 @@ mkdir -p apps/docs/content/docs/commands
 ```
 
 `apps/docs/content/docs/commands/meta.json`:
+
 ```json
 {
   "title": "Comandos",
@@ -756,6 +778,7 @@ mkdir -p apps/docs/content/docs/commands
 ```
 
 `apps/docs/content/docs/commands/create-pr-description.mdx`:
+
 ```mdx
 ---
 title: create-pr-description
@@ -768,6 +791,7 @@ Conteúdo em breve.
 ```
 
 `apps/docs/content/docs/commands/create-test-card.mdx`:
+
 ```mdx
 ---
 title: create-test-card
@@ -786,6 +810,7 @@ mkdir -p apps/docs/content/docs/guides
 ```
 
 `apps/docs/content/docs/guides/meta.json`:
+
 ```json
 {
   "title": "Guias",
@@ -794,6 +819,7 @@ mkdir -p apps/docs/content/docs/guides
 ```
 
 `apps/docs/content/docs/guides/azure-devops.mdx`:
+
 ```mdx
 ---
 title: Configurando o Azure DevOps
@@ -806,6 +832,7 @@ Conteúdo em breve.
 ```
 
 `apps/docs/content/docs/guides/ai-providers.mdx`:
+
 ```mdx
 ---
 title: Escolhendo providers de IA
@@ -818,6 +845,7 @@ Conteúdo em breve.
 ```
 
 `apps/docs/content/docs/guides/markdown-rendering.mdx`:
+
 ```mdx
 ---
 title: Renderizando Markdown no terminal
@@ -830,6 +858,7 @@ Conteúdo em breve.
 ```
 
 `apps/docs/content/docs/guides/advanced-examples.mdx`:
+
 ```mdx
 ---
 title: Exemplos avançados
@@ -848,6 +877,7 @@ mkdir -p apps/docs/content/docs/reference
 ```
 
 `apps/docs/content/docs/reference/meta.json`:
+
 ```json
 {
   "title": "Referência",
@@ -856,6 +886,7 @@ mkdir -p apps/docs/content/docs/reference
 ```
 
 `apps/docs/content/docs/reference/environment-variables.mdx`:
+
 ```mdx
 ---
 title: Variáveis de ambiente
@@ -868,6 +899,7 @@ Conteúdo em breve.
 ```
 
 `apps/docs/content/docs/reference/troubleshooting.mdx`:
+
 ```mdx
 ---
 title: Troubleshooting
@@ -880,6 +912,7 @@ Conteúdo em breve.
 ```
 
 `apps/docs/content/docs/reference/changelog.mdx`:
+
 ```mdx
 ---
 title: Changelog
@@ -942,6 +975,7 @@ find apps -maxdepth 2 -name "package.json" | sort
 ```
 
 Expected:
+
 ```
 apps/cli/package.json
 apps/docs/package.json

@@ -12,17 +12,17 @@
 
 ## File Structure
 
-| File | Action | Responsibility |
-|------|--------|----------------|
-| `.github/workflows/ci.yml` | Create | CI: shellcheck + syntax + smoke tests |
-| `.github/workflows/release.yml` | Create | CD: tag push → git-cliff → GitHub Release + assets |
-| `cliff.toml` | Create | git-cliff configuration for Conventional Commits |
-| `CHANGELOG.md` | Create | Generated changelog (initial run covers all history) |
-| `VERSION` | Create | Single source of truth for version number |
-| `install.sh` | Modify | Add `INSTALL_VERSION` env var support |
-| `src/bin/create-pr-description` | Modify | Read version from `VERSION` file with fallback |
-| `src/bin/create-test-card` | Modify | Read version from `VERSION` file with fallback |
-| `README.md` | Modify | Document installation from specific versions |
+| File                            | Action | Responsibility                                       |
+| ------------------------------- | ------ | ---------------------------------------------------- |
+| `.github/workflows/ci.yml`      | Create | CI: shellcheck + syntax + smoke tests                |
+| `.github/workflows/release.yml` | Create | CD: tag push → git-cliff → GitHub Release + assets   |
+| `cliff.toml`                    | Create | git-cliff configuration for Conventional Commits     |
+| `CHANGELOG.md`                  | Create | Generated changelog (initial run covers all history) |
+| `VERSION`                       | Create | Single source of truth for version number            |
+| `install.sh`                    | Modify | Add `INSTALL_VERSION` env var support                |
+| `src/bin/create-pr-description` | Modify | Read version from `VERSION` file with fallback       |
+| `src/bin/create-test-card`      | Modify | Read version from `VERSION` file with fallback       |
+| `README.md`                     | Modify | Document installation from specific versions         |
 
 ---
 
@@ -31,6 +31,7 @@
 ### Task 1: Create CI Workflow
 
 **Files:**
+
 - Create: `.github/workflows/ci.yml`
 
 - [ ] **Step 1: Create `.github/workflows/ci.yml`**
@@ -118,6 +119,7 @@ git commit -m "ci: add CI workflow with shellcheck, syntax check, and smoke test
 ### Task 2: Create cliff.toml
 
 **Files:**
+
 - Create: `cliff.toml`
 
 - [ ] **Step 1: Create `cliff.toml`**
@@ -162,6 +164,7 @@ git commit -m "chore: add git-cliff configuration for conventional commits"
 ### Task 3: Create Release Workflow
 
 **Files:**
+
 - Create: `.github/workflows/release.yml`
 
 - [ ] **Step 1: Create `.github/workflows/release.yml`**
@@ -236,6 +239,7 @@ git commit -m "ci: add release workflow with git-cliff changelog generation"
 ### Task 4: Create VERSION file
 
 **Files:**
+
 - Create: `VERSION`
 
 - [ ] **Step 1: Create `VERSION` file**
@@ -254,6 +258,7 @@ git commit -m "chore: add VERSION file as single source of truth"
 ### Task 5: Generate initial CHANGELOG.md
 
 **Files:**
+
 - Create: `CHANGELOG.md`
 
 - [ ] **Step 1: Install git-cliff locally (if not already installed)**
@@ -291,6 +296,7 @@ git commit -m "docs: generate initial changelog from git history"
 ### Task 6: Modify install.sh
 
 **Files:**
+
 - Modify: `install.sh`
 
 - [ ] **Step 1: Read current install.sh and add INSTALL_VERSION support**
@@ -357,6 +363,7 @@ git commit -m "feat: support installing from specific versions via INSTALL_VERSI
 ### Task 7: Update CLI scripts to read VERSION file
 
 **Files:**
+
 - Modify: `src/bin/create-pr-description`
 - Modify: `src/bin/create-test-card`
 
@@ -413,13 +420,14 @@ git commit -m "feat: read version from VERSION file with hardcoded fallback"
 ### Task 8: Update README.md
 
 **Files:**
+
 - Modify: `README.md`
 
 - [ ] **Step 1: Add version installation section to README**
 
 After the "Instalação" section (after line 9), add:
 
-```markdown
+````markdown
 ### Instalar uma versão específica
 
 ```bash
@@ -429,9 +437,11 @@ curl -fsSL https://raw.githubusercontent.com/nitoba/pr-tools/main/install.sh | I
 # Instalar do branch main (bleeding edge)
 curl -fsSL https://raw.githubusercontent.com/nitoba/pr-tools/main/install.sh | bash
 ```
+````
 
 Veja as versões disponíveis em [Releases](https://github.com/nitoba/pr-tools/releases).
-```
+
+````
 
 - [ ] **Step 2: Add release process section to README**
 
@@ -458,7 +468,7 @@ O workflow de release irá automaticamente:
 - **MAJOR** — Breaking changes
 - **MINOR** — Novas features
 - **PATCH** — Bug fixes
-```
+````
 
 - [ ] **Step 3: Commit**
 

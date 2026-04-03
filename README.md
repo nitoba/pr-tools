@@ -317,6 +317,7 @@ MIT
 ```
 
 O script faz:
+
 1. Valida a versao (SemVer), branch e estado do repositorio
 2. Atualiza `VERSION` e versoes hardcoded nos scripts
 3. Regenera `CHANGELOG.md` com git-cliff
@@ -324,6 +325,7 @@ O script faz:
 5. Push e abre PR para `main`
 
 **Apos o merge do PR:**
+
 - O workflow `auto-tag.yml` cria a tag `v2.9.1` automaticamente
 - O workflow `release.yml` cria o GitHub Release com changelog e assets
 

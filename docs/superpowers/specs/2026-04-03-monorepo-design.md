@@ -81,6 +81,7 @@ pr-tools/
 ```
 
 **Decisões:**
+
 - `src/`, `tests/`, `install.sh`, `VERSION` movidos para `apps/cli/` — raiz sem código do CLI
 - `packages/` existe como workspace válido sem código (YAGNI)
 - `release.sh` e workflows têm paths atualizados para `apps/cli/`
@@ -109,13 +110,17 @@ pr-tools/
 ## Tooling compartilhado (monorepo root)
 
 ### oxlint
+
 Linter rápido da suite Oxc, configurado na raiz e aplicado a todos os apps TypeScript/JavaScript.
+
 - Arquivo de config: `oxlint.json` na raiz
 - Regras: base recomendada da Oxc
 - Scripts: `bun lint` na raiz executa para todo o monorepo
 
 ### oxformat
+
 Formatter da suite Oxc, configurado na raiz.
+
 - Arquivo de config: `oxformat.json` (ou seção em `oxlint.json` conforme a API da versão em uso)
 - Scripts: `bun format` na raiz executa para todo o monorepo
 
@@ -126,6 +131,7 @@ Ambos se aplicam aos arquivos `.ts`, `.tsx`, `.astro` e `.js` dentro de `apps/` 
 ## apps/www — Scaffold (Astro)
 
 ### Stack configurada nesta fase
+
 - **Astro 5** com output `server` (SSR)
 - **@astrojs/node** como adapter padrão (substituível por Cloudflare no deploy)
 - **@astrojs/react** — plugin React habilitado para componentes interativos
@@ -134,11 +140,13 @@ Ambos se aplicam aos arquivos `.ts`, `.tsx`, `.astro` e `.js` dentro de `apps/` 
 - `index.astro` com placeholder mínimo (sem layout implementado)
 
 ### O que fica para depois
+
 - Implementação do design dark minimal (paleta, componentes, seções)
 - API route `/api/subscribe`
 - Template de email
 
 ### Referência de design (para fase posterior)
+
 - Estilo: dark minimal, accent violet (`#7c3aed`), inspiração Linear/Vercel
 - Seções planejadas: Nav, Hero, Demo terminal, Features, Providers, Instalação, Newsletter, Footer
 - Paleta: bg `#0d0d0d`/`#0a0a0a`, texto `#f8f8f8`, muted `#6b7280`, borders `#1f1f1f`
@@ -161,43 +169,48 @@ Ambos se aplicam aos arquivos `.ts`, `.tsx`, `.astro` e `.js` dentro de `apps/` 
 ### Configurações-chave
 
 **source.config.ts** — define onde ficam os docs:
+
 ```ts
-import { defineDocs } from 'fumadocs-mdx/config';
+import { defineDocs } from 'fumadocs-mdx/config'
 
 export const docs = defineDocs({
-  dir: 'content/docs',
-});
+  dir: 'content/docs'
+})
 ```
 
 **vite.config.ts** — plugin MDX:
+
 ```ts
-import { defineConfig } from 'vite';
-import react from '@vitejs/plugin-react';
-import mdx from 'fumadocs-mdx/vite';
-import * as MdxConfig from './source.config';
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+import mdx from 'fumadocs-mdx/vite'
+import * as MdxConfig from './source.config'
 
 export default defineConfig({
-  plugins: [mdx(MdxConfig), react()],
-});
+  plugins: [mdx(MdxConfig), react()]
+})
 ```
 
 **tsconfig.json** — alias para pasta `.source` gerada:
+
 ```json
 { "compilerOptions": { "paths": { "collections/*": ["./.source/*"] } } }
 ```
 
 **lib/source.ts** — loader Fumadocs:
+
 ```ts
-import { docs } from 'collections/server';
-import { loader } from 'fumadocs-core/source';
+import { docs } from 'collections/server'
+import { loader } from 'fumadocs-core/source'
 
 export const source = loader({
   baseUrl: '/docs',
-  source: docs.toFumadocsSource(),
-});
+  source: docs.toFumadocsSource()
+})
 ```
 
 **Bun preload** (para runtime MDX):
+
 - `bunfig.toml`: `preload = ["./scripts/preload.ts"]`
 - `scripts/preload.ts`: `Bun.plugin(createMdxPlugin())` via `fumadocs-mdx/bun`
 
@@ -228,10 +241,12 @@ A navegação é definida por `meta.json` em cada diretório de conteúdo. Cada 
 ## Newsletter — Referência de design (fases posteriores)
 
 ### Inscrição
+
 - `POST /api/subscribe` em `apps/www` → Resend Audiences API
 - Resend gerencia unsubscribe (RFC 8058), bounce e suppression list nativamente
 
 ### Envio automatizado
+
 - GitHub Actions trigger: `on: release: types: [published]`
 - Idempotência: verifica broadcast `release-{tag}` existente antes de criar
 - LLM gera conteúdo em **Markdown** (não HTML) — tone técnico, público dev
@@ -239,6 +254,7 @@ A navegação é definida por `meta.json` em cada diretório de conteúdo. Cada 
 - Resend Broadcast enviado para a audience de inscritos
 
 ### Secrets (a configurar no momento da implementação)
+
 - `RESEND_API_KEY`
 - `RESEND_AUDIENCE_ID`
 - `LLM_API_KEY` (ex: `OPENROUTER_API_KEY`)
@@ -246,6 +262,7 @@ A navegação é definida por `meta.json` em cada diretório de conteúdo. Cada 
 ---
 
 ## O que NÃO muda
+
 - Scripts bash do CLI — apenas movidos para `apps/cli/`
 - Processo de release (`release.sh`, `auto-tag.yml`, `release.yml`) — apenas paths atualizados
 - `CHANGELOG.md` e `cliff.toml` na raiz

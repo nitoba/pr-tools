@@ -1,3 +1,47 @@
-@import 'tailwindcss';
-@import 'fumadocs-ui/css/neutral.css';
-@import 'fumadocs-ui/css/preset.css';
+@import "tailwindcss";
+@import "fumadocs-ui/css/neutral.css";
+@import "fumadocs-ui/css/preset.css";
+
+@theme {
+  /* Claude Code — Light Mode */
+  /* Background: creme quente, Foreground: marrom escuro, Accent: laranja enferrujado */
+
+  --color-fd-background: hsl(36, 33%, 97%); /* creme claro #FAF7F2 */
+  --color-fd-foreground: hsl(24, 100%, 5%); /* marrom muito escuro #190A00 */
+  --color-fd-muted: hsl(35, 25%, 93%); /* creme acinzentado */
+  --color-fd-muted-foreground: hsl(24, 20%, 42%); /* marrom médio */
+  --color-fd-popover: hsl(36, 40%, 98%); /* creme quase branco */
+  --color-fd-popover-foreground: hsl(24, 30%, 18%); /* marrom escuro */
+  --color-fd-card: hsl(34, 28%, 94%); /* creme arenoso */
+  --color-fd-card-foreground: hsl(24, 100%, 5%); /* marrom muito escuro */
+  --color-fd-border: hsla(28, 30%, 70%, 50%); /* bege/âmbar suave */
+  --color-fd-primary: hsl(15, 55%, 47%); /* laranja enferrujado #C15F3C */
+  --color-fd-primary-foreground: hsl(36, 60%, 97%); /* creme claro */
+  --color-fd-secondary: hsl(34, 22%, 90%); /* creme secundário */
+  --color-fd-secondary-foreground: hsl(24, 40%, 18%); /* marrom escuro */
+  --color-fd-accent: hsla(20, 45%, 60%, 40%); /* laranja suave translúcido */
+  --color-fd-accent-foreground: hsl(20, 60%, 20%); /* marrom quente */
+  --color-fd-ring: hsl(15, 50%, 55%); /* laranja para foco */
+}
+
+.dark {
+  /* Claude Code — Dark Mode */
+  /* Background: marrom carvão, Foreground: creme, Accent: laranja quente */
+
+  --color-fd-background: hsl(22, 18%, 9%); /* marrom carvão #1A1410 */
+  --color-fd-foreground: hsl(33, 55%, 90%); /* creme claro #F5E6D3 */
+  --color-fd-muted: hsl(22, 15%, 14%); /* marrom escuro muted */
+  --color-fd-muted-foreground: hsla(33, 30%, 68%, 0.8); /* creme acinzentado */
+  --color-fd-popover: hsl(22, 17%, 11%); /* marrom popover */
+  --color-fd-popover-foreground: hsl(33, 45%, 84%); /* creme suave */
+  --color-fd-card: hsl(22, 16%, 12%); /* marrom card */
+  --color-fd-card-foreground: hsl(33, 55%, 93%); /* creme card */
+  --color-fd-border: hsla(28, 25%, 45%, 22%); /* borda âmbar sutil */
+  --color-fd-primary: hsl(16, 58%, 58%); /* laranja quente #D4785A */
+  --color-fd-primary-foreground: hsl(22, 18%, 9%); /* marrom escuro */
+  --color-fd-secondary: hsl(22, 14%, 16%); /* marrom secundário */
+  --color-fd-secondary-foreground: hsl(33, 45%, 85%); /* creme */
+  --color-fd-accent: hsla(20, 50%, 55%, 28%); /* laranja accent translúcido */
+  --color-fd-accent-foreground: hsl(33, 55%, 88%); /* creme accent */
+  --color-fd-ring: hsl(16, 50%, 52%); /* laranja para foco */
+}
