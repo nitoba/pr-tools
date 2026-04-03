@@ -19,17 +19,17 @@ jobs:
 
       - name: Install git-cliff
         run: |
-          curl -L https://github.com/orhun/git-cliff/releases/latest/download/git-cliff-x86_64-unknown-linux-gnu.tar.gz | tar xz
-          sudo mv git-cliff-*/git-cliff /usr/local/bin/git-cliff
+          curl -fsSL https://github.com/orhun/git-cliff/releases/download/v2.12.0/git-cliff-2.12.0-x86_64-unknown-linux-gnu.tar.gz | tar xz
+          sudo mv git-cliff-2.12.0/git-cliff /usr/local/bin/git-cliff
           chmod +x /usr/local/bin/git-cliff
 
       - name: Generate changelog
         id: changelog
         run: |
           TAG=${GITHUB_REF#refs/tags/}
-          CHANGELOG=$(git-cliff --tag "$TAG" --unreleased)
+          git-cliff --tag "$TAG" > changelog.md
           echo "changelog<<CHANGELOG_EOF" >> "$GITHUB_OUTPUT"
-          echo "$CHANGELOG" >> "$GITHUB_OUTPUT"
+          cat changelog.md >> "$GITHUB_OUTPUT"
           echo "CHANGELOG_EOF" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release

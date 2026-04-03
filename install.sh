@@ -4,11 +4,19 @@ set -euo pipefail
 # ============================================================
 # pr-tools installer
 # Usage: curl -fsSL https://raw.githubusercontent.com/nitoba/pr-tools/main/install.sh | bash
+# Install specific version: curl -fsSL https://raw.githubusercontent.com/nitoba/pr-tools/main/install.sh | INSTALL_VERSION=v2.9.0 bash
 # ============================================================
 
 REPO="nitoba/pr-tools"
-BRANCH="main"
-RAW_URL="https://raw.githubusercontent.com/$REPO/$BRANCH"
+
+# Version support — install from a specific tag or branch
+INSTALL_VERSION="${INSTALL_VERSION:-main}"
+if [[ "$INSTALL_VERSION" == v* ]]; then
+  REF="refs/tags/$INSTALL_VERSION"
+else
+  REF="$INSTALL_VERSION"
+fi
+RAW_URL="https://raw.githubusercontent.com/$REPO/$REF"
 INSTALL_DIR="$HOME/.local/bin"
 
 RED='\033[0;31m'
@@ -46,6 +54,17 @@ for cmd in curl git jq; do
   fi
 done
 log_success "Dependencias encontradas (curl, git, jq)"
+
+# Validate version if not main
+if [[ "$INSTALL_VERSION" != "main" ]]; then
+  log_info "Verificando versao $INSTALL_VERSION..."
+  if ! curl -fsSL -o /dev/null "https://raw.githubusercontent.com/$REPO/refs/tags/$INSTALL_VERSION/install.sh"; then
+    log_error "Versao $INSTALL_VERSION nao encontrada."
+    log_error "Versoes disponiveis: https://github.com/$REPO/tags"
+    exit 1
+  fi
+  log_success "Versao $INSTALL_VERSION encontrada"
+fi
 
 # Create install directory
 mkdir -p "$INSTALL_DIR"
