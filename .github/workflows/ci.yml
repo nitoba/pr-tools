@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  shellcheck:
+    name: ShellCheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      - name: Run shellcheck
+        run: |
+          shellcheck src/bin/create-pr-description
+          shellcheck src/bin/create-test-card
+          shellcheck install.sh
+          for f in src/lib/*.sh; do
+            shellcheck "$f"
+          done
+
+  syntax-check:
+    name: Syntax Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check Bash syntax
+        run: |
+          bash -n src/bin/create-pr-description
+          bash -n src/bin/create-test-card
+          bash -n install.sh
+          for f in src/lib/*.sh; do
+            bash -n "$f"
+          done
+
+  smoke-test:
+    name: Smoke Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: create-pr-description --help
+        run: bash src/bin/create-pr-description --help
+
+      - name: create-pr-description --version
+        run: bash src/bin/create-pr-description --version
+
+      - name: create-test-card --help
+        run: bash src/bin/create-test-card --help
+
+      - name: create-test-card --version
+        run: bash src/bin/create-test-card --version
