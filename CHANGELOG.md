@@ -3,12 +3,22 @@
 ## Unreleased
 
 
+### Features
+
+- Switch release flow to PR-based workflow with auto-tagging (`6716c87`)
+
+
+## 2.9.4 — 2026-04-03
+
+
 ### Bug Fixes
 
 - Include OLLAMA_API_KEY in validate_api_keys and validate_provider_keys (`df04b6d`)
 
 
 ### Chores
+
+- Bump version to v2.9.4 (`4a7004b`)
 
 - Bump VERSION file to v2.9.4 (`d020ff6`)
 
