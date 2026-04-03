@@ -3,6 +3,29 @@
 ## Unreleased
 
 
+### Bug Fixes
+
+- Explicitly trigger Release workflow after auto-tag creation (`eef62f0`)
+
+
+## 2.9.6 — 2026-04-03
+
+
+### Chores
+
+- Bump version to v2.9.6 (`85c4bbf`)
+
+
+## 2.9.5 — 2026-04-03
+
+
+### Chores
+
+- Bump version to v2.9.5 (`9fae868`)
+
+- Bump version to v2.9.6 (`e9adf71`)
+
+
 ### Features
 
 - Switch release flow to PR-based workflow with auto-tagging (`6716c87`)
