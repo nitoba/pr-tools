@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Converter o repositório flat em um monorepo Bun com apps/cli, apps/www (Astro scaffold) e apps/docs (Mintlify scaffold), com oxlint e oxfmt configurados na raiz.
+**Goal:** Converter o repositório flat em um monorepo Bun com apps/cli, apps/www (Astro scaffold) e apps/docs (Fumadocs scaffold), com oxlint e oxfmt configurados na raiz.
 
-**Architecture:** Bun workspaces na raiz agrupa `apps/*` e `packages/*`. O código bash migra para `apps/cli/`. `apps/www` é scaffoldado via `bun create astro` e configurado com os integrações Astro (Tailwind CSS 4, React, Node adapter). `apps/docs` é scaffoldado via `mint new` e tem seu `docs.json` substituído pela navegação definitiva + stubs MDX criados.
+**Architecture:** Bun workspaces na raiz agrupa `apps/*` e `packages/*`. O código bash migra para `apps/cli/`. `apps/www` é scaffoldado via `bun create astro` e configurado com as integrações Astro (Tailwind CSS 4, React, Node adapter). `apps/docs` é scaffoldado via `bun create fumadocs-app` (Next.js) e tem stubs MDX criados com navegação definitiva.
 
-**Tech Stack:** Bun (workspaces), Astro 5 (`bun create astro` + `astro add`), Tailwind CSS 4 (via `astro add tailwind`), `@astrojs/react` (via `astro add react`), `@astrojs/node` (via `astro add node`), TypeScript strict, oxlint (via `oxlint --init`), oxfmt (formatter do Oxc — pacote `oxfmt`)
+**Tech Stack:** Bun (workspaces), Astro 5 (`bun create astro` + `astro add`), Tailwind CSS 4 (via `astro add tailwind`), `@astrojs/react` (via `astro add react`), `@astrojs/node` (via `astro add node`), TypeScript strict, oxlint (via `oxlint --init`), oxfmt (formatter do Oxc — pacote `oxfmt`), Fumadocs (Vite + React, setup manual — `fumadocs-mdx` + `fumadocs-core` + `fumadocs-ui`)
 
 ---
 
@@ -22,9 +22,9 @@
   - `apps/www/tsconfig.json` — garantir strict mode
   - `apps/www/src/styles/global.css` — `@import "tailwindcss"`
   - `apps/www/src/pages/index.astro` — substituir por placeholder mínimo
-- Gerados por `mint new apps/docs` → substituir/criar:
-  - `apps/docs/docs.json` — navegação e tema definitivos
-  - 13 arquivos `.mdx` stub (deletar exemplos do starter, criar os nossos)
+- Gerados por `bun create fumadocs-app apps/docs` (Next.js) → substituir/criar:
+  - `content/docs/meta.json` e `meta.json` em cada subdiretório — navegação definitiva
+  - 13 arquivos `.mdx` stub (substituir exemplos do starter pelos nossos)
 
 ### Mover
 - `src/` → `apps/cli/src/`
@@ -465,116 +465,239 @@ git commit -m "feat: scaffold apps/www with Astro 5, Tailwind CSS 4 and React"
 
 ---
 
-## Task 6: Scaffold apps/docs com Mintlify CLI
+## Task 6: Scaffold apps/docs com Fumadocs + Vite
 
-**Files:**
-- Modify: `apps/docs/docs.json` (substituir conteúdo do starter pelo definitivo)
-- Delete: arquivos de exemplo do starter kit
-- Create: 13 arquivos `.mdx` stub
+**Files (criar manualmente em `apps/docs/`):**
+- `package.json`
+- `vite.config.ts`
+- `source.config.ts`
+- `tsconfig.json`
+- `index.html`
+- `src/main.tsx` + `src/app.tsx`
+- `lib/source.ts`
+- `scripts/preload.ts`
+- `content/docs/meta.json` + 4 grupos com `meta.json` + 13 stubs MDX
 
-> O config do Mintlify agora usa `docs.json` (não `mint.json`).
-> `apps/docs` não tem `package.json` — Mintlify é serviço externo com integração GitHub.
+> `apps/docs` tem `package.json` — é um projeto Vite + React reconhecido pelo workspace Bun.
+> Sem Next.js — o runtime é Vite + React com `fumadocs-ui`.
 
-- [ ] **Step 1: Instalar Mintlify CLI globalmente**
-
-```bash
-bun add -g mint
-```
-
-- [ ] **Step 2: Criar projeto Mintlify**
-
-Da raiz do repositório:
+- [ ] **Step 1: Criar apps/docs e package.json**
 
 ```bash
-mint new apps/docs
+mkdir -p apps/docs
 ```
 
-Expected: clona o starter kit do Mintlify em `apps/docs/` com `docs.json` e páginas de exemplo.
-
-- [ ] **Step 3: Limpar arquivos de exemplo do starter**
-
-```bash
-cd apps/docs
-# Remover todo conteúdo MDX de exemplo (manter apenas docs.json)
-find . -name "*.mdx" -not -path "./.git/*" -delete
-find . -name "*.png" -not -path "./.git/*" -delete 2>/dev/null || true
-find . -name "*.svg" -not -path "./.git/*" -delete 2>/dev/null || true
-```
-
-- [ ] **Step 4: Substituir docs.json pela configuração definitiva**
-
+`apps/docs/package.json`:
 ```json
 {
-  "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "pr-tools",
-  "colors": {
-    "primary": "#7c3aed",
-    "light": "#a78bfa",
-    "dark": "#5b21b6"
+  "name": "@pr-tools/docs",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
   },
-  "topbarLinks": [
-    {
-      "name": "GitHub",
-      "url": "https://github.com/nitoba/pr-tools"
-    }
-  ],
-  "topbarCtaButton": {
-    "name": "Instalar",
-    "url": "https://pr-tools.dev"
+  "dependencies": {
+    "fumadocs-core": "latest",
+    "fumadocs-ui": "latest",
+    "fumadocs-mdx": "latest",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
   },
-  "navigation": [
-    {
-      "group": "Primeiros passos",
-      "pages": [
-        "getting-started/introduction",
-        "getting-started/installation",
-        "getting-started/quickstart",
-        "getting-started/configuration"
-      ]
-    },
-    {
-      "group": "Comandos",
-      "pages": [
-        "commands/create-pr-description",
-        "commands/create-test-card"
-      ]
-    },
-    {
-      "group": "Guias",
-      "pages": [
-        "guides/azure-devops",
-        "guides/ai-providers",
-        "guides/markdown-rendering",
-        "guides/advanced-examples"
-      ]
-    },
-    {
-      "group": "Referência",
-      "pages": [
-        "reference/environment-variables",
-        "reference/troubleshooting",
-        "reference/changelog"
-      ]
-    }
-  ],
-  "footerSocials": {
-    "github": "https://github.com/nitoba/pr-tools"
+  "devDependencies": {
+    "@types/mdx": "latest",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "latest",
+    "typescript": "^5.0.0",
+    "vite": "latest"
   }
 }
 ```
 
-- [ ] **Step 5: Criar stubs de Primeiros passos**
+- [ ] **Step 2: Instalar dependências**
 
 ```bash
-mkdir -p getting-started
+cd apps/docs && bun install
 ```
 
-`getting-started/introduction.mdx`:
+Expected: resolve e instala todas as deps sem erros.
+
+```bash
+cd ../..
+```
+
+- [ ] **Step 3: Criar source.config.ts**
+
+`apps/docs/source.config.ts`:
+```ts
+import { defineDocs } from 'fumadocs-mdx/config';
+
+export const docs = defineDocs({
+  dir: 'content/docs',
+});
+```
+
+- [ ] **Step 4: Criar vite.config.ts**
+
+`apps/docs/vite.config.ts`:
+```ts
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+import mdx from 'fumadocs-mdx/vite';
+import * as MdxConfig from './source.config';
+
+export default defineConfig({
+  plugins: [mdx(MdxConfig), react()],
+});
+```
+
+- [ ] **Step 5: Criar tsconfig.json**
+
+`apps/docs/tsconfig.json`:
+```json
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "useDefineForClassFields": true,
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "isolatedModules": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "strict": true,
+    "paths": {
+      "collections/*": ["./.source/*"]
+    }
+  },
+  "include": ["src", "lib", "scripts", "source.config.ts"]
+}
+```
+
+- [ ] **Step 6: Criar lib/source.ts**
+
+```bash
+mkdir -p apps/docs/lib
+```
+
+`apps/docs/lib/source.ts`:
+```ts
+import { docs } from 'collections/server';
+import { loader } from 'fumadocs-core/source';
+
+export const source = loader({
+  baseUrl: '/docs',
+  source: docs.toFumadocsSource(),
+});
+```
+
+- [ ] **Step 7: Criar Bun preload para MDX**
+
+```bash
+mkdir -p apps/docs/scripts
+```
+
+`apps/docs/scripts/preload.ts`:
+```ts
+import { createMdxPlugin } from 'fumadocs-mdx/bun';
+
+Bun.plugin(createMdxPlugin());
+```
+
+Adicionar ao `apps/docs/package.json` o campo bunfig (ou criar `apps/docs/bunfig.toml`):
+
+`apps/docs/bunfig.toml`:
+```toml
+preload = ["./scripts/preload.ts"]
+```
+
+- [ ] **Step 8: Criar index.html e src/main.tsx mínimos**
+
+`apps/docs/index.html`:
+```html
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>pr-tools docs</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+```
+
+```bash
+mkdir -p apps/docs/src
+```
+
+`apps/docs/src/main.tsx`:
+```tsx
+import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
+
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <p>pr-tools docs — em construção</p>
+  </StrictMode>,
+);
+```
+
+- [ ] **Step 9: Verificar que Vite sobe sem erros de configuração**
+
+```bash
+cd apps/docs && bun run build 2>&1 | tail -20
+cd ../..
+```
+
+Expected: build completa sem erros fatais. (Avisos sobre `.source` não gerado são esperados neste momento.)
+
+- [ ] **Step 10: Criar meta.json raiz**
+
+```bash
+mkdir -p apps/docs/content/docs
+```
+
+`apps/docs/content/docs/meta.json`:
+```json
+{
+  "title": "pr-tools",
+  "pages": [
+    "getting-started",
+    "commands",
+    "guides",
+    "reference"
+  ]
+}
+```
+
+- [ ] **Step 11: Criar stubs de Primeiros passos**
+
+```bash
+mkdir -p apps/docs/content/docs/getting-started
+```
+
+`apps/docs/content/docs/getting-started/meta.json`:
+```json
+{
+  "title": "Primeiros passos",
+  "pages": ["introduction", "installation", "quickstart", "configuration"]
+}
+```
+
+`apps/docs/content/docs/getting-started/introduction.mdx`:
 ```mdx
 ---
-title: "Introdução"
-description: "O que é o pr-tools e para quem é indicado"
+title: Introdução
+description: O que é o pr-tools e para quem é indicado
 ---
 
 # Introdução
@@ -582,11 +705,11 @@ description: "O que é o pr-tools e para quem é indicado"
 Conteúdo em breve.
 ```
 
-`getting-started/installation.mdx`:
+`apps/docs/content/docs/getting-started/installation.mdx`:
 ```mdx
 ---
-title: "Instalação"
-description: "Como instalar o pr-tools em macOS, Linux e Windows WSL"
+title: Instalação
+description: Como instalar o pr-tools em macOS, Linux e Windows WSL
 ---
 
 # Instalação
@@ -594,11 +717,11 @@ description: "Como instalar o pr-tools em macOS, Linux e Windows WSL"
 Conteúdo em breve.
 ```
 
-`getting-started/quickstart.mdx`:
+`apps/docs/content/docs/getting-started/quickstart.mdx`:
 ```mdx
 ---
-title: "Quickstart"
-description: "Gere seu primeiro PR em menos de 5 minutos"
+title: Quickstart
+description: Gere seu primeiro PR em menos de 5 minutos
 ---
 
 # Quickstart
@@ -606,11 +729,11 @@ description: "Gere seu primeiro PR em menos de 5 minutos"
 Conteúdo em breve.
 ```
 
-`getting-started/configuration.mdx`:
+`apps/docs/content/docs/getting-started/configuration.mdx`:
 ```mdx
 ---
-title: "Configuração"
-description: "Como configurar API keys, providers e defaults"
+title: Configuração
+description: Como configurar API keys, providers e defaults
 ---
 
 # Configuração
@@ -618,17 +741,25 @@ description: "Como configurar API keys, providers e defaults"
 Conteúdo em breve.
 ```
 
-- [ ] **Step 6: Criar stubs de Comandos**
+- [ ] **Step 12: Criar stubs de Comandos**
 
 ```bash
-mkdir -p commands
+mkdir -p apps/docs/content/docs/commands
 ```
 
-`commands/create-pr-description.mdx`:
+`apps/docs/content/docs/commands/meta.json`:
+```json
+{
+  "title": "Comandos",
+  "pages": ["create-pr-description", "create-test-card"]
+}
+```
+
+`apps/docs/content/docs/commands/create-pr-description.mdx`:
 ```mdx
 ---
-title: "create-pr-description"
-description: "Gera descrições de PR via LLM a partir do git diff"
+title: create-pr-description
+description: Gera descrições de PR via LLM a partir do git diff
 ---
 
 # create-pr-description
@@ -636,11 +767,11 @@ description: "Gera descrições de PR via LLM a partir do git diff"
 Conteúdo em breve.
 ```
 
-`commands/create-test-card.mdx`:
+`apps/docs/content/docs/commands/create-test-card.mdx`:
 ```mdx
 ---
-title: "create-test-card"
-description: "Gera cards de teste a partir de PR e Work Item do Azure DevOps"
+title: create-test-card
+description: Gera cards de teste a partir de PR e Work Item do Azure DevOps
 ---
 
 # create-test-card
@@ -648,17 +779,25 @@ description: "Gera cards de teste a partir de PR e Work Item do Azure DevOps"
 Conteúdo em breve.
 ```
 
-- [ ] **Step 7: Criar stubs de Guias**
+- [ ] **Step 13: Criar stubs de Guias**
 
 ```bash
-mkdir -p guides
+mkdir -p apps/docs/content/docs/guides
 ```
 
-`guides/azure-devops.mdx`:
+`apps/docs/content/docs/guides/meta.json`:
+```json
+{
+  "title": "Guias",
+  "pages": ["azure-devops", "ai-providers", "markdown-rendering", "advanced-examples"]
+}
+```
+
+`apps/docs/content/docs/guides/azure-devops.mdx`:
 ```mdx
 ---
-title: "Configurando o Azure DevOps"
-description: "Como configurar o PAT e as permissões necessárias"
+title: Configurando o Azure DevOps
+description: Como configurar o PAT e as permissões necessárias
 ---
 
 # Configurando o Azure DevOps
@@ -666,11 +805,11 @@ description: "Como configurar o PAT e as permissões necessárias"
 Conteúdo em breve.
 ```
 
-`guides/ai-providers.mdx`:
+`apps/docs/content/docs/guides/ai-providers.mdx`:
 ```mdx
 ---
-title: "Escolhendo providers de IA"
-description: "Comparação entre OpenRouter, Groq e Google Gemini"
+title: Escolhendo providers de IA
+description: Comparação entre OpenRouter, Groq e Google Gemini
 ---
 
 # Escolhendo providers de IA
@@ -678,11 +817,11 @@ description: "Comparação entre OpenRouter, Groq e Google Gemini"
 Conteúdo em breve.
 ```
 
-`guides/markdown-rendering.mdx`:
+`apps/docs/content/docs/guides/markdown-rendering.mdx`:
 ```mdx
 ---
-title: "Renderizando Markdown no terminal"
-description: "Como usar glow, bat ou texto puro para visualizar a saída"
+title: Renderizando Markdown no terminal
+description: Como usar glow, bat ou texto puro para visualizar a saída
 ---
 
 # Renderizando Markdown no terminal
@@ -690,11 +829,11 @@ description: "Como usar glow, bat ou texto puro para visualizar a saída"
 Conteúdo em breve.
 ```
 
-`guides/advanced-examples.mdx`:
+`apps/docs/content/docs/guides/advanced-examples.mdx`:
 ```mdx
 ---
-title: "Exemplos avançados"
-description: "Casos de uso avançados com flags e variáveis de ambiente"
+title: Exemplos avançados
+description: Casos de uso avançados com flags e variáveis de ambiente
 ---
 
 # Exemplos avançados
@@ -702,17 +841,25 @@ description: "Casos de uso avançados com flags e variáveis de ambiente"
 Conteúdo em breve.
 ```
 
-- [ ] **Step 8: Criar stubs de Referência**
+- [ ] **Step 14: Criar stubs de Referência**
 
 ```bash
-mkdir -p reference
+mkdir -p apps/docs/content/docs/reference
 ```
 
-`reference/environment-variables.mdx`:
+`apps/docs/content/docs/reference/meta.json`:
+```json
+{
+  "title": "Referência",
+  "pages": ["environment-variables", "troubleshooting", "changelog"]
+}
+```
+
+`apps/docs/content/docs/reference/environment-variables.mdx`:
 ```mdx
 ---
-title: "Variáveis de ambiente"
-description: "Referência completa de todas as variáveis configuráveis"
+title: Variáveis de ambiente
+description: Referência completa de todas as variáveis configuráveis
 ---
 
 # Variáveis de ambiente
@@ -720,11 +867,11 @@ description: "Referência completa de todas as variáveis configuráveis"
 Conteúdo em breve.
 ```
 
-`reference/troubleshooting.mdx`:
+`apps/docs/content/docs/reference/troubleshooting.mdx`:
 ```mdx
 ---
-title: "Troubleshooting"
-description: "Soluções para problemas comuns"
+title: Troubleshooting
+description: Soluções para problemas comuns
 ---
 
 # Troubleshooting
@@ -732,11 +879,11 @@ description: "Soluções para problemas comuns"
 Conteúdo em breve.
 ```
 
-`reference/changelog.mdx`:
+`apps/docs/content/docs/reference/changelog.mdx`:
 ```mdx
 ---
-title: "Changelog"
-description: "Histórico de versões do pr-tools"
+title: Changelog
+description: Histórico de versões do pr-tools
 ---
 
 # Changelog
@@ -744,20 +891,11 @@ description: "Histórico de versões do pr-tools"
 Conteúdo em breve.
 ```
 
-- [ ] **Step 9: Verificar preview local**
+- [ ] **Step 15: Commit**
 
 ```bash
-mint dev
-```
-
-Expected: servidor Mintlify sobe em `http://localhost:3000` com a navegação definida e 13 páginas stub acessíveis.
-
-- [ ] **Step 10: Commit**
-
-```bash
-cd ../..
 git add apps/docs/
-git commit -m "feat: scaffold apps/docs with Mintlify and MDX stubs"
+git commit -m "feat: scaffold apps/docs with Fumadocs Vite and MDX stubs"
 ```
 
 ---
@@ -800,14 +938,14 @@ Expected: sem erros de sintaxe.
 - [ ] **Step 5: Verificar estrutura final**
 
 ```bash
-find apps -maxdepth 2 -name "package.json" -o -name "docs.json" | sort
+find apps -maxdepth 2 -name "package.json" | sort
 ```
 
 Expected:
 ```
 apps/cli/package.json
+apps/docs/package.json
 apps/www/package.json
-apps/docs/docs.json
 ```
 
 - [ ] **Step 6: Commit de encerramento**

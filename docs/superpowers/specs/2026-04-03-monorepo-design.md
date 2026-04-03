@@ -145,56 +145,83 @@ Ambos se aplicam aos arquivos `.ts`, `.tsx`, `.astro` e `.js` dentro de `apps/` 
 
 ---
 
-## apps/docs — Scaffold (Mintlify)
+## apps/docs — Scaffold (Fumadocs + Vite)
 
-`apps/docs` contém apenas `mint.json` e arquivos `.mdx` stub. Sem `package.json` — Mintlify é serviço externo com integração GitHub nativa apontando para `apps/docs/` como root.
+`apps/docs` é um projeto Vite + React com Fumadocs, scaffoldado manualmente. Tem `package.json` próprio reconhecido pelo workspace Bun.
 
-### mint.json — navegação definida nesta fase
+### Stack
 
-```json
-{
-  "name": "pr-tools",
-  "colors": { "primary": "#7c3aed" },
-  "navigation": [
-    {
-      "group": "Primeiros passos",
-      "pages": [
-        "getting-started/introduction",
-        "getting-started/installation",
-        "getting-started/quickstart",
-        "getting-started/configuration"
-      ]
-    },
-    {
-      "group": "Comandos",
-      "pages": [
-        "commands/create-pr-description",
-        "commands/create-test-card"
-      ]
-    },
-    {
-      "group": "Guias",
-      "pages": [
-        "guides/azure-devops",
-        "guides/ai-providers",
-        "guides/markdown-rendering",
-        "guides/advanced-examples"
-      ]
-    },
-    {
-      "group": "Referência",
-      "pages": [
-        "reference/environment-variables",
-        "reference/troubleshooting",
-        "reference/changelog"
-      ]
-    }
-  ]
-}
+- **Fumadocs** — framework de documentação baseado em React
+- **fumadocs-mdx** — processador de MDX; integração via plugin Vite (`fumadocs-mdx/vite`)
+- **fumadocs-core** — navegação e source loader
+- **fumadocs-ui** — componentes React (sidebar, layout, breadcrumb)
+- **Vite + React** — runtime e build tool (sem Next.js)
+- **Bun** — runtime para scripts; preload via `fumadocs-mdx/bun`
+
+### Configurações-chave
+
+**source.config.ts** — define onde ficam os docs:
+```ts
+import { defineDocs } from 'fumadocs-mdx/config';
+
+export const docs = defineDocs({
+  dir: 'content/docs',
+});
 ```
 
-### Stubs MDX
-Cada página tem apenas o frontmatter com título, descrição e um `# Título` — suficiente para o Mintlify renderizar sem erro.
+**vite.config.ts** — plugin MDX:
+```ts
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+import mdx from 'fumadocs-mdx/vite';
+import * as MdxConfig from './source.config';
+
+export default defineConfig({
+  plugins: [mdx(MdxConfig), react()],
+});
+```
+
+**tsconfig.json** — alias para pasta `.source` gerada:
+```json
+{ "compilerOptions": { "paths": { "collections/*": ["./.source/*"] } } }
+```
+
+**lib/source.ts** — loader Fumadocs:
+```ts
+import { docs } from 'collections/server';
+import { loader } from 'fumadocs-core/source';
+
+export const source = loader({
+  baseUrl: '/docs',
+  source: docs.toFumadocsSource(),
+});
+```
+
+**Bun preload** (para runtime MDX):
+- `bunfig.toml`: `preload = ["./scripts/preload.ts"]`
+- `scripts/preload.ts`: `Bun.plugin(createMdxPlugin())` via `fumadocs-mdx/bun`
+
+### Estrutura de conteúdo
+
+```
+apps/docs/
+├── content/
+│   └── docs/                ← arquivos MDX aqui
+│       ├── meta.json        ← ordem dos grupos
+│       ├── getting-started/ ← meta.json + 4 stubs
+│       ├── commands/        ← meta.json + 2 stubs
+│       ├── guides/          ← meta.json + 4 stubs
+│       └── reference/       ← meta.json + 3 stubs
+├── lib/source.ts
+├── scripts/preload.ts
+├── source.config.ts
+├── vite.config.ts
+└── package.json
+```
+
+### Navegação via meta.json
+
+A navegação é definida por `meta.json` em cada diretório de conteúdo. Cada arquivo stub tem apenas frontmatter com `title` e `description` — suficiente para o Fumadocs renderizar sem erro.
 
 ---
 
