@@ -1,7 +1,6 @@
 {
   "compilerOptions": {
     "target": "ES2020",
-    "useDefineForClassFields": true,
     "lib": ["ES2020", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "skipLibCheck": true,
@@ -13,8 +12,9 @@
     "jsx": "react-jsx",
     "strict": true,
     "paths": {
-      "collections/*": ["./.source/*"]
+      "collections/*": ["./.source/*"],
+      "@/*": ["./app/*"]
     }
   },
-  "include": ["app", "lib", "scripts", "source.config.ts", "next.config.ts"]
+  "include": ["app", "lib", "scripts", "source.config.ts", "vite.config.ts"]
 }
