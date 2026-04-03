@@ -196,6 +196,12 @@ call_with_fallback() {
           return 0
         fi
         ;;
+      ollama)
+        [[ -n "${OLLAMA_API_KEY:-}" ]] || continue
+        if call_openai_provider "ollama" "https://ollama.com/v1/chat/completions" "$OLLAMA_API_KEY" "$OLLAMA_MODEL" "$user_prompt"; then
+          return 0
+        fi
+        ;;
     esac
   done
 
