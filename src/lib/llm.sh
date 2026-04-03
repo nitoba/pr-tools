@@ -39,6 +39,12 @@ get_provider_config() {
       PROVIDER_MODEL="${GEMINI_MODEL:-$DEFAULT_GEMINI_MODEL}"
       PROVIDER_NAME="gemini"
       ;;
+    ollama)
+      PROVIDER_URL="https://ollama.com/v1/chat/completions"
+      PROVIDER_KEY="${OLLAMA_API_KEY:-}"
+      PROVIDER_MODEL="${OLLAMA_MODEL}"
+      PROVIDER_NAME="ollama"
+      ;;
     *)
       log_warn "Provider desconhecido: $provider"
       PROVIDER_KEY=""
