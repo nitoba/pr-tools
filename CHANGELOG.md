@@ -5,7 +5,47 @@
 
 ### Bug Fixes
 
+- Include OLLAMA_API_KEY in validate_api_keys and validate_provider_keys (`df04b6d`)
+
+
+### Chores
+
+- Bump VERSION file to v2.9.4 (`d020ff6`)
+
+- Bump version to v2.9.3 (`93bdef5`)
+
+
+### Documentation
+
+- Add Ollama Cloud provider implementation plan (`d9f58c5`)
+
+- Add Ollama Cloud provider design spec (`e88dbce`)
+
+
+### Features
+
+- Add ollama provider support to create-test-card config (`a5003ac`)
+
+- Add ollama provider support to create-pr-description wizard and config (`f69aac8`)
+
+- Add ollama case to call_with_fallback in test-card-llm.sh (`78671ed`)
+
+- Add ollama case to get_provider_config in llm.sh (`9b69bd4`)
+
+- Add ollama to test_provider_key and load_config in common.sh (`9d6fa25`)
+
+
+## 2.9.2 — 2026-04-03
+
+
+### Bug Fixes
+
 - Package release assets into a single zip archive (`c574fdd`)
+
+
+### Chores
+
+- Bump version to v2.9.2 (`1ef8ace`)
 
 
 ## 2.9.1 — 2026-04-03
