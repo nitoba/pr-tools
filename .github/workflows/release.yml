@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
   workflow_dispatch:
 
 permissions:
@@ -39,10 +39,10 @@ jobs:
           DIST_DIR="pr-tools-$TAG"
           mkdir -p "$DIST_DIR/bin" "$DIST_DIR/lib"
 
-          cp install.sh "$DIST_DIR/"
-          cp src/bin/create-pr-description "$DIST_DIR/bin/"
-          cp src/bin/create-test-card "$DIST_DIR/bin/"
-          cp src/lib/*.sh "$DIST_DIR/lib/"
+          cp apps/cli/install.sh "$DIST_DIR/"
+          cp apps/cli/src/bin/create-pr-description "$DIST_DIR/bin/"
+          cp apps/cli/src/bin/create-test-card "$DIST_DIR/bin/"
+          cp apps/cli/src/lib/*.sh "$DIST_DIR/lib/"
 
           zip -r "$DIST_DIR.zip" "$DIST_DIR"
           echo "DIST_FILE=$DIST_DIR.zip" >> "$GITHUB_ENV"

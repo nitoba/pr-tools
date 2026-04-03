@@ -1,0 +1,26 @@
+{
+  "name": "@pr-tools/docs",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "fumadocs-core": "^16.7.10",
+    "fumadocs-ui": "^16.7.10",
+    "fumadocs-mdx": "^14.2.11",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/mdx": "^2.0.13",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "typescript": "^5.9.3",
+    "vite": "^8.0.3"
+  }
+}
