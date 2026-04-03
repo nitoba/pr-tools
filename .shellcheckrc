@@ -1,0 +1,20 @@
+# ShellCheck configuration for pr-tools
+# https://github.com/koalaman/shellcheck/wiki/RC
+
+# SC2034: Variables appear unused — many are globals shared across sourced libs
+disable=SC2034
+
+# SC1090/SC1091: Can't follow dynamic source paths (e.g. source "$LIB_DIR/common.sh")
+disable=SC1090,SC1091
+
+# SC2188: Redirection without command (e.g. > "$tmpfile" to truncate) — intentional pattern
+disable=SC2188
+
+# SC2002: Useless cat — stylistic, existing codebase uses this pattern
+disable=SC2002
+
+# SC2153: Possible misspelling of variable names — globals shared across libs
+disable=SC2153
+
+# SC2319: $? refers to condition — existing UI pattern
+disable=SC2319

@@ -715,7 +715,7 @@ collect_git_context() {
   local max_diff_lines=8000
   local diff_tmp
   diff_tmp=$(mktemp)
-  trap "rm -f '$diff_tmp'" EXIT
+  trap 'rm -f "$diff_tmp"' EXIT
 
   local diff_ok=false
 
