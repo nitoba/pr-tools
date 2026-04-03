@@ -5,7 +5,20 @@
 
 ### Bug Fixes
 
+- Add workflow_dispatch trigger to release workflow (`eb49f0f`)
+
+
+## 2.9.7 — 2026-04-03
+
+
+### Bug Fixes
+
 - Explicitly trigger Release workflow after auto-tag creation (`eef62f0`)
+
+
+### Chores
+
+- Bump version to v2.9.7 (`77c8cf9`)
 
 
 ## 2.9.6 — 2026-04-03
