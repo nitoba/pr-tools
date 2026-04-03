@@ -10,13 +10,14 @@
     "start": "node .output/server/index.mjs"
   },
   "dependencies": {
+    "@tanstack/react-router": "latest",
+    "@tanstack/react-start": "latest",
     "fumadocs-core": "^16.7.10",
-    "fumadocs-ui": "^16.7.10",
     "fumadocs-mdx": "^14.2.11",
+    "fumadocs-ui": "^16.7.10",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "@tanstack/react-start": "latest",
-    "@tanstack/react-router": "latest"
+    "tailwindcss": "^4.2.2"
   },
   "devDependencies": {
     "@types/mdx": "^2.0.13",

@@ -4,30 +4,30 @@ import {
   Scripts,
   createRootRoute,
 } from '@tanstack/react-router';
+import * as React from 'react';
 import { RootProvider } from 'fumadocs-ui/provider/tanstack';
-import 'fumadocs-ui/style.css';
+import '../styles/app.css';
 
 export const Route = createRootRoute({
   component: RootComponent,
-  head: () => ({
-    meta: [
-      { charSet: 'utf-8' },
-      { name: 'viewport', content: 'width=device-width, initial-scale=1' },
-      { title: 'pr-tools docs' },
-    ],
-  }),
 });
 
 function RootComponent() {
+  return (
+    <RootDocument>
+      <Outlet />
+    </RootDocument>
+  );
+}
+
+function RootDocument({ children }: { children: React.ReactNode }) {
   return (
     <html suppressHydrationWarning>
       <head>
         <HeadContent />
       </head>
       <body className="flex flex-col min-h-screen">
-        <RootProvider>
-          <Outlet />
-        </RootProvider>
+        <RootProvider>{children}</RootProvider>
         <Scripts />
       </body>
     </html>
