@@ -316,24 +316,16 @@ MIT
 ./release.sh 2.9.1
 ```
 
-O script faz tudo automaticamente:
+O script faz:
 1. Valida a versao (SemVer), branch e estado do repositorio
 2. Atualiza `VERSION` e versoes hardcoded nos scripts
 3. Regenera `CHANGELOG.md` com git-cliff
-4. Commit, tag e push para origin
+4. Cria branch `release/2.9.1` com commit
+5. Push e abre PR para `main`
 
-**Manualmente:**
-
-1. Atualize o arquivo `VERSION` na raiz do projeto
-2. Atualize o `VERSION` hardcoded nos scripts `src/bin/*`
-3. Commit: `chore: bump version to vX.Y.Z`
-4. Crie a tag: `git tag vX.Y.Z`
-5. Push: `git push origin main --tags`
-
-O workflow de release irá automaticamente:
-- Gerar o changelog com git-cliff
-- Criar um GitHub Release com o changelog
-- Fazer upload dos scripts como assets
+**Apos o merge do PR:**
+- O workflow `auto-tag.yml` cria a tag `v2.9.1` automaticamente
+- O workflow `release.yml` cria o GitHub Release com changelog e assets
 
 ### Versionamento Semântico
 
