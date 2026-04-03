@@ -32,18 +32,23 @@ jobs:
           cat changelog.md >> "$GITHUB_OUTPUT"
           echo "CHANGELOG_EOF" >> "$GITHUB_OUTPUT"
 
+      - name: Package release assets
+        run: |
+          TAG=${GITHUB_REF#refs/tags/}
+          DIST_DIR="pr-tools-$TAG"
+          mkdir -p "$DIST_DIR/bin" "$DIST_DIR/lib"
+
+          cp install.sh "$DIST_DIR/"
+          cp src/bin/create-pr-description "$DIST_DIR/bin/"
+          cp src/bin/create-test-card "$DIST_DIR/bin/"
+          cp src/lib/*.sh "$DIST_DIR/lib/"
+
+          zip -r "$DIST_DIR.zip" "$DIST_DIR"
+          echo "DIST_FILE=$DIST_DIR.zip" >> "$GITHUB_ENV"
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           body: ${{ steps.changelog.outputs.changelog }}
           prerelease: ${{ contains(github.ref_name, '-') }}
-          files: |
-            install.sh
-            src/bin/create-pr-description
-            src/bin/create-test-card
-            src/lib/common.sh
-            src/lib/llm.sh
-            src/lib/azure.sh
-            src/lib/test-card-azure.sh
-            src/lib/test-card-llm.sh
-            src/lib/ui.sh
+          files: ${{ env.DIST_FILE }}
