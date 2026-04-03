@@ -1,10 +1,11 @@
- WARN  git_cliff_core::changelog > 16 commit(s) were skipped due to parse error(s) (run with `-vv` for details)
 # Changelog
 
 ## Unreleased
 
 
 ### Bug Fixes
+
+- Add .shellcheckrc and fix SC2064 trap quoting (`8e535a5`)
 
 - Prevent subshells from killing parent's spinner process (`165ec64`)
 
@@ -80,6 +81,8 @@
 
 ### Chores
 
+- Localize release script messages to Portuguese with accents (`7d0dde2`)
+
 - Add VERSION file as single source of truth (`c871bcb`)
 
 - Add git-cliff configuration for conventional commits (`171eabc`)
@@ -111,6 +114,10 @@
 
 ### Documentation
 
+- Document versioned installation and release process (`92196d9`)
+
+- Generate initial changelog from git history (`f31b4ed`)
+
 - Fix Portuguese spelling and markdown table formatting (`00fd2d4`)
 
 - Add spinner UI implementation plan (`9e5655d`)
@@ -125,6 +132,12 @@
 
 
 ### Features
+
+- Add automated release script and deployment documentation (`baa7c48`)
+
+- Read version from VERSION file with hardcoded fallback (`8e9362c`)
+
+- Support installing from specific versions via INSTALL_VERSION env var (`7168662`)
 
 - Apply consistent UI style to post-generation output sections (`3628429`)
 
