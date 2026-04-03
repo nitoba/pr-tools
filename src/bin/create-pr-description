@@ -56,10 +56,11 @@ done
 source "$LIB_DIR/ui.sh"
 
 # Default provider config
-DEFAULT_PROVIDERS="openrouter,groq,gemini"
+DEFAULT_PROVIDERS="openrouter,groq,gemini,ollama"
 DEFAULT_OPENROUTER_MODEL="meta-llama/llama-3.3-70b-instruct:free"
 DEFAULT_GROQ_MODEL="llama-3.3-70b-versatile"
 DEFAULT_GEMINI_MODEL="gemini-3.1-flash-lite-preview"
+DEFAULT_OLLAMA_MODEL="qwen3.5:cloud"
 
 # Global state
 BRANCH_NAME=""
@@ -138,10 +139,12 @@ PR_PROVIDERS="openrouter,groq"
 # API Keys (descomente e preencha)
 # OPENROUTER_API_KEY="sk-or-..."
 # GROQ_API_KEY="gsk_..."
+# OLLAMA_API_KEY="oa-..."
 
 # Modelos (opcional - usa padrao gratuito se não definir)
 # OPENROUTER_MODEL="meta-llama/llama-3.3-70b-instruct:free"
 # GROQ_MODEL="llama-3.3-70b-versatile"
+# OLLAMA_MODEL="qwen3.5:cloud"
 
 # Streaming (exibe tokens em tempo real; padrao: false)
 PR_STREAM="false"
@@ -172,6 +175,7 @@ Opcoes:
   --set-openrouter-model <modelo>     Salva modelo do OpenRouter no .env
   --set-groq-model <modelo>           Salva modelo do Groq no .env
   --set-gemini-model <modelo>         Salva modelo do Google Gemini no .env
+  --set-ollama-model <modelo>         Salva modelo do Ollama no .env
   --dry-run                           Mostra o prompt sem chamar a LLM
   --raw                               Exibe a descrição sem renderizacao Markdown (texto puro)
   --no-stream                          Desabilita streaming (exibe resposta apenas ao final)
@@ -251,6 +255,15 @@ parse_args() {
         log_success "Modelo Gemini salvo: $2"
         exit 0
         ;;
+      --set-ollama-model)
+        if [[ -z "${2:-}" ]]; then
+          log_error "Flag --set-ollama-model requer o nome do modelo."
+          exit 1
+        fi
+        set_env_var "OLLAMA_MODEL" "$2"
+        log_success "Modelo Ollama salvo: $2"
+        exit 0
+        ;;
       --dry-run)
         DRY_RUN=true
         shift
@@ -314,6 +327,7 @@ run_setup_wizard() {
   local existing_openrouter_key=""
   local existing_groq_key=""
   local existing_gemini_key=""
+  local existing_ollama_key=""
   local existing_openrouter_model=""
   local existing_groq_model=""
   local existing_gemini_model=""
@@ -337,6 +351,7 @@ run_setup_wizard() {
         OPENROUTER_API_KEY)   existing_openrouter_key="$value" ;;
         GROQ_API_KEY)         existing_groq_key="$value" ;;
         GEMINI_API_KEY)       existing_gemini_key="$value" ;;
+        OLLAMA_API_KEY)       existing_ollama_key="$value" ;;
         OPENROUTER_MODEL)     existing_openrouter_model="$value" ;;
         GROQ_MODEL)           existing_groq_model="$value" ;;
         GEMINI_MODEL)         existing_gemini_model="$value" ;;
@@ -352,17 +367,19 @@ run_setup_wizard() {
   local needs_openrouter=false
   local needs_groq=false
   local needs_gemini=false
+  local needs_ollama=false
   local needs_pat=false
   local needs_reviewers=false
   local changed=false
 
   # Detect what's missing
-  if [[ -z "$existing_openrouter_key" && -z "$existing_groq_key" && -z "$existing_gemini_key" ]]; then
+  if [[ -z "$existing_openrouter_key" && -z "$existing_groq_key" && -z "$existing_gemini_key" && -z "$existing_ollama_key" ]]; then
     needs_providers=true
   fi
   if [[ -z "$existing_openrouter_key" ]]; then needs_openrouter=true; fi
   if [[ -z "$existing_groq_key" ]]; then needs_groq=true; fi
   if [[ -z "$existing_gemini_key" ]]; then needs_gemini=true; fi
+  if [[ -z "$existing_ollama_key" ]]; then needs_ollama=true; fi
   if [[ -z "$existing_azure_pat" ]]; then needs_pat=true; fi
   if [[ -z "$existing_reviewer_dev" || -z "$existing_reviewer_sprint" ]]; then needs_reviewers=true; fi
 
@@ -373,10 +390,12 @@ run_setup_wizard() {
     local masked_or="${existing_openrouter_key:0:4}...${existing_openrouter_key: -4}"
     local masked_groq="${existing_groq_key:0:4}...${existing_groq_key: -4}"
     local masked_gemini="${existing_gemini_key:0:4}...${existing_gemini_key: -4}"
+    local masked_ollama="${existing_ollama_key:0:4}...${existing_ollama_key: -4}"
     local masked_pat="${existing_azure_pat:0:4}...${existing_azure_pat: -4}"
     [[ -n "$existing_openrouter_key" ]] && echo -e "    OpenRouter API Key: ${CYAN}${masked_or}${NC}"
     [[ -n "$existing_groq_key" ]] && echo -e "    Groq API Key:       ${CYAN}${masked_groq}${NC}"
     [[ -n "$existing_gemini_key" ]] && echo -e "    Gemini API Key:     ${CYAN}${masked_gemini}${NC}"
+    [[ -n "$existing_ollama_key" ]] && echo -e "    Ollama API Key:     ${CYAN}${masked_ollama}${NC}"
     [[ -n "$existing_azure_pat" ]] && echo -e "    Azure PAT:          ${CYAN}${masked_pat}${NC}"
     [[ -n "$existing_reviewer_dev" ]] && echo -e "    Reviewer dev:       ${CYAN}${existing_reviewer_dev}${NC}"
     [[ -n "$existing_reviewer_sprint" ]] && echo -e "    Reviewer sprint:    ${CYAN}${existing_reviewer_sprint}${NC}"
@@ -397,7 +416,7 @@ run_setup_wizard() {
   fi
 
   # ---- LLM Providers (only if any is missing) ----
-  if [[ "$needs_openrouter" == "true" || "$needs_groq" == "true" || "$needs_gemini" == "true" ]]; then
+  if [[ "$needs_openrouter" == "true" || "$needs_groq" == "true" || "$needs_gemini" == "true" || "$needs_ollama" == "true" ]]; then
     echo -e "${BOLD}Providers de LLM${NC}"
     echo ""
 
@@ -405,7 +424,8 @@ run_setup_wizard() {
     [[ -n "$existing_openrouter_key" ]] && log_success "OpenRouter ja configurado"
     [[ -n "$existing_groq_key" ]] && log_success "Groq ja configurado"
     [[ -n "$existing_gemini_key" ]] && log_success "Google Gemini ja configurado"
-    [[ -n "$existing_openrouter_key" || -n "$existing_groq_key" || -n "$existing_gemini_key" ]] && echo ""
+    [[ -n "$existing_ollama_key" ]] && log_success "Ollama ja configurado"
+    [[ -n "$existing_openrouter_key" || -n "$existing_groq_key" || -n "$existing_gemini_key" || -n "$existing_ollama_key" ]] && echo ""
 
     if [[ "$needs_openrouter" == "true" ]]; then
       if prompt_yn "Configurar OpenRouter?" "y"; then
@@ -467,9 +487,29 @@ run_setup_wizard() {
       fi
     fi
 
+    if [[ "$needs_ollama" == "true" ]]; then
+      if prompt_yn "Configurar Ollama Cloud?" "y"; then
+        echo -e "  ${BOLD}Ollama Cloud${NC} - Crie uma key em: ${CYAN}https://ollama.com/settings/api-keys${NC}"
+        local new_ollama_key
+        new_ollama_key=$(prompt_value "API Key" "" "true")
+        if [[ -n "$new_ollama_key" ]]; then
+          echo -en "  Testando key... "
+          if test_provider_key "ollama" "$new_ollama_key"; then
+            echo -e "${GREEN}valida!${NC}"
+          else
+            echo -e "${RED}falhou${NC}"
+            log_warn "A key pode estar errada ou o servico esta fora. Salvando mesmo assim."
+          fi
+          set_env_var "OLLAMA_API_KEY" "$new_ollama_key"
+          changed=true
+        fi
+        echo ""
+      fi
+    fi
+
     # Update providers list if not set
     if [[ -z "$existing_providers" && "$changed" == "true" ]]; then
-      set_env_var "PR_PROVIDERS" "openrouter,groq,gemini"
+      set_env_var "PR_PROVIDERS" "openrouter,groq,gemini,ollama"
     fi
   else
     log_success "Providers de LLM ja configurados"
