@@ -217,6 +217,10 @@ test_provider_key() {
       [[ "$gemini_http_code" == "200" ]]
       return $?
       ;;
+    ollama)
+      url="https://ollama.com/v1/chat/completions"
+      model="${OLLAMA_MODEL:-${DEFAULT_OLLAMA_MODEL:-qwen3.5:cloud}}"
+      ;;
   esac
 
   local payload
@@ -315,6 +319,7 @@ load_config() {
   OPENROUTER_MODEL="${OPENROUTER_MODEL:-${DEFAULT_OPENROUTER_MODEL:-}}"
   GROQ_MODEL="${GROQ_MODEL:-${DEFAULT_GROQ_MODEL:-}}"
   GEMINI_MODEL="${GEMINI_MODEL:-${DEFAULT_GEMINI_MODEL:-}}"
+  OLLAMA_MODEL="${OLLAMA_MODEL:-${DEFAULT_OLLAMA_MODEL:-}}"
 
   # Support PR_STREAM env var for streaming mode (default: false)
   if [[ "${PR_STREAM:-}" == "true" ]]; then
