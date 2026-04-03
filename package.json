@@ -1,9 +1,20 @@
 {
   "name": "pr-tools",
   "private": true,
-  "workspaces": ["apps/*", "packages/*"],
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
+    "lint": "oxlint .",
+    "lint:check": "oxlint . --deny-warnings",
+    "format": "oxfmt .",
+    "format:check": "oxfmt --check .",
     "dev:www": "bun --filter @pr-tools/www dev",
     "build:www": "bun --filter @pr-tools/www build"
+  },
+  "devDependencies": {
+    "oxfmt": "^0.43.0",
+    "oxlint": "^1.58.0"
   }
 }
