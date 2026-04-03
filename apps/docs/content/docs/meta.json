@@ -1,9 +1,4 @@
 {
   "title": "pr-tools",
-  "pages": [
-    "getting-started",
-    "commands",
-    "guides",
-    "reference"
-  ]
+  "pages": ["getting-started", "commands", "guides", "reference"]
 }

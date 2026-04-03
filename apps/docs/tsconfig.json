@@ -16,5 +16,5 @@
       "collections/*": ["./.source/*"]
     }
   },
-  "include": ["src", "lib", "scripts", "source.config.ts"]
+  "include": ["app", "lib", "scripts", "source.config.ts", "next.config.ts"]
 }

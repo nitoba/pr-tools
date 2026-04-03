@@ -1,8 +1,5 @@
-import { postInstall } from 'fumadocs-mdx/vite';
+import { postInstall } from 'fumadocs-mdx/next'
 
 await postInstall({
   configPath: 'source.config.ts',
-  index: {
-    target: 'vite',
-  },
-});
+})

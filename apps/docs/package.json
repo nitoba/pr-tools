@@ -5,9 +5,9 @@
   "type": "module",
   "scripts": {
     "postinstall": "bun scripts/postinstall.ts",
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview"
+    "dev": "vinext dev",
+    "build": "vinext build",
+    "start": "vinext start"
   },
   "dependencies": {
     "fumadocs-core": "^16.7.10",
@@ -21,7 +21,10 @@
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.1",
+    "@vitejs/plugin-rsc": "^0.5.21",
+    "next": "^16.2.2",
     "typescript": "^5.9.3",
+    "vinext": "^0.0.39",
     "vite": "^8.0.3"
   }
 }
