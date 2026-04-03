@@ -11,7 +11,7 @@ set -euo pipefail
 # Read from VERSION file if available (when running from repo), fallback to hardcoded
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." 2>/dev/null && pwd)"
-VERSION="2.9.3"
+VERSION="2.9.4"
 if [[ -f "$REPO_ROOT/VERSION" ]]; then
   VERSION="$(tr -d '[:space:]' < "$REPO_ROOT/VERSION")"
 fi
@@ -682,6 +682,7 @@ validate_api_keys() {
   if [[ -n "${OPENROUTER_API_KEY:-}" ]]; then has_key=true; fi
   if [[ -n "${GROQ_API_KEY:-}" ]]; then has_key=true; fi
   if [[ -n "${GEMINI_API_KEY:-}" ]]; then has_key=true; fi
+  if [[ -n "${OLLAMA_API_KEY:-}" ]]; then has_key=true; fi
   if [[ "$has_key" == "false" ]]; then
     log_error "Nenhuma API key configurada."
     log_error "Execute 'create-pr-description --init' e configure o .env."

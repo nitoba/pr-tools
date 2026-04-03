@@ -11,7 +11,7 @@ set -euo pipefail
 # Read from VERSION file if available (when running from repo), fallback to hardcoded
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." 2>/dev/null && pwd)"
-VERSION="2.9.3"
+VERSION="2.9.4"
 if [[ -f "$REPO_ROOT/VERSION" ]]; then
   VERSION="$(tr -d '[:space:]' < "$REPO_ROOT/VERSION")"
 fi
@@ -389,7 +389,7 @@ validate_provider_keys() {
   if [[ "$DRY_RUN" == "true" ]]; then
     return
   fi
-  if [[ -z "${OPENROUTER_API_KEY:-}" && -z "${GROQ_API_KEY:-}" && -z "${GEMINI_API_KEY:-}" ]]; then
+  if [[ -z "${OPENROUTER_API_KEY:-}" && -z "${GROQ_API_KEY:-}" && -z "${GEMINI_API_KEY:-}" && -z "${OLLAMA_API_KEY:-}" ]]; then
     log_error "Nenhuma API key configurada. Execute 'create-test-card --init' ou ajuste $ENV_FILE."
     exit 1
   fi
