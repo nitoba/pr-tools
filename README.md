@@ -310,6 +310,20 @@ MIT
 
 ### Criar uma nova versão
 
+**Automaticamente (recomendado):**
+
+```bash
+./release.sh 2.9.1
+```
+
+O script faz tudo automaticamente:
+1. Valida a versao (SemVer), branch e estado do repositorio
+2. Atualiza `VERSION` e versoes hardcoded nos scripts
+3. Regenera `CHANGELOG.md` com git-cliff
+4. Commit, tag e push para origin
+
+**Manualmente:**
+
 1. Atualize o arquivo `VERSION` na raiz do projeto
 2. Atualize o `VERSION` hardcoded nos scripts `src/bin/*`
 3. Commit: `chore: bump version to vX.Y.Z`
