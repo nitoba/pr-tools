@@ -10,6 +10,7 @@
     "start": "node .output/server/index.mjs"
   },
   "dependencies": {
+    "@tailwindcss/vite": "^4.2.2",
     "@tanstack/react-router": "latest",
     "@tanstack/react-start": "latest",
     "fumadocs-core": "^16.7.10",
@@ -24,7 +25,6 @@
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "latest",
-    "postcss-import": "^16.1.1",
     "typescript": "^5.9.3",
     "vite": "latest"
   }

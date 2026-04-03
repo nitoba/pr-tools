@@ -1,3 +1,4 @@
+import tailwindcss from '@tailwindcss/vite'
 import { tanstackStart } from '@tanstack/react-start/plugin/vite'
 import viteReact from '@vitejs/plugin-react'
 import mdx from 'fumadocs-mdx/vite'
@@ -11,6 +12,7 @@ export default defineConfig({
   },
   plugins: [
     tanstackStart({ srcDirectory: 'app' }),
+    tailwindcss(),
     mdx(MdxConfig),
     viteReact(),
   ],
