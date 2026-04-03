@@ -5,4 +5,77 @@ description: Como instalar o pr-tools em macOS, Linux e Windows WSL
 
 # Instalação
 
-Conteúdo em breve.
+## Instalação rápida
+
+Execute o script de instalação com `curl`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/nitoba/pr-tools/main/install.sh | bash
+```
+
+O script instala `create-pr-description` e `create-test-card` em `~/.local/bin/` e as bibliotecas compartilhadas em `~/.local/lib/pr-tools/`.
+
+## Instalar uma versão específica
+
+Veja as versões disponíveis em [Releases](https://github.com/nitoba/pr-tools/releases):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/nitoba/pr-tools/main/install.sh | INSTALL_VERSION=v2.9.0 bash
+```
+
+## Instalar do branch main (bleeding edge)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/nitoba/pr-tools/main/install.sh | bash
+```
+
+## Pré-requisitos
+
+Certifique-se de ter instalado:
+
+| Dependência | Instalação |
+|-------------|-----------|
+| `git` | Incluso na maioria dos sistemas |
+| `curl` | `apt install curl` / `brew install curl` |
+| `jq` | `apt install jq` / `brew install jq` |
+| Bash 4+ | macOS: `brew install bash` (o Bash padrão do macOS é 3.x) |
+
+Além disso, você precisa de API key de pelo menos um provider:
+
+- [OpenRouter](https://openrouter.ai) — plano gratuito disponível
+- [Groq](https://console.groq.com) — plano gratuito disponível
+- [Google Gemini](https://aistudio.google.com) — plano gratuito disponível
+- Ollama — local ou via Ollama Cloud
+
+<Callout type="warn">
+  **macOS:** O Bash padrão (`/bin/bash`) é a versão 3.x, que não é compatível. Instale o Bash 4+ via Homebrew: `brew install bash`. O script de instalação detecta isso automaticamente.
+</Callout>
+
+## Verificar instalação
+
+Após a instalação, verifique se os comandos estão disponíveis:
+
+```bash
+create-pr-description --version
+create-test-card --version
+```
+
+Se o comando não for encontrado, adicione `~/.local/bin` ao seu PATH:
+
+```bash
+# Adicione ao ~/.bashrc ou ~/.zshrc
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+## Atualizar
+
+Para atualizar para a versão mais recente:
+
+```bash
+create-pr-description --update
+create-test-card --update
+```
+
+## Próximos passos
+
+- [Quickstart — configure e gere seu primeiro PR](/docs/getting-started/quickstart)
