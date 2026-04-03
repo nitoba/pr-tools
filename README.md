@@ -8,6 +8,16 @@ Ferramentas de produtividade para Pull Requests e Test Cases no Azure DevOps. Ge
 curl -fsSL https://raw.githubusercontent.com/nitoba/pr-tools/main/install.sh | bash
 ```
 
+### Instalar uma versão específica
+
+```bash
+# Instalar uma versão estável (veja Releases: https://github.com/nitoba/pr-tools/releases)
+curl -fsSL https://raw.githubusercontent.com/nitoba/pr-tools/main/install.sh | INSTALL_VERSION=v2.9.0 bash
+
+# Instalar do branch main (bleeding edge)
+curl -fsSL https://raw.githubusercontent.com/nitoba/pr-tools/main/install.sh | bash
+```
+
 ### Requisitos
 
 - `git`, `curl`, `jq`
@@ -295,3 +305,24 @@ OPENROUTER_MODEL="qwen/qwen3-4b:free" create-pr-description
 ## Licença
 
 MIT
+
+## Processo de Release
+
+### Criar uma nova versão
+
+1. Atualize o arquivo `VERSION` na raiz do projeto
+2. Atualize o `VERSION` hardcoded nos scripts `src/bin/*`
+3. Commit: `chore: bump version to vX.Y.Z`
+4. Crie a tag: `git tag vX.Y.Z`
+5. Push: `git push origin main --tags`
+
+O workflow de release irá automaticamente:
+- Gerar o changelog com git-cliff
+- Criar um GitHub Release com o changelog
+- Fazer upload dos scripts como assets
+
+### Versionamento Semântico
+
+- **MAJOR** — Breaking changes
+- **MINOR** — Novas features
+- **PATCH** — Bug fixes
