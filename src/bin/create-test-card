@@ -7,7 +7,15 @@ set -euo pipefail
 # from PR + Work Item context, with best-effort creation.
 # ============================================================
 
-VERSION="0.3.11"
+# ---- Version ----
+# Read from VERSION file if available (when running from repo), fallback to hardcoded
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." 2>/dev/null && pwd)"
+VERSION="2.9.0"
+if [[ -f "$REPO_ROOT/VERSION" ]]; then
+  VERSION="$(tr -d '[:space:]' < "$REPO_ROOT/VERSION")"
+fi
+
 CONFIG_DIR="$HOME/.config/pr-tools"
 ENV_FILE="$CONFIG_DIR/.env"
 CACHE_FILE="$CONFIG_DIR/.cache"

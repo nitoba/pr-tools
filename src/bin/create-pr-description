@@ -7,7 +7,15 @@ set -euo pipefail
 # from git context, with clickable Azure DevOps PR links.
 # ============================================================
 
-VERSION="2.8.10"
+# ---- Version ----
+# Read from VERSION file if available (when running from repo), fallback to hardcoded
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." 2>/dev/null && pwd)"
+VERSION="2.9.0"
+if [[ -f "$REPO_ROOT/VERSION" ]]; then
+  VERSION="$(tr -d '[:space:]' < "$REPO_ROOT/VERSION")"
+fi
+
 CONFIG_DIR="$HOME/.config/pr-tools"
 ENV_FILE="$CONFIG_DIR/.env"
 TEMPLATE_FILE="$CONFIG_DIR/pr-template.md"
@@ -16,7 +24,6 @@ CACHE_FILE="$CONFIG_DIR/.cache"
 REPO_URL="https://raw.githubusercontent.com/nitoba/pr-tools/main"
 
 # ---- Source libs ----
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB_DIR="${SCRIPT_DIR}/../lib/pr-tools"
 if [[ ! -d "$LIB_DIR" ]]; then
   LIB_DIR="${SCRIPT_DIR}/../lib"
