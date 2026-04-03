@@ -7,7 +7,24 @@
 
 ## Visão geral
 
-Evolução do repositório `pr-tools` de um projeto flat (scripts bash na raiz) para um monorepo gerenciado pelo Bun, adicionando um landing page (Astro), documentação (Mintlify) e uma newsletter automatizada (Resend + GitHub Actions).
+Evolução do repositório `pr-tools` de um projeto flat para um monorepo gerenciado pelo Bun. Esta implementação cobre apenas a **fundação**: estrutura de diretórios, scaffolding dos apps e configuração de tooling. O conteúdo real de cada app (landing page, docs, newsletter) é implementado em fases posteriores.
+
+---
+
+## O que entra nesta implementação (fundação)
+
+1. **Monorepo root** — Bun workspaces + tooling compartilhado (oxlint, oxformat)
+2. **apps/cli** — migração do código existente (`src/`, `tests/`, `install.sh`, `VERSION`) para cá; atualização de paths em `release.sh` e workflows
+3. **apps/www** — scaffold Astro 5 SSR com Tailwind CSS 4 + plugin React configurados, pronto para implementação do design
+4. **apps/docs** — `mint.json` com navegação definida + arquivos `.mdx` vazios/stub por página
+
+## O que NÃO entra agora (fases posteriores)
+
+- Implementação do design e conteúdo do landing page
+- Preenchimento do conteúdo das páginas MDX da documentação
+- API route `/api/subscribe` e integração com Resend
+- Workflow `newsletter.yml` e geração de conteúdo via LLM
+- Template HTML do email
 
 ---
 
@@ -23,26 +40,38 @@ pr-tools/
 │   │   ├── tests/
 │   │   ├── install.sh
 │   │   └── VERSION
-│   ├── www/              ← landing page (Astro SSR)
+│   ├── www/              ← landing page (Astro SSR — scaffold apenas)
 │   │   ├── src/
 │   │   │   ├── pages/
-│   │   │   │   ├── index.astro
-│   │   │   │   └── api/
-│   │   │   │       └── subscribe.ts
+│   │   │   │   └── index.astro   ← placeholder
 │   │   │   └── components/
-│   │   └── astro.config.mjs
-│   └── docs/             ← documentação (Mintlify, apenas MDX + mint.json)
+│   │   ├── astro.config.mjs
+│   │   ├── tailwind.config.ts
+│   │   └── package.json
+│   └── docs/             ← documentação (Mintlify — mint.json + stubs MDX)
 │       ├── mint.json
 │       ├── getting-started/
+│       │   ├── introduction.mdx  ← stub
+│       │   ├── installation.mdx  ← stub
+│       │   ├── quickstart.mdx    ← stub
+│       │   └── configuration.mdx ← stub
 │       ├── commands/
+│       │   ├── create-pr-description.mdx ← stub
+│       │   └── create-test-card.mdx      ← stub
 │       ├── guides/
+│       │   ├── azure-devops.mdx          ← stub
+│       │   ├── ai-providers.mdx          ← stub
+│       │   ├── markdown-rendering.mdx    ← stub
+│       │   └── advanced-examples.mdx     ← stub
 │       └── reference/
-├── packages/             ← vazio por ora, pronto para libs compartilhadas futuras
+│           ├── environment-variables.mdx ← stub
+│           ├── troubleshooting.mdx       ← stub
+│           └── changelog.mdx             ← stub
+├── packages/             ← vazio, workspace válido para libs futuras
 ├── .github/
 │   └── workflows/
-│       ├── release.yml   ← existente, caminhos atualizados para apps/cli
-│       ├── auto-tag.yml  ← existente
-│       └── newsletter.yml ← novo
+│       ├── release.yml   ← caminhos atualizados para apps/cli
+│       └── auto-tag.yml  ← caminhos atualizados para apps/cli
 ├── package.json          ← root Bun workspace
 ├── bunfig.toml
 ├── cliff.toml
@@ -52,22 +81,24 @@ pr-tools/
 ```
 
 **Decisões:**
-- `src/`, `tests/`, `install.sh`, `VERSION` são movidos para `apps/cli/` — a raiz não contém mais código do CLI
-- `packages/` existe como workspace válido, sem código inicial (YAGNI)
-- `release.sh` e os workflows existentes têm seus caminhos atualizados para `apps/cli/`
-- O `install.sh` público (URL do GitHub raw) continua funcionando desde que o caminho no repo seja atualizado no script curl da documentação
+- `src/`, `tests/`, `install.sh`, `VERSION` movidos para `apps/cli/` — raiz sem código do CLI
+- `packages/` existe como workspace válido sem código (YAGNI)
+- `release.sh` e workflows têm paths atualizados para `apps/cli/`
+- O `install.sh` funciona desde que o raw URL do GitHub seja atualizado na documentação
 
 ---
 
-## Bun workspaces
-
-`package.json` na raiz:
+## Bun workspaces (root package.json)
 
 ```json
 {
   "name": "pr-tools",
   "private": true,
-  "workspaces": ["apps/*", "packages/*"]
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "lint": "oxlint .",
+    "format": "oxformat ."
+  }
 }
 ```
 
@@ -75,131 +106,119 @@ pr-tools/
 
 ---
 
-## apps/www — Landing Page (Astro)
+## Tooling compartilhado (monorepo root)
 
-### Stack
-- **Astro 5** com output SSR (necessário para API routes)
-- **Adapter:** `@astrojs/node` (a confirmar no deploy — Vercel ou Cloudflare também suportados)
-- **Estilização:** Tailwind CSS 4 + variáveis CSS custom (sem component library)
-- **TypeScript** strict mode
+### oxlint
+Linter rápido da suite Oxc, configurado na raiz e aplicado a todos os apps TypeScript/JavaScript.
+- Arquivo de config: `oxlint.json` na raiz
+- Regras: base recomendada da Oxc
+- Scripts: `bun lint` na raiz executa para todo o monorepo
 
-### Seções da página (ordem)
-1. **Nav** — logo, links Docs / GitHub / Instalar
-2. **Hero** — headline, subheadline, badge de versão, comando curl com botão de copiar, CTAs (Ver docs, GitHub)
-3. **Demo** — animação de terminal mostrando fluxo do `create-pr-description`
-4. **Features** — grid 3×2 com as principais funcionalidades
-5. **Providers** — badges do OpenRouter, Groq e Google Gemini
-6. **Instalação rápida** — bloco de código com curl + requisitos mínimos
-7. **Newsletter** — input de email + botão de inscrever, tagline "Sem spam. Cancele quando quiser."
-8. **Footer** — MIT License, links Docs / GitHub / Changelog
+### oxformat
+Formatter da suite Oxc, configurado na raiz.
+- Arquivo de config: `oxformat.json` (ou seção em `oxlint.json` conforme a API da versão em uso)
+- Scripts: `bun format` na raiz executa para todo o monorepo
 
-### Estilo visual
-Dark minimal com accent roxo/violeta — referências Linear e Vercel. Paleta:
-- Background: `#0d0d0d` / `#0a0a0a`
-- Accent: `#7c3aed` (violet-700)
-- Texto: `#f8f8f8`
-- Muted: `#6b7280`
-- Borders: `#1f1f1f`
-
-### API Route de inscrição
-
-`src/pages/api/subscribe.ts`:
-1. Valida formato do email
-2. Chama `resend.contacts.create({ audienceId, email, unsubscribed: false })`
-3. Retorna `200 { success: true }` ou erro apropriado
-4. O Resend gerencia unsubscribe (RFC 8058), bounce e suppression list nativamente
+Ambos se aplicam aos arquivos `.ts`, `.tsx`, `.astro` e `.js` dentro de `apps/` e `packages/`.
 
 ---
 
-## apps/docs — Documentação (Mintlify)
+## apps/www — Scaffold (Astro)
 
-Mintlify é um serviço externo — `apps/docs` contém apenas arquivos `.mdx` e `mint.json`. Não tem `package.json` nem dependências npm. O build e deploy são feitos pela integração GitHub nativa do Mintlify, apontando para `apps/docs/` como root.
+### Stack configurada nesta fase
+- **Astro 5** com output `server` (SSR)
+- **@astrojs/node** como adapter padrão (substituível por Cloudflare no deploy)
+- **@astrojs/react** — plugin React habilitado para componentes interativos
+- **Tailwind CSS 4** via `@astrojs/tailwind`
+- **TypeScript** strict mode (`tsconfig.json`)
+- `index.astro` com placeholder mínimo (sem layout implementado)
 
-### Tema
-Dark com accent violet, alinhado ao landing page (`mint.json`).
+### O que fica para depois
+- Implementação do design dark minimal (paleta, componentes, seções)
+- API route `/api/subscribe`
+- Template de email
 
-### Estrutura de navegação
-
-```
-Primeiros passos
-  ├── Introdução
-  ├── Instalação
-  ├── Quickstart
-  └── Configuração
-
-Comandos
-  ├── create-pr-description
-  └── create-test-card
-
-Guias
-  ├── Configurando o Azure DevOps
-  ├── Escolhendo providers de IA
-  ├── Renderizando Markdown no terminal
-  └── Exemplos avançados
-
-Referência
-  ├── Variáveis de ambiente
-  ├── Troubleshooting
-  └── Changelog
-```
-
-**Conteúdo:** migrado e expandido a partir do `README.md` existente. O Changelog na docs aponta para o `CHANGELOG.md` da raiz ou é uma página MDX que referencia o conteúdo.
+### Referência de design (para fase posterior)
+- Estilo: dark minimal, accent violet (`#7c3aed`), inspiração Linear/Vercel
+- Seções planejadas: Nav, Hero, Demo terminal, Features, Providers, Instalação, Newsletter, Footer
+- Paleta: bg `#0d0d0d`/`#0a0a0a`, texto `#f8f8f8`, muted `#6b7280`, borders `#1f1f1f`
 
 ---
 
-## Newsletter — Inscrição e Envio
+## apps/docs — Scaffold (Mintlify)
 
-### Fluxo de inscrição
-1. Usuário preenche email na seção Newsletter do landing page
-2. `POST /api/subscribe` (Astro) valida e chama Resend Audiences API
-3. Resend adiciona contato à audience e envia email de boas-vindas
-4. Unsubscribe, bounce handling e suppression list gerenciados pelo Resend nativamente
+`apps/docs` contém apenas `mint.json` e arquivos `.mdx` stub. Sem `package.json` — Mintlify é serviço externo com integração GitHub nativa apontando para `apps/docs/` como root.
 
-### Fluxo de envio (GitHub Actions)
+### mint.json — navegação definida nesta fase
 
-Trigger: `on: release: types: [published]`
-
-Arquivo: `.github/workflows/newsletter.yml`
-
-**Passos:**
-1. Extrair a tag da release e a seção do `CHANGELOG.md` correspondente
-2. Verificar idempotência: listar broadcasts no Resend e checar se já existe um com nome `release-{tag}`. Se sim, encerrar com sucesso (skip)
-3. Chamar LLM (via API do OpenRouter, Groq ou Gemini) com o changelog da versão para gerar o **conteúdo em Markdown** do email
-4. Converter o Markdown para HTML usando o template HTML próprio do projeto (com header, footer e estilos do pr-tools)
-5. Criar Resend Broadcast com nome `release-{tag}` e o HTML gerado
-6. Resend envia para todos os inscritos na audience
-
-### Prompt LLM (geração do conteúdo)
-
+```json
+{
+  "name": "pr-tools",
+  "colors": { "primary": "#7c3aed" },
+  "navigation": [
+    {
+      "group": "Primeiros passos",
+      "pages": [
+        "getting-started/introduction",
+        "getting-started/installation",
+        "getting-started/quickstart",
+        "getting-started/configuration"
+      ]
+    },
+    {
+      "group": "Comandos",
+      "pages": [
+        "commands/create-pr-description",
+        "commands/create-test-card"
+      ]
+    },
+    {
+      "group": "Guias",
+      "pages": [
+        "guides/azure-devops",
+        "guides/ai-providers",
+        "guides/markdown-rendering",
+        "guides/advanced-examples"
+      ]
+    },
+    {
+      "group": "Referência",
+      "pages": [
+        "reference/environment-variables",
+        "reference/troubleshooting",
+        "reference/changelog"
+      ]
+    }
+  ]
+}
 ```
-Você é um redator técnico. Gere o conteúdo de uma newsletter
-anunciando a versão {tag} do pr-tools (CLI para Azure DevOps + IA).
 
-CHANGELOG desta versão:
-{changelog_section}
+### Stubs MDX
+Cada página tem apenas o frontmatter com título, descrição e um `# Título` — suficiente para o Mintlify renderizar sem erro.
 
-Retorne apenas Markdown. O conteúdo deve:
-- Ter tom técnico e direto (público: desenvolvedores)
-- Destacar as mudanças mais relevantes com contexto
-- Incluir o comando de atualização: create-pr-description --update
-- Ter subject line sugerida na primeira linha como: Subject: ...
-```
+---
 
-### Template HTML do email
-Arquivo em `apps/www/src/templates/email.html` — contém o design do email (header com logo, cores do pr-tools, footer com unsubscribe link). O conteúdo Markdown gerado pelo LLM é convertido para HTML (via biblioteca como `marked`) e injetado no corpo do template.
+## Newsletter — Referência de design (fases posteriores)
 
-### Idempotência
-O nome do broadcast (`release-{tag}`) é único por release. Antes de criar, o workflow lista broadcasts existentes via API do Resend e encerra sem erro caso já exista — evita envios duplicados em caso de re-run do workflow.
+### Inscrição
+- `POST /api/subscribe` em `apps/www` → Resend Audiences API
+- Resend gerencia unsubscribe (RFC 8058), bounce e suppression list nativamente
 
-### Secrets necessários
-- `RESEND_API_KEY` — compartilhada entre `apps/www` (subscribe) e o workflow de newsletter
-- `RESEND_AUDIENCE_ID` — ID da audience de inscritos
-- `LLM_API_KEY` — API key do provider LLM para geração do conteúdo (ex: `OPENROUTER_API_KEY`)
+### Envio automatizado
+- GitHub Actions trigger: `on: release: types: [published]`
+- Idempotência: verifica broadcast `release-{tag}` existente antes de criar
+- LLM gera conteúdo em **Markdown** (não HTML) — tone técnico, público dev
+- Template HTML próprio do projeto converte Markdown e aplica design do email
+- Resend Broadcast enviado para a audience de inscritos
+
+### Secrets (a configurar no momento da implementação)
+- `RESEND_API_KEY`
+- `RESEND_AUDIENCE_ID`
+- `LLM_API_KEY` (ex: `OPENROUTER_API_KEY`)
 
 ---
 
 ## O que NÃO muda
-- Os scripts bash do CLI (`create-pr-description`, `create-test-card`) — apenas movidos para `apps/cli/`
-- O processo de release (`release.sh`, `auto-tag.yml`, `release.yml`) — apenas caminhos atualizados
-- O `CHANGELOG.md` e `cliff.toml` na raiz
-- O `install.sh` público (curl) — URL do GitHub raw é atualizada na documentação
+- Scripts bash do CLI — apenas movidos para `apps/cli/`
+- Processo de release (`release.sh`, `auto-tag.yml`, `release.yml`) — apenas paths atualizados
+- `CHANGELOG.md` e `cliff.toml` na raiz
