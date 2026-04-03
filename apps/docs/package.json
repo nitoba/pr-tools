@@ -26,7 +26,6 @@
     "@vitejs/plugin-react": "latest",
     "postcss-import": "^16.1.1",
     "typescript": "^5.9.3",
-    "vite": "latest",
-    "vite-tsconfig-paths": "latest"
+    "vite": "latest"
   }
 }

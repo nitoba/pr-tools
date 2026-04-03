@@ -1,15 +1,17 @@
-import { defineConfig } from 'vite';
-import { tanstackStart } from '@tanstack/react-start/plugin/vite';
-import tsConfigPaths from 'vite-tsconfig-paths';
-import mdx from 'fumadocs-mdx/vite';
-import viteReact from '@vitejs/plugin-react';
-import * as MdxConfig from './source.config';
+import { tanstackStart } from '@tanstack/react-start/plugin/vite'
+import viteReact from '@vitejs/plugin-react'
+import mdx from 'fumadocs-mdx/vite'
+import { defineConfig } from 'vite'
+
+import * as MdxConfig from './source.config'
 
 export default defineConfig({
+  resolve: {
+    tsconfigPaths: true,
+  },
   plugins: [
-    tsConfigPaths({ projects: ['./tsconfig.json'] }),
     tanstackStart({ srcDirectory: 'app' }),
     mdx(MdxConfig),
     viteReact(),
   ],
-});
+})
