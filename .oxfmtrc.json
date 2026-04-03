@@ -1,1 +1,7 @@
-{}
+{
+  "semi": false,
+  "trailingComma": "none",
+  "singleQuote": true,
+  "sortImports": {},
+  "sortPackageJson": false
+}
