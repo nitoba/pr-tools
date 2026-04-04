@@ -18,7 +18,8 @@
     "fumadocs-mdx": "^14.2.11",
     "fumadocs-ui": "^16.7.10",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "tailwindcss": "^4.2.2"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "^1.31.0",
