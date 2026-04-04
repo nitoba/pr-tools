@@ -18,10 +18,10 @@ jobs:
 
       - name: Run shellcheck
         run: |
-          shellcheck src/bin/create-pr-description
-          shellcheck src/bin/create-test-card
-          shellcheck install.sh
-          for f in src/lib/*.sh; do
+          shellcheck apps/cli/src/bin/create-pr-description
+          shellcheck apps/cli/src/bin/create-test-card
+          shellcheck apps/cli/install.sh
+          for f in apps/cli/src/lib/*.sh; do
             shellcheck "$f"
           done
 
@@ -33,10 +33,10 @@ jobs:
 
       - name: Check Bash syntax
         run: |
-          bash -n src/bin/create-pr-description
-          bash -n src/bin/create-test-card
-          bash -n install.sh
-          for f in src/lib/*.sh; do
+          bash -n apps/cli/src/bin/create-pr-description
+          bash -n apps/cli/src/bin/create-test-card
+          bash -n apps/cli/install.sh
+          for f in apps/cli/src/lib/*.sh; do
             bash -n "$f"
           done
 
@@ -50,13 +50,13 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y jq
 
       - name: create-pr-description --help
-        run: bash src/bin/create-pr-description --help
+        run: bash apps/cli/src/bin/create-pr-description --help
 
       - name: create-pr-description --version
-        run: bash src/bin/create-pr-description --version
+        run: bash apps/cli/src/bin/create-pr-description --version
 
       - name: create-test-card --help
-        run: bash src/bin/create-test-card --help
+        run: bash apps/cli/src/bin/create-test-card --help
 
       - name: create-test-card --version
-        run: bash src/bin/create-test-card --version
+        run: bash apps/cli/src/bin/create-test-card --version
