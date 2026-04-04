@@ -5,4 +5,119 @@ description: Gera descrições de PR via LLM a partir do git diff
 
 # create-pr-description
 
-Conteúdo em breve.
+Gera a descrição de um Pull Request a partir do `git diff` e `git log` da branch atual contra a branch base (sprint ou dev), usando um LLM configurado.
+
+## Uso
+
+```bash
+create-pr-description [opções]
+```
+
+## Flags
+
+| Flag | Argumento | Descrição |
+|------|-----------|-----------|
+| `--init` | — | Inicializa ou atualiza a configuração interativamente |
+| `--source <branch>` | nome da branch | Branch de origem do PR (padrão: branch atual) |
+| `--target <branch>` | `dev` ou `sprint` | Branch alvo. Pode ser usada mais de uma vez. Padrão: ambas |
+| `--work-item <id>` | ID numérico | ID do work item do Azure DevOps a vincular ao PR |
+| `--set-openrouter-model <modelo>` | nome do modelo | Salva o modelo do OpenRouter no `.env` |
+| `--set-groq-model <modelo>` | nome do modelo | Salva o modelo do Groq no `.env` |
+| `--set-gemini-model <modelo>` | nome do modelo | Salva o modelo do Google Gemini no `.env` |
+| `--set-ollama-model <modelo>` | nome do modelo | Salva o modelo do Ollama no `.env` |
+| `--dry-run` | — | Mostra o prompt que seria enviado ao LLM sem chamá-lo |
+| `--raw` | — | Exibe a descrição como texto puro, sem renderização Markdown |
+| `--update` | — | Atualiza o script para a versão mais recente |
+| `--help` | — | Mostra a ajuda |
+| `--version` | — | Mostra a versão instalada |
+
+## Exemplos
+
+```bash
+# Gera PR para dev e sprint (padrão)
+create-pr-description
+
+# Apenas para dev
+create-pr-description --target dev
+
+# Apenas para sprint
+create-pr-description --target sprint
+
+# PR a partir de outra branch (sem precisar fazer checkout)
+create-pr-description --source feature/1234-login
+
+# Vincular work item manualmente
+create-pr-description --work-item 11763
+
+# Ver o prompt sem chamar o LLM
+create-pr-description --dry-run
+
+# Saída sem formatação Markdown
+create-pr-description --raw
+
+# Mudar modelo do Groq e gerar
+create-pr-description --set-groq-model qwen/qwen3-32b
+
+# Sobrescrever modelo via variável de ambiente (sem salvar)
+OPENROUTER_MODEL="qwen/qwen3-4b:free" create-pr-description
+```
+
+## Como funciona
+
+<Steps>
+  <Step>
+    **Coleta de contexto** — Executa `git diff` e `git log` da branch atual contra a branch base (sprint ou dev).
+  </Step>
+  <Step>
+    **Detecção de sprint** — Identifica a sprint vigente pelo maior número em `origin/sprint/*`.
+  </Step>
+  <Step>
+    **Extração do work item** — Lê o work item do nome da branch (ex: `feat/1234-descricao` → `1234`) ou da flag `--work-item`.
+  </Step>
+  <Step>
+    **Parse do remote** — Extrai org, project e repo da URL do git remote (Azure DevOps).
+  </Step>
+  <Step>
+    **Chamada ao LLM** — Envia o contexto para o provider configurado via API REST, com fallback automático entre providers.
+  </Step>
+  <Step>
+    **Extração do resultado** — Parseia título e corpo da resposta do LLM. Remove blocos `<think>` de modelos de raciocínio (ex: qwen3).
+  </Step>
+  <Step>
+    **Output** — Imprime a descrição formatada no terminal (com Markdown renderizado se `glow`/`bat` estiver disponível).
+  </Step>
+  <Step>
+    **Clipboard** — Copia a descrição para o clipboard (`pbcopy` no macOS, `wl-copy`/`xclip`/`xsel` no Linux).
+  </Step>
+  <Step>
+    **Criação do PR** — Pergunta se deseja criar o PR automaticamente no Azure DevOps com reviewers e work item vinculado.
+  </Step>
+</Steps>
+
+## Output esperado
+
+```
+==========================================
+PR Description - feature/1234-login → dev
+==========================================
+Provider: groq (llama-3.3-70b-versatile)
+Work item: #1234
+
+# Implementar autenticação JWT
+
+## Contexto
+...
+
+## Mudanças
+...
+
+[OK] Descrição copiada para o clipboard
+
+Criar PR automaticamente no Azure DevOps? [s/N]
+```
+
+## Configuração relacionada
+
+- [Configuração completa](/docs/getting-started/configuration)
+- [Variáveis de ambiente](/docs/reference/environment-variables)
+- [Escolhendo providers de IA](/docs/guides/ai-providers)
