@@ -5,4 +5,84 @@ description: Como usar glow, bat ou texto puro para visualizar a saída
 
 # Renderizando Markdown no terminal
 
-Conteúdo em breve.
+O `create-pr-description` detecta automaticamente qual renderizador está disponível e usa o melhor encontrado. Sem nenhum renderizador instalado, exibe o texto puro normalmente.
+
+## Prioridade de detecção
+
+O script verifica na seguinte ordem:
+
+1. `glow` — renderização com cores e formatação rica
+2. `bat` — syntax highlight de arquivos, funciona bem com Markdown
+3. `batcat` — alias do `bat` em algumas distribuições Linux
+4. Texto puro — fallback sempre disponível
+
+## glow (recomendado)
+
+Renderizador Markdown feito para o terminal. Exibe headers, negrito, código e listas formatados.
+
+**Instalação:**
+
+<Tabs items={['macOS', 'Linux', 'Windows WSL']}>
+  <Tab value="macOS">
+    ```bash
+    brew install glow
+    ```
+  </Tab>
+  <Tab value="Linux">
+    ```bash
+    # Debian/Ubuntu
+    sudo apt install glow
+
+    # Arch
+    sudo pacman -S glow
+
+    # Ou via Go
+    go install github.com/charmbracelet/glow@latest
+    ```
+  </Tab>
+  <Tab value="Windows WSL">
+    ```bash
+    # Dentro do WSL
+    sudo apt install glow
+    ```
+  </Tab>
+</Tabs>
+
+## bat
+
+Alternativa que oferece syntax highlight. Funciona bem para Markdown, mas a formatação é menos rica que o `glow`.
+
+**Instalação:**
+
+<Tabs items={['macOS', 'Linux']}>
+  <Tab value="macOS">
+    ```bash
+    brew install bat
+    ```
+  </Tab>
+  <Tab value="Linux">
+    ```bash
+    # Debian/Ubuntu
+    sudo apt install bat
+    # Nota: pode instalar como "batcat" em vez de "bat"
+    ```
+  </Tab>
+</Tabs>
+
+## Forçar texto puro
+
+Use a flag `--raw` para desabilitar qualquer renderizador e exibir o Markdown sem formatação:
+
+```bash
+create-pr-description --raw
+```
+
+Útil quando:
+
+- Você vai copiar o texto para colar em outra ferramenta
+- O renderizador está causando problemas no seu terminal
+- Você quer ver o Markdown bruto
+
+<Callout type="info">
+  A flag `--raw` afeta apenas a exibição no terminal. A cópia para o clipboard sempre usa o Markdown bruto, independente do renderizador.
+</Callout>
