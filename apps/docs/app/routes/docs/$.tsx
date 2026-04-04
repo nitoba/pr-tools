@@ -17,6 +17,30 @@ export const Route = createFileRoute('/docs/$')({
     const data = await serverLoader({ data: slugs })
     await clientLoader.preload(data.path)
     return data
+  },
+  head: ({ loaderData }) => {
+    const title = loaderData?.title
+      ? `${loaderData.title} — pr-tools Docs`
+      : 'pr-tools Docs'
+    const description =
+      loaderData?.description ??
+      'Documentação completa do pr-tools: CLI para gerar descrições de PR e cards de teste no Azure DevOps com IA.'
+    const ogImage = `/api/og?title=${encodeURIComponent(loaderData?.title ?? 'pr-tools Docs')}&description=${encodeURIComponent(loaderData?.description ?? '')}`
+
+    return {
+      meta: [
+        { title },
+        { name: 'description', content: description },
+        { property: 'og:title', content: title },
+        { property: 'og:description', content: description },
+        { property: 'og:image', content: ogImage },
+        { property: 'og:image:width', content: '1200' },
+        { property: 'og:image:height', content: '630' },
+        { name: 'twitter:title', content: title },
+        { name: 'twitter:description', content: description },
+        { name: 'twitter:image', content: ogImage }
+      ]
+    }
   }
 })
 
@@ -26,8 +50,15 @@ const serverLoader = createServerFn({ method: 'GET' })
     const page = source.getPage(slugs)
     if (!page) throw notFound()
 
+    const { title, description } = page.data as {
+      title?: string
+      description?: string
+    }
+
     return {
       path: page.path,
+      title,
+      description,
       pageTree: await source.serializePageTree(source.getPageTree())
     }
   })
