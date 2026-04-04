@@ -5,4 +5,90 @@ description: Como configurar o PAT e as permissões necessárias
 
 # Configurando o Azure DevOps
 
-Conteúdo em breve.
+A integração com o Azure DevOps é opcional para geração de descrições, mas necessária para:
+
+- Criar PRs automaticamente
+- Ler contexto de work items na geração de Test Cases
+- Criar Test Cases filhos automaticamente
+
+## Criando um Personal Access Token (PAT)
+
+<Steps>
+  <Step>
+    Acesse seu Azure DevOps: `https://dev.azure.com/<sua-org>`
+  </Step>
+  <Step>
+    Clique no ícone do usuário (canto superior direito) → **Personal access tokens**
+  </Step>
+  <Step>
+    Clique em **New Token**
+  </Step>
+  <Step>
+    Configure o token:
+    - **Name:** `pr-tools` (ou qualquer nome)
+    - **Organization:** selecione sua organização
+    - **Expiration:** escolha conforme sua política de segurança
+    - **Scopes:** selecione as permissões abaixo
+  </Step>
+  <Step>
+    Copie o token gerado — ele **não será exibido novamente**
+  </Step>
+</Steps>
+
+## Permissões necessárias
+
+| Escopo | Permissão | Necessário para |
+|--------|-----------|-----------------|
+| Code | Read & Write | Criar PRs |
+| Work Items | Read & Write | Ler work items, criar Test Cases |
+| Pull Request Threads | Read & Write | Comentários em PRs |
+
+<Callout type="warn">
+  Se for usar apenas geração de descrição sem criar PR ou Test Case automaticamente, a permissão de **Work Items: Read** é suficiente.
+</Callout>
+
+## Configurar o PAT no pr-tools
+
+Via wizard (recomendado):
+
+```bash
+create-pr-description --init
+```
+
+Ou diretamente no `.env`:
+
+```bash
+# ~/.config/pr-tools/.env
+AZURE_PAT="seu-token-aqui"
+```
+
+## Como o pr-tools identifica seu repositório
+
+O pr-tools extrai automaticamente a org, project e repo da URL do git remote. Para repositórios no Azure DevOps, o remote tem o formato:
+
+```
+https://dev.azure.com/<org>/<project>/_git/<repo>
+# ou
+git@ssh.dev.azure.com:v3/<org>/<project>/<repo>
+```
+
+Não é necessário configurar org/project/repo manualmente — o script detecta pelo `git remote get-url origin`.
+
+## Criação automática de PR
+
+Quando o `AZURE_PAT` está configurado e você confirma a criação ao final do `create-pr-description`, o script:
+
+1. Resolve o `repositoryId` (e cacheia em `~/.config/pr-tools/.cache`)
+2. Resolve os IDs dos reviewers pelos emails configurados (e cacheia)
+3. Cria o PR via API REST com título, descrição, reviewers e work item vinculado
+4. Imprime o link para abrir o PR no browser
+
+## Criação automática de Test Case
+
+Quando o `AZURE_PAT` está configurado e você confirma a criação ao final do `create-test-card`, o script:
+
+1. Cria um Test Case filho do work item pai via API REST
+2. Preenche os campos com o conteúdo gerado pelo LLM
+3. Imprime o link para o Test Case criado
+
+Se as regras de processo do projeto bloquearem a criação via API, o Markdown fica visível no terminal para criação manual.
