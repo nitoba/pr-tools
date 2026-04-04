@@ -26,6 +26,9 @@ export const Route = createRootRoute({
         content:
           'Documentação completa do pr-tools: CLI para gerar descrições de PR e cards de teste no Azure DevOps com IA.'
       },
+      { property: 'og:image', content: '/api/og' },
+      { property: 'og:image:width', content: '1200' },
+      { property: 'og:image:height', content: '630' },
       { property: 'og:site_name', content: 'pr-tools' },
       { property: 'og:locale', content: 'pt_BR' },
       { name: 'twitter:card', content: 'summary_large_image' },
@@ -38,6 +41,7 @@ export const Route = createRootRoute({
         content:
           'Documentação completa do pr-tools: CLI para gerar descrições de PR e cards de teste no Azure DevOps com IA.'
       },
+      { name: 'twitter:image', content: '/api/og' },
       { name: 'author', content: 'pr-tools' },
       { name: 'robots', content: 'index, follow' },
       { name: 'theme-color', content: '#0F172A' }
