@@ -1,0 +1,20 @@
+---
+const providers = ["OpenRouter", "Groq", "Google Gemini", "Ollama"];
+---
+
+<section class="border-y border-border py-16">
+  <div class="mx-auto max-w-7xl px-6 lg:px-10">
+    <p class="mb-8 text-center text-sm text-muted-foreground">
+      Funciona com os modelos que você já usa
+    </p>
+    <div class="flex flex-wrap items-center justify-center gap-3">
+      {
+        providers.map((name) => (
+          <span class="rounded-lg border border-border bg-secondary px-5 py-2 text-sm font-medium text-secondary-foreground">
+            {name}
+          </span>
+        ))
+      }
+    </div>
+  </div>
+</section>

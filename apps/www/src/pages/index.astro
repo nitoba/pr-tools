@@ -1,20 +1,35 @@
 ---
-// apps/www/src/pages/index.astro
-// Landing page — design a implementar em fase posterior.
-// Seções planejadas: Nav, Hero, Demo, Features, Providers, Install, Newsletter, Footer.
-// Estilo: dark minimal, accent #7c3aed, inspiração Linear/Vercel.
 import "../styles/global.css";
+import Navbar from "../components/Navbar.astro";
+import Hero from "../components/Hero.astro";
+import TerminalDemo from "../components/TerminalDemo.astro";
+import Features from "../components/Features.astro";
+import Providers from "../components/Providers.astro";
+import Install from "../components/Install.astro";
+import Newsletter from "../components/Newsletter.astro";
+import Footer from "../components/Footer.astro";
 ---
 
 <html lang="pt-BR">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>pr-tools</title>
+    <title>pr-tools — AI-powered PR tools para devs no Azure DevOps</title>
+    <meta
+      name="description"
+      content="CLI tools para gerar descrições de PR e cards de teste automaticamente no Azure DevOps. Suporta OpenRouter, Groq, Gemini e Ollama."
+    />
   </head>
-  <body class="bg-[#0d0d0d] text-[#f8f8f8] font-sans">
-    <main class="flex min-h-screen items-center justify-center">
-      <p class="text-[#7c3aed] font-mono text-lg">pr-tools — em construção</p>
+  <body>
+    <Navbar />
+    <main>
+      <Hero />
+      <TerminalDemo />
+      <Features />
+      <Providers />
+      <Install />
+      <Newsletter />
     </main>
+    <Footer />
   </body>
 </html>

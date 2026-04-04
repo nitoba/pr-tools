@@ -1,0 +1,163 @@
+name: Newsletter
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  send:
+    name: Generate & Send Newsletter
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for existing broadcast (idempotência)
+        id: check
+        env:
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          BROADCAST_NAME="release-${TAG}"
+
+          # List existing broadcasts and check if this release was already sent
+          EXISTING=$(curl -sf \
+            -H "Authorization: Bearer $RESEND_API_KEY" \
+            "https://api.resend.com/broadcasts" \
+            | jq -r --arg name "$BROADCAST_NAME" '.data[] | select(.name == $name) | .id' 2>/dev/null || true)
+
+          if [ -n "$EXISTING" ]; then
+            echo "Broadcast '$BROADCAST_NAME' already exists ($EXISTING). Skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Extract changelog for this release
+        if: steps.check.outputs.skip == 'false'
+        id: changelog
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+
+          # Use the release body if available, otherwise extract from CHANGELOG.md
+          RELEASE_BODY="${{ github.event.release.body }}"
+
+          if [ -n "$RELEASE_BODY" ]; then
+            echo "$RELEASE_BODY" > /tmp/release-notes.md
+          else
+            # Extract section between this tag and the previous tag from CHANGELOG.md
+            awk "/^## ${TAG}/,/^## [0-9]/" CHANGELOG.md \
+              | head -n -1 \
+              > /tmp/release-notes.md
+          fi
+
+          echo "Release notes extracted ($(wc -l < /tmp/release-notes.md) lines)"
+
+      - name: Generate newsletter content via LLM
+        if: steps.check.outputs.skip == 'false'
+        id: llm
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          NOTES=$(cat /tmp/release-notes.md)
+
+          PROMPT="Você é redator técnico de um projeto CLI open-source chamado pr-tools.
+
+          pr-tools gera descrições de Pull Request e cards de teste automaticamente no Azure DevOps usando IA (OpenRouter, Groq, Gemini, Ollama).
+
+          Escreva uma newsletter de release em **Markdown** para a versão ${TAG}.
+
+          Tom: técnico, direto, respeitoso com o tempo do dev. Sem emojis excessivos.
+          Público: desenvolvedores que usam Azure DevOps no dia a dia.
+          Idioma: Português do Brasil.
+
+          Estrutura esperada (use exatamente esses títulos):
+          ## O que há de novo em ${TAG}
+          ## Destaques
+          ## Como atualizar
+          ## Notas
+
+          Conteúdo disponível (changelog):
+          ${NOTES}
+
+          Seção 'Como atualizar' sempre inclui:
+          \`\`\`bash
+          create-pr-description --update
+          create-test-card --update
+          \`\`\`
+
+          Seção 'Notas' deve encerrar com um CTA sutil para ver a documentação completa."
+
+          RESPONSE=$(curl -sf \
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite-preview:generateContent?key=$GEMINI_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"contents\": [{\"parts\": [{\"text\": $(echo "$PROMPT" | jq -Rs .)}]}],
+              \"generationConfig\": {\"maxOutputTokens\": 8000, \"temperature\": 0.4}
+            }")
+
+          CONTENT=$(echo "$RESPONSE" | jq -r '.candidates[0].content.parts[0].text')
+
+          if [ -z "$CONTENT" ] || [ "$CONTENT" = "null" ]; then
+            echo "LLM returned empty content. Falling back to raw changelog."
+            cp /tmp/release-notes.md /tmp/newsletter-content.md
+          else
+            echo "$CONTENT" > /tmp/newsletter-content.md
+          fi
+
+          echo "Newsletter content generated ($(wc -l < /tmp/newsletter-content.md) lines)"
+
+      - name: Convert Markdown to HTML email
+        if: steps.check.outputs.skip == 'false'
+        id: html
+        run: |
+          node .github/scripts/generate-newsletter-email.mjs \
+            "${{ github.event.release.tag_name }}" \
+            /tmp/newsletter-content.md \
+            /tmp/newsletter-email.html
+
+      - name: Create & send Resend broadcast
+        if: steps.check.outputs.skip == 'false'
+        env:
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          RESEND_AUDIENCE_ID: ${{ secrets.RESEND_AUDIENCE_ID }}
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          BROADCAST_NAME="release-${TAG}"
+          SUBJECT="pr-tools ${TAG} — o que há de novo"
+          HTML_CONTENT=$(cat /tmp/newsletter-email.html)
+
+          # Create broadcast
+          BROADCAST=$(curl -sf \
+            -X POST https://api.resend.com/broadcasts \
+            -H "Authorization: Bearer $RESEND_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"name\": \"${BROADCAST_NAME}\",
+              \"audience_id\": \"${RESEND_AUDIENCE_ID}\",
+              \"from\": \"pr-tools <newsletter@nitodev.com.br>\",
+              \"subject\": \"${SUBJECT}\",
+              \"html\": $(echo "$HTML_CONTENT" | jq -Rs .)
+            }")
+
+          BROADCAST_ID=$(echo "$BROADCAST" | jq -r '.id')
+
+          if [ -z "$BROADCAST_ID" ] || [ "$BROADCAST_ID" = "null" ]; then
+            echo "Failed to create broadcast: $BROADCAST"
+            exit 1
+          fi
+
+          echo "Broadcast created: $BROADCAST_ID"
+
+          # Send broadcast
+          SEND=$(curl -sf \
+            -X POST "https://api.resend.com/broadcasts/${BROADCAST_ID}/send" \
+            -H "Authorization: Bearer $RESEND_API_KEY")
+
+          echo "Broadcast sent: $SEND"

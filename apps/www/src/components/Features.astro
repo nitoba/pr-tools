@@ -1,0 +1,55 @@
+---
+const features = [
+  {
+    icon: "⚡",
+    title: "PR Description",
+    description:
+      "Analisa o git diff e gera descrições ricas com contexto do Azure DevOps Work Item. Cria o PR automaticamente com reviewers configurados.",
+  },
+  {
+    icon: "🧪",
+    title: "Test Cards",
+    description:
+      "Gera cards de teste no Azure DevOps a partir do PR e Work Item. Estrutura BDD com cenários, steps e critérios de aceite — prontos para QA.",
+  },
+  {
+    icon: "🤖",
+    title: "Multi-provider AI",
+    description:
+      "OpenRouter, Groq, Gemini e Ollama. Fallback automático entre providers. Troca de modelo por variável de ambiente.",
+  },
+];
+---
+
+<section class="mx-auto max-w-7xl px-6 py-24 lg:px-10 lg:py-28">
+  <div class="mb-14 text-center">
+    <p
+      class="mb-3 font-mono text-[0.7rem] font-semibold uppercase tracking-[0.2em] text-primary"
+    >
+      Funcionalidades
+    </p>
+    <h2
+      class="text-3xl font-bold tracking-[-0.03em] text-foreground md:text-4xl"
+    >
+      Tudo que você precisa,<br />nada que você não precisa.
+    </h2>
+  </div>
+
+  <div class="grid gap-4 md:grid-cols-3">
+    {
+      features.map((f) => (
+        <div class="rounded-xl border border-border bg-card p-8 transition-colors hover:border-primary/30 hover:bg-card/80">
+          <div class="mb-5 flex h-10 w-10 items-center justify-center rounded-[0.625rem] bg-secondary text-lg">
+            {f.icon}
+          </div>
+          <h3 class="mb-3 text-base font-semibold text-foreground">
+            {f.title}
+          </h3>
+          <p class="text-sm leading-relaxed text-muted-foreground">
+            {f.description}
+          </p>
+        </div>
+      ))
+    }
+  </div>
+</section>

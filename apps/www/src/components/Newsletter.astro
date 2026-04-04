@@ -1,0 +1,102 @@
+---
+---
+
+<section class="border-t border-border">
+  <div class="mx-auto max-w-7xl px-6 py-20 lg:px-10">
+    <div class="mx-auto max-w-lg text-center">
+      <p
+        class="mb-3 font-mono text-[0.7rem] font-semibold uppercase tracking-[0.2em] text-primary"
+      >
+        Newsletter
+      </p>
+      <h2 class="mb-3 text-2xl font-bold tracking-[-0.03em] text-foreground">
+        Fique por dentro dos releases.
+      </h2>
+      <p class="mb-8 text-sm leading-relaxed text-muted-foreground">
+        A cada novo release, um email com o que mudou, novos providers e dicas
+        de uso. Sem spam.
+      </p>
+
+      <form id="subscribe-form" class="flex gap-2" novalidate>
+        <input
+          id="email-input"
+          type="email"
+          name="email"
+          placeholder="seu@email.com"
+          autocomplete="email"
+          required
+          class="h-10 flex-1 rounded-lg border border-border bg-secondary px-4 font-mono text-sm text-foreground placeholder:text-muted-foreground/50 focus:border-primary/60 focus:outline-none focus:ring-1 focus:ring-primary/40"
+        />
+        <button
+          type="submit"
+          id="subscribe-btn"
+          class="h-10 shrink-0 rounded-lg bg-primary px-5 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+        >
+          Inscrever
+        </button>
+      </form>
+
+      <!-- Feedback messages -->
+      <p
+        id="msg-success"
+        class="mt-3 hidden font-mono text-xs text-[#28C840]"
+      >
+        ✓ Inscrito! Você receberá o próximo release por email.
+      </p>
+      <p
+        id="msg-error"
+        class="mt-3 hidden font-mono text-xs text-destructive"
+      >
+      </p>
+
+      <p class="mt-4 font-mono text-[0.65rem] text-muted-foreground/40">
+        Unsubscribe a qualquer momento. Sem rastreamento.
+      </p>
+    </div>
+  </div>
+</section>
+
+<script>
+  const form = document.getElementById("subscribe-form") as HTMLFormElement;
+  const input = document.getElementById("email-input") as HTMLInputElement;
+  const btn = document.getElementById("subscribe-btn") as HTMLButtonElement;
+  const msgSuccess = document.getElementById("msg-success")!;
+  const msgError = document.getElementById("msg-error")!;
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+
+    const email = input.value.trim();
+    if (!email) return;
+
+    btn.disabled = true;
+    btn.textContent = "Enviando...";
+    msgSuccess.classList.add("hidden");
+    msgError.classList.add("hidden");
+
+    try {
+      const res = await fetch("/api/subscribe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+
+      const data = await res.json();
+
+      if (res.ok) {
+        form.classList.add("hidden");
+        msgSuccess.classList.remove("hidden");
+      } else {
+        msgError.textContent = data.error ?? "Algo deu errado. Tente novamente.";
+        msgError.classList.remove("hidden");
+        btn.disabled = false;
+        btn.textContent = "Inscrever";
+      }
+    } catch {
+      msgError.textContent = "Erro de rede. Tente novamente.";
+      msgError.classList.remove("hidden");
+      btn.disabled = false;
+      btn.textContent = "Inscrever";
+    }
+  });
+</script>

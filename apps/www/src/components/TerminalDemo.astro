@@ -1,0 +1,154 @@
+---
+---
+
+<section class="mx-auto max-w-7xl px-6 py-24 lg:px-10 lg:py-28">
+  <div class="mb-12 text-center">
+    <p class="mb-3 font-mono text-[0.7rem] font-semibold uppercase tracking-[0.2em] text-primary">
+      Ver na prática
+    </p>
+    <h2 class="text-3xl font-bold tracking-[-0.03em] text-foreground md:text-4xl">
+      Um comando. Um resultado perfeito.
+    </h2>
+  </div>
+
+  <!-- Terminal window -->
+  <div
+    class="mx-auto max-w-3xl overflow-hidden rounded-xl border border-border bg-card shadow-[0_24px_64px_oklch(0.59_0.24_292/0.12)]"
+  >
+    <!-- Title bar with tabs -->
+    <div class="flex items-center border-b border-border bg-secondary/50 px-4 py-0">
+      <!-- Traffic lights -->
+      <div class="flex shrink-0 items-center gap-2 py-3 pr-4">
+        <span class="h-3 w-3 rounded-full bg-[#FF5F57]"></span>
+        <span class="h-3 w-3 rounded-full bg-[#FEBC2E]"></span>
+        <span class="h-3 w-3 rounded-full bg-[#28C840]"></span>
+      </div>
+
+      <!-- Tabs -->
+      <div class="flex items-end gap-0">
+        <button
+          id="tab-pr"
+          data-tab="pr"
+          class="tab-btn border-b-2 border-primary px-4 py-3 font-mono text-xs text-foreground transition-colors"
+        >
+          create-pr-description
+        </button>
+        <button
+          id="tab-test"
+          data-tab="test"
+          class="tab-btn border-b-2 border-transparent px-4 py-3 font-mono text-xs text-muted-foreground transition-colors hover:text-foreground"
+        >
+          create-test-card
+        </button>
+      </div>
+    </div>
+
+    <!-- PR Description tab -->
+    <div id="content-pr" class="tab-content overflow-y-auto p-6 font-mono text-[0.8125rem] leading-[1.7]">
+      <!-- Shell prompt -->
+      <p class="text-muted-foreground/50">~/my-project on <span class="text-[#28C840]">feat/add-streaming</span> via .NET via <span class="text-[#28C840]">v22.17.1</span></p>
+      <p class="mt-1 font-semibold text-foreground">→ create-pr-description</p>
+
+      <!-- Spinner + progress tree -->
+      <p class="mt-1 text-[#FEBC2E]">&nbsp;&nbsp;+ Gerando descricao do PR...</p>
+      <p class="text-muted-foreground">&nbsp;&nbsp;&nbsp;&nbsp;| <span class="text-[#28C840]">✓</span> Dependencias validadas</p>
+      <p class="text-muted-foreground">&nbsp;&nbsp;&nbsp;&nbsp;| <span class="text-[#28C840]">✓</span> Configuracao carregada</p>
+      <p class="text-muted-foreground">&nbsp;&nbsp;&nbsp;&nbsp;| <span class="text-[#28C840]">✓</span> API keys validadas</p>
+      <p class="text-muted-foreground">&nbsp;&nbsp;&nbsp;&nbsp;| <span class="text-[#28C840]">✓</span> Branch validada</p>
+      <p class="text-muted-foreground">&nbsp;&nbsp;&nbsp;&nbsp;| <span class="text-[#28C840]">✓</span> Contexto git coletado (feat/add-streaming)</p>
+      <p class="text-muted-foreground">&nbsp;&nbsp;&nbsp;&nbsp;| <span class="text-[#28C840]">✓</span> Work item: #1042</p>
+      <p class="text-muted-foreground">&nbsp;&nbsp;&nbsp;&nbsp;| <span class="text-[#28C840]">✓</span> Sprint: 42</p>
+      <p class="text-muted-foreground">&nbsp;&nbsp;&nbsp;&nbsp;| <span class="text-[#28C840]">✓</span> Repositório: org/project/repo</p>
+      <p class="text-muted-foreground">&nbsp;&nbsp;&nbsp;&nbsp;| <span class="text-[#28C840]">✓</span> Descrição gerada (groq/llama-3.3-70b-versatile)</p>
+
+      <!-- Separator + metadata -->
+      <p class="mt-3 text-muted-foreground/40">========================================</p>
+      <p class="font-semibold text-foreground">PR - feat/add-streaming</p>
+      <p class="text-muted-foreground">Target branches: dev, sprint/42</p>
+      <p class="text-muted-foreground">Provider: groq (llama-3.3-70b-versatile)</p>
+      <p class="text-muted-foreground">Work Item: #1042</p>
+      <p class="text-muted-foreground/40">========================================</p>
+
+      <!-- PR content -->
+      <p class="mt-3 font-semibold text-[#22D3EE]">Titulo: feat: add streaming response support</p>
+      <p class="mt-3 font-semibold text-foreground">Descrição:</p>
+      <p class="mt-1 text-muted-foreground">&nbsp;&nbsp;## Descricao</p>
+      <p class="text-muted-foreground">&nbsp;&nbsp;Implementa respostas em streaming para reduzir</p>
+      <p class="text-muted-foreground">&nbsp;&nbsp;a latência percebida pelo usuário final.</p>
+      <p class="mt-2 text-muted-foreground">&nbsp;&nbsp;## Alteracoes</p>
+      <p class="mt-1 text-muted-foreground">&nbsp;&nbsp;### Componentes atualizados</p>
+      <p class="text-muted-foreground">&nbsp;&nbsp;· src/providers/groq.sh: Suporte a stream flag</p>
+      <p class="text-muted-foreground">&nbsp;&nbsp;· src/providers/openrouter.sh: Parsing SSE chunks</p>
+      <p class="text-muted-foreground">&nbsp;&nbsp;· src/lib/output.sh: Flush progressivo no terminal</p>
+
+      <p class="mt-3 text-primary">$ <span class="animate-pulse">▌</span></p>
+    </div>
+
+    <!-- Test Card tab (hidden by default) -->
+    <div id="content-test" class="tab-content hidden overflow-y-auto p-6 font-mono text-[0.8125rem] leading-[1.7]">
+      <!-- Shell prompt -->
+      <p class="text-muted-foreground/50">~/my-project on <span class="text-[#28C840]">feat/add-streaming</span> via .NET via <span class="text-[#28C840]">v22.17.1</span></p>
+      <p class="mt-1 font-semibold text-foreground">→ create-test-card --work-item 1042 --pr 847</p>
+
+      <!-- Spinner + progress tree -->
+      <p class="mt-1 text-[#FEBC2E]">&nbsp;&nbsp;+ Gerando card de teste...</p>
+      <p class="text-muted-foreground">&nbsp;&nbsp;&nbsp;&nbsp;| <span class="text-[#28C840]">✓</span> Dependencias validadas</p>
+      <p class="text-muted-foreground">&nbsp;&nbsp;&nbsp;&nbsp;| <span class="text-[#28C840]">✓</span> Configuracao carregada</p>
+      <p class="text-muted-foreground">&nbsp;&nbsp;&nbsp;&nbsp;| <span class="text-[#28C840]">✓</span> Azure PAT validado</p>
+      <p class="text-muted-foreground">&nbsp;&nbsp;&nbsp;&nbsp;| <span class="text-[#28C840]">✓</span> API keys validadas</p>
+      <p class="text-muted-foreground">&nbsp;&nbsp;&nbsp;&nbsp;| <span class="text-[#28C840]">✓</span> Contexto git detectado</p>
+      <p class="text-muted-foreground">&nbsp;&nbsp;&nbsp;&nbsp;| <span class="text-[#28C840]">✓</span> Azure DevOps: org/project</p>
+      <p class="text-muted-foreground">&nbsp;&nbsp;&nbsp;&nbsp;| <span class="text-[#28C840]">✓</span> PR: #847 – feat: add streaming response support</p>
+      <p class="text-muted-foreground">&nbsp;&nbsp;&nbsp;&nbsp;| <span class="text-[#28C840]">✓</span> Work item: #1042 – feat: add streaming</p>
+      <p class="text-muted-foreground">&nbsp;&nbsp;&nbsp;&nbsp;| <span class="text-[#28C840]">✓</span> Alteracoes coletadas</p>
+      <p class="text-muted-foreground">&nbsp;&nbsp;&nbsp;&nbsp;| <span class="text-[#28C840]">✓</span> Exemplos coletados</p>
+      <p class="text-muted-foreground">&nbsp;&nbsp;&nbsp;&nbsp;| <span class="text-[#28C840]">✓</span> Campos resolvidos</p>
+      <p class="text-muted-foreground">&nbsp;&nbsp;&nbsp;&nbsp;| <span class="text-[#28C840]">✓</span> Card gerado (groq/llama-3.3-70b-versatile)</p>
+
+      <!-- Separator + metadata -->
+      <p class="mt-3 text-muted-foreground/40">========================================</p>
+      <p class="font-semibold text-foreground">Test Card - PR #847</p>
+      <p class="text-muted-foreground/40">========================================</p>
+      <p class="text-muted-foreground">Provider: groq (llama-3.3-70b-versatile)</p>
+      <p class="text-muted-foreground">Work Item pai: #1042 - feat: add streaming</p>
+      <p class="text-muted-foreground">AreaPath Teste: ORG\Devops</p>
+
+      <!-- Test card content -->
+      <p class="mt-3 font-semibold text-[#22D3EE]">Titulo: Teste funcional para streaming de respostas</p>
+
+      <p class="mt-3 text-muted-foreground">## Objetivo</p>
+      <p class="text-muted-foreground">Validar o comportamento de streaming progressivo</p>
+      <p class="text-muted-foreground">nas respostas dos providers Groq e OpenRouter.</p>
+
+      <p class="mt-2 text-muted-foreground">## Cenário base</p>
+      <p class="text-muted-foreground">1. Executar create-pr-description em branch válida</p>
+      <p class="text-muted-foreground">2. Verificar exibição progressiva do texto no terminal</p>
+      <p class="text-muted-foreground">3. Confirmar que PR é criado com descrição completa</p>
+
+      <p class="mt-3 text-primary">$ <span class="animate-pulse">▌</span></p>
+    </div>
+  </div>
+</section>
+
+<script>
+  const tabs = document.querySelectorAll<HTMLButtonElement>(".tab-btn");
+  const contents = document.querySelectorAll<HTMLElement>(".tab-content");
+
+  tabs.forEach((tab) => {
+    tab.addEventListener("click", () => {
+      const target = tab.dataset.tab!;
+
+      tabs.forEach((t) => {
+        const isActive = t.dataset.tab === target;
+        t.classList.toggle("border-primary", isActive);
+        t.classList.toggle("text-foreground", isActive);
+        t.classList.toggle("border-transparent", !isActive);
+        t.classList.toggle("text-muted-foreground", !isActive);
+      });
+
+      contents.forEach((c) => {
+        c.classList.toggle("hidden", c.id !== `content-${target}`);
+      });
+    });
+  });
+</script>

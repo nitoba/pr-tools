@@ -1,0 +1,101 @@
+---
+const installCmd =
+  "curl -fsSL https://raw.githubusercontent.com/nitoba/pr-tools/main/install.sh | bash";
+---
+
+<section id="install" class="mx-auto max-w-7xl px-6 py-24 lg:px-10">
+  <div class="text-center">
+    <p
+      class="mb-3 font-mono text-[0.7rem] font-semibold uppercase tracking-[0.2em] text-primary"
+    >
+      Instalação
+    </p>
+    <h2
+      class="mb-10 text-3xl font-bold tracking-[-0.03em] text-foreground md:text-4xl"
+    >
+      Pronto em 30 segundos.
+    </h2>
+
+    <div
+      class="mx-auto flex max-w-2xl items-center gap-3 overflow-hidden rounded-lg border border-border bg-card px-4 py-3"
+    >
+      <code
+        id="install-cmd"
+        class="flex-1 overflow-x-auto whitespace-nowrap px-2 font-mono text-sm text-secondary-foreground"
+      >
+        {installCmd}
+      </code>
+
+      <button
+        id="copy-btn"
+        data-cmd={installCmd}
+        aria-label="Copiar comando"
+        class="group flex shrink-0 items-center gap-1.5 rounded-md border border-border bg-secondary px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
+      >
+        <!-- Copy icon -->
+        <svg
+          id="icon-copy"
+          xmlns="http://www.w3.org/2000/svg"
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <rect width="14" height="14" x="8" y="8" rx="2" ry="2"></rect>
+          <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path>
+        </svg>
+        <!-- Check icon (hidden by default) -->
+        <svg
+          id="icon-check"
+          xmlns="http://www.w3.org/2000/svg"
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2.5"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          class="hidden text-[#28C840]"
+          aria-hidden="true"
+        >
+          <path d="M20 6 9 17l-5-5"></path>
+        </svg>
+        <span id="copy-label">Copiar</span>
+      </button>
+    </div>
+
+    <p class="mt-4 font-mono text-xs text-muted-foreground/60">
+      Requer: git · curl · jq · Bash 4+
+    </p>
+  </div>
+</section>
+
+<script>
+  const btn = document.getElementById("copy-btn")!;
+  const iconCopy = document.getElementById("icon-copy")!;
+  const iconCheck = document.getElementById("icon-check")!;
+  const label = document.getElementById("copy-label")!;
+
+  btn.addEventListener("click", async () => {
+    const cmd = btn.dataset.cmd!;
+    await navigator.clipboard.writeText(cmd);
+
+    iconCopy.classList.add("hidden");
+    iconCheck.classList.remove("hidden");
+    label.textContent = "Copiado!";
+    btn.classList.add("border-[#28C840]/40", "text-[#28C840]");
+
+    setTimeout(() => {
+      iconCopy.classList.remove("hidden");
+      iconCheck.classList.add("hidden");
+      label.textContent = "Copiar";
+      btn.classList.remove("border-[#28C840]/40", "text-[#28C840]");
+    }, 2000);
+  });
+</script>
