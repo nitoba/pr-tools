@@ -58,6 +58,9 @@
         "resend": "^6.10.0",
         "tailwindcss": "^4.2.2",
       },
+      "devDependencies": {
+        "wrangler": "^4.80.0",
+      },
     },
   },
   "packages": {
