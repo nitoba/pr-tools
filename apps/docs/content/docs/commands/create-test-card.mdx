@@ -5,4 +5,111 @@ description: Gera cards de teste a partir de PR e Work Item do Azure DevOps
 
 # create-test-card
 
-Conteúdo em breve.
+Gera um card de teste (Test Case) em Markdown a partir de um PR e seu work item pai no Azure DevOps, usando um LLM. Pode criar o Test Case filho automaticamente no Azure DevOps.
+
+## Uso
+
+```bash
+create-test-card [opções]
+```
+
+## Flags
+
+| Flag | Argumento | Descrição |
+|------|-----------|-----------|
+| `--pr <id>` | ID numérico | ID do PR no Azure DevOps (override da detecção automática) |
+| `--work-item <id>` | ID numérico | ID do work item pai (override da detecção automática) |
+| `--project <nome>` | nome do projeto | Projeto do Azure DevOps (override) |
+| `--area-path <path>` | caminho | AreaPath para criação do Test Case (override) |
+| `--assigned-to <valor>` | email | Responsável pelo Test Case (override) |
+| `--no-create` | — | Gera o card em Markdown mas não tenta criar no Azure DevOps |
+| `--dry-run` | — | Mostra prompts e preview sem chamar o LLM nem criar |
+| `--debug` | — | Exibe detalhes de diagnóstico |
+| `--init` | — | Inicializa ou atualiza a configuração interativamente |
+| `--update` | — | Atualiza o script para a versão mais recente |
+| `--help` | — | Mostra a ajuda |
+
+## Exemplos
+
+```bash
+# Detecta PR e work item automaticamente da branch atual
+create-test-card
+
+# Para um PR específico
+create-test-card --pr 10513
+
+# PR e work item explícitos
+create-test-card --pr 10513 --work-item 11796
+
+# Gera o Markdown sem criar no Azure DevOps
+create-test-card --no-create
+
+# Ver prompts e payload sem chamar o LLM
+create-test-card --dry-run --debug
+
+# Sobrescrever AreaPath e responsável
+create-test-card --area-path "MEU-PROJETO\\QA" --assigned-to "qa@empresa.com"
+```
+
+## Autodetecção de PR e work item
+
+Quando executado sem flags, o comando tenta detectar automaticamente:
+
+1. **Work item** — extrai do nome da branch atual (ex: `feat/1234-login` → `1234`)
+2. **PR** — busca PR ativo no Azure DevOps associado à branch atual
+3. **Work item pai** — lê o work item vinculado ao PR encontrado
+
+Se a detecção falhar em algum ponto, o comando informa o que não foi encontrado e pede para informar manualmente via flag.
+
+## Output esperado
+
+```
+==========================================
+Test Card - PR #10513
+==========================================
+Provider: groq (qwen/qwen3-32b)
+Work Item pai: #11796 - Novo tipo de pergunta: Anexo (upload de documentos)
+AreaPath Teste: AGROTRACE\Devops
+Responsável: qa@empresa.com
+
+Titulo: Testar novo tipo de pergunta 'Anexo' no CMS e formulários
+
+## Objetivo
+Validar a implementação do novo tipo de pergunta "Anexo"...
+
+## Cenario base
+1. Cadastro no CMS...
+2. Configuração da estrutura...
+3. Resposta do produtor...
+
+## Checklist de testes
+- [ ] Opção Anexo aparece no CMS...
+- [ ] Campo de tamanho máximo respeita valor padrão...
+- [ ] Upload acima do limite exibe erro...
+
+## Resultado esperado
+O tipo de pergunta Anexo funciona corretamente...
+
+Criar Test Case no Azure DevOps? [s/N]
+[OK] Test Case criado com sucesso: #12345
+https://dev.azure.com/org/project/_workitems/edit/12345
+==========================================
+```
+
+## Fallback quando o Azure DevOps bloqueia
+
+Alguns projetos no Azure DevOps têm regras de processo que impedem a criação de Test Cases via API. Quando isso ocorre:
+
+- O script mantém o Markdown gerado visível no terminal
+- Informa que a criação automática falhou com a mensagem de erro do Azure DevOps
+- O card pode ser criado manualmente colando o conteúdo na interface web
+
+<Callout type="info">
+  No projeto AGROTRACE, os Test Cases são criados com `Priority = 2`, `Team = DevOps` e `Programas Agrotrace = Agrotrace` como defaults além do AreaPath e responsável configurados.
+</Callout>
+
+## Configuração relacionada
+
+- [Configuração completa](/docs/getting-started/configuration)
+- [Variáveis de ambiente](/docs/reference/environment-variables)
+- [Configurando o Azure DevOps](/docs/guides/azure-devops)
