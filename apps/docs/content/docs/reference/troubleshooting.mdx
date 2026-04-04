@@ -5,4 +5,129 @@ description: Soluções para problemas comuns
 
 # Troubleshooting
 
-Conteúdo em breve.
+## Comando não encontrado após instalação
+
+**Sintoma:** `command not found: create-pr-description` após rodar o script de instalação.
+
+**Causa:** `~/.local/bin` não está no PATH.
+
+**Solução:**
+
+```bash
+# Adicione ao ~/.bashrc, ~/.zshrc ou ~/.config/fish/config.fish
+export PATH="$HOME/.local/bin:$PATH"
+
+# Recarregue o shell
+source ~/.bashrc
+```
+
+## API key inválida ou sem cota
+
+**Sintoma:** Erro `401 Unauthorized` ou `429 Too Many Requests` ao chamar o LLM.
+
+**Causa:** API key inválida, expirada ou limite de requisições atingido.
+
+**Solução:**
+
+1. Verifique se a API key está correta no `.env`: `cat ~/.config/pr-tools/.env`
+2. Verifique se há cota disponível no painel do provider
+3. Configure um provider alternativo como fallback:
+
+```bash
+# Adicionar Groq como fallback do OpenRouter
+PR_PROVIDERS="openrouter,groq"
+```
+
+## Azure PAT sem permissão
+
+**Sintoma:** Erro `401` ou `403` ao criar PR ou Test Case no Azure DevOps.
+
+**Causa:** O PAT não tem as permissões necessárias ou expirou.
+
+**Solução:**
+
+1. Acesse `https://dev.azure.com/<sua-org>` → ícone do usuário → **Personal access tokens**
+2. Crie um novo token com as permissões: **Code: Read & Write** e **Work Items: Read & Write**
+3. Atualize o token no `.env`:
+
+```bash
+create-pr-description --init
+```
+
+## `jq` não instalado
+
+**Sintoma:** `jq: command not found` ao executar qualquer comando.
+
+**Causa:** `jq` é uma dependência obrigatória não instalada.
+
+**Solução:**
+
+```bash
+# Debian/Ubuntu
+sudo apt install jq
+
+# macOS
+brew install jq
+
+# Fedora
+sudo dnf install jq
+```
+
+## Clipboard não funciona
+
+**Sintoma:** Mensagem de aviso sobre clipboard mas a descrição é exibida normalmente.
+
+**Causa:** Nenhuma ferramenta de clipboard disponível (`pbcopy`, `wl-copy`, `xclip`, `xsel`).
+
+**Solução:**
+
+```bash
+# Linux com Wayland
+sudo apt install wl-clipboard
+
+# Linux com X11
+sudo apt install xclip
+# ou
+sudo apt install xsel
+```
+
+macOS usa `pbcopy` nativamente — não precisa instalar nada.
+
+## Fallback de provider inesperado
+
+**Sintoma:** O output mostra um provider diferente do configurado como principal.
+
+**Causa:** O provider principal falhou (sem cota, timeout, erro de rede) e o fallback foi acionado.
+
+**Comportamento esperado:** O script tenta os providers na ordem definida em `PR_PROVIDERS` e usa o primeiro que responder com sucesso. O provider e modelo usados são sempre exibidos no output.
+
+**Para forçar um provider específico:**
+
+```bash
+PR_PROVIDERS="groq" create-pr-description
+```
+
+## Bash version incompatível (macOS)
+
+**Sintoma:** Erros de sintaxe como `syntax error near unexpected token` no macOS.
+
+**Causa:** O macOS vem com Bash 3.x por padrão, incompatível com os scripts que requerem Bash 4+.
+
+**Solução:**
+
+```bash
+brew install bash
+# O script de instalação detecta e usa o Bash correto automaticamente
+```
+
+## Bibliotecas não encontradas
+
+**Sintoma:** `[ERRO] Falha ao baixar` ao executar o comando.
+
+**Causa:** As bibliotecas compartilhadas foram removidas ou corrompidas.
+
+**Solução:** Reinstale o pr-tools:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/nitoba/pr-tools/main/install.sh | bash
+```
