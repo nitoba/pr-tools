@@ -303,7 +303,6 @@ function renderBody(contentHtml, t) {
 }
 
 function renderCta(t) {
-  const labelStyle  = `font-family:${FONT_SANS};font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:${t.textMuted};margin:0 0 14px;padding:0;text-align:center`
   const buttonStyle = `display:inline-block;background:${t.accent};color:${t.accentText};text-decoration:none;padding:11px 28px;border-radius:9999px;font-family:${FONT_SANS};font-size:14px;font-weight:600;letter-spacing:.2px;line-height:1`
 
   return (
@@ -312,7 +311,6 @@ function renderCta(t) {
     spacer(20) +
     row(
       td('text-align:center',
-        `<p style="${labelStyle}">Documentação completa</p>` +
         `<a href="https://pr-tools.dev/docs" style="${buttonStyle}">Ver documentação &rarr;</a>`
       )
     ) +
@@ -365,7 +363,7 @@ function darkModeStyles() {
 // ─── Full HTML document ──────────────────────────────────────────────────────
 
 function renderEmail(tag, markdown) {
-  const t = LIGHT
+  const t = DARK
   const bodyRows =
     renderHeader(tag, t) +
     spacer(0) +
