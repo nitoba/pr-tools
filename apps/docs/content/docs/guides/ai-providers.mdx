@@ -1,8 +1,102 @@
 ---
 title: Escolhendo providers de IA
-description: Comparação entre OpenRouter, Groq e Google Gemini
+description: Comparação entre OpenRouter, Groq, Google Gemini e Ollama
 ---
 
 # Escolhendo providers de IA
 
-Conteúdo em breve.
+O pr-tools suporta quatro providers de IA. Você pode configurar um ou mais — quando há múltiplos, o fallback automático tenta o próximo se o atual falhar ou estiver sem cota.
+
+## Comparação
+
+| Provider | Plano gratuito | Velocidade | Modelo padrão |
+|----------|----------------|------------|---------------|
+| [OpenRouter](https://openrouter.ai) | Sim (modelos `:free`) | Variável por modelo | `meta-llama/llama-3.3-70b-instruct:free` |
+| [Groq](https://console.groq.com) | Sim | Muito rápido | `llama-3.3-70b-versatile` |
+| [Google Gemini](https://aistudio.google.com) | Sim | Rápido | `gemini-3.1-flash-lite-preview` |
+| Ollama | Sim (local/cloud) | Depende do hardware | `qwen3.5:cloud` |
+
+## OpenRouter
+
+Agrega centenas de modelos de diferentes provedores em uma única API. Ideal para experimentar modelos diferentes sem múltiplas contas.
+
+```bash
+# Obter API key: https://openrouter.ai
+OPENROUTER_API_KEY="sk-or-..."
+
+# Mudar modelo
+create-pr-description --set-openrouter-model qwen/qwen3-4b:free
+```
+
+Modelos gratuitos populares: `meta-llama/llama-3.3-70b-instruct:free`, `qwen/qwen3-4b:free`, `qwen/qwen3-32b:free`
+
+## Groq
+
+Inferência de alta velocidade. O mais rápido para modelos de tamanho médio. Plano gratuito com limite de requisições por minuto.
+
+```bash
+# Obter API key: https://console.groq.com
+GROQ_API_KEY="gsk_..."
+
+# Mudar modelo
+create-pr-description --set-groq-model qwen/qwen3-32b
+```
+
+Modelos populares: `llama-3.3-70b-versatile`, `qwen/qwen3-32b`, `llama3-8b-8192`
+
+## Google Gemini
+
+API do Google. Plano gratuito generoso (requisições por dia). Boa qualidade para geração de texto em português.
+
+```bash
+# Obter API key: https://aistudio.google.com
+GEMINI_API_KEY="..."
+
+# Mudar modelo
+create-pr-description --set-gemini-model gemini-2.0-flash
+```
+
+Modelos populares: `gemini-3.1-flash-lite-preview`, `gemini-2.0-flash`, `gemini-1.5-pro`
+
+## Ollama
+
+Executa modelos localmente ou via Ollama Cloud. Útil para uso offline ou privacidade de código.
+
+```bash
+# Obter API key para Ollama Cloud: https://ollama.com
+OLLAMA_API_KEY="oa-..."
+
+# Mudar modelo
+create-pr-description --set-ollama-model llama3.2:latest
+```
+
+<Callout type="info">
+  Para uso local com Ollama (sem API key), deixe `OLLAMA_API_KEY` em branco e certifique-se de que o servidor Ollama está rodando em `localhost:11434`.
+</Callout>
+
+## Fallback automático
+
+Quando há múltiplos providers em `PR_PROVIDERS`, o script tenta na ordem definida:
+
+```bash
+# Tenta openrouter primeiro, depois groq, depois gemini
+PR_PROVIDERS="openrouter,groq,gemini"
+```
+
+Se o provider atual falhar (erro de API, sem cota, timeout), o próximo é tentado automaticamente. O provider e modelo usados são exibidos no output.
+
+## Configurar múltiplos providers
+
+```bash
+# ~/.config/pr-tools/.env
+PR_PROVIDERS="openrouter,groq,gemini,ollama"
+
+OPENROUTER_API_KEY="sk-or-..."
+GROQ_API_KEY="gsk_..."
+GEMINI_API_KEY="..."
+OLLAMA_API_KEY="oa-..."
+```
+
+<Callout type="info">
+  Configure pelo menos dois providers para ter fallback em caso de indisponibilidade ou limite de requisições.
+</Callout>
