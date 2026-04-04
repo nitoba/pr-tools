@@ -5,4 +5,77 @@ description: Referência completa de todas as variáveis configuráveis
 
 # Variáveis de ambiente
 
-Conteúdo em breve.
+Todas as variáveis abaixo podem ser definidas no arquivo `~/.config/pr-tools/.env` ou como variáveis de ambiente no shell. Variáveis de ambiente do shell têm prioridade sobre o `.env`.
+
+## Providers
+
+| Variável | Descrição | Padrão |
+|----------|-----------|--------|
+| `PR_PROVIDERS` | Lista de providers ativos, separados por vírgula. Define a ordem de fallback. | `openrouter,groq,gemini,ollama` |
+
+## API Keys
+
+| Variável | Descrição | Exemplo |
+|----------|-----------|---------|
+| `OPENROUTER_API_KEY` | API key do OpenRouter | `sk-or-v1-...` |
+| `GROQ_API_KEY` | API key do Groq | `gsk_...` |
+| `GEMINI_API_KEY` | API key do Google Gemini | `AIza...` |
+| `OLLAMA_API_KEY` | API key do Ollama Cloud (opcional para uso local) | `oa-...` |
+
+## Modelos
+
+| Variável | Descrição | Padrão |
+|----------|-----------|--------|
+| `OPENROUTER_MODEL` | Modelo usado pelo OpenRouter | `meta-llama/llama-3.3-70b-instruct:free` |
+| `GROQ_MODEL` | Modelo usado pelo Groq | `llama-3.3-70b-versatile` |
+| `GEMINI_MODEL` | Modelo usado pelo Google Gemini | `gemini-3.1-flash-lite-preview` |
+| `OLLAMA_MODEL` | Modelo usado pelo Ollama | `qwen3.5:cloud` |
+
+## Azure DevOps
+
+| Variável | Descrição | Exemplo |
+|----------|-----------|---------|
+| `AZURE_PAT` | Personal Access Token do Azure DevOps | `your-token` |
+| `PR_REVIEWER_DEV` | Email do reviewer padrão para PRs para dev | `dev-reviewer@empresa.com` |
+| `PR_REVIEWER_SPRINT` | Email do reviewer padrão para PRs para sprint | `sprint-reviewer@empresa.com` |
+
+## Test Cases
+
+| Variável | Descrição | Exemplo |
+|----------|-----------|---------|
+| `TEST_CARD_AREA_PATH` | AreaPath padrão para criação de Test Cases | `MEU-PROJETO\\Devops` |
+| `TEST_CARD_ASSIGNED_TO` | Responsável padrão para Test Cases | `qa@empresa.com` |
+
+## Exemplo completo do .env
+
+```bash
+# ~/.config/pr-tools/.env
+
+# Providers ativos
+PR_PROVIDERS="openrouter,groq,gemini"
+
+# API Keys
+OPENROUTER_API_KEY="sk-or-..."
+GROQ_API_KEY="gsk_..."
+GEMINI_API_KEY="..."
+
+# Azure DevOps
+AZURE_PAT="seu-pat-token"
+
+# Modelos (descomente para sobrescrever o padrão)
+# OPENROUTER_MODEL="meta-llama/llama-3.3-70b-instruct:free"
+# GROQ_MODEL="llama-3.3-70b-versatile"
+# GEMINI_MODEL="gemini-3.1-flash-lite-preview"
+
+# Reviewers padrão
+# PR_REVIEWER_DEV="dev@empresa.com"
+# PR_REVIEWER_SPRINT="sprint@empresa.com"
+
+# Test Cases
+# TEST_CARD_AREA_PATH="MEU-PROJETO\\Devops"
+# TEST_CARD_ASSIGNED_TO="qa@empresa.com"
+```
+
+<Callout type="info">
+  Variáveis de ambiente do shell sempre sobrescrevem o `.env`. Flags CLI sobrescrevem ambos. Veja [precedência de configuração](/docs/getting-started/configuration#precedência-de-configuração) para detalhes.
+</Callout>
