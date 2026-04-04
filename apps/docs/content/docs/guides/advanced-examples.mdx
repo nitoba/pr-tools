@@ -5,4 +5,99 @@ description: Casos de uso avançados com flags e variáveis de ambiente
 
 # Exemplos avançados
 
-Conteúdo em breve.
+## PR para branch específica sem fazer checkout
+
+Use `--source` para gerar a descrição de uma branch diferente da atual, sem precisar fazer `git checkout`:
+
+```bash
+create-pr-description --source feature/1234-novo-relatorio
+```
+
+Combinado com `--target` para especificar o alvo:
+
+```bash
+create-pr-description --source feature/1234-novo-relatorio --target dev
+```
+
+## Vincular work item manualmente
+
+Quando a branch não segue o padrão `feat/<id>-descricao`, use `--work-item`:
+
+```bash
+create-pr-description --work-item 11763
+```
+
+## Gerar Test Case sem criar no Azure DevOps
+
+Útil para revisar o conteúdo antes de criar, ou quando não há conexão com o Azure DevOps:
+
+```bash
+create-test-card --no-create
+```
+
+## Inspecionar o prompt enviado ao LLM
+
+Veja exatamente o que é enviado para o modelo antes de decidir se vai chamar a API:
+
+```bash
+# Mostra o prompt sem chamar o LLM
+create-pr-description --dry-run
+
+# Para o test card, com detalhes de diagnóstico
+create-test-card --dry-run --debug
+```
+
+## Sobrescrever modelo sem alterar o .env
+
+Use variável de ambiente para um único comando sem salvar permanentemente:
+
+```bash
+# Usar um modelo diferente só desta vez
+GROQ_MODEL="qwen/qwen3-32b" create-pr-description
+
+# Usar OpenRouter com modelo específico
+OPENROUTER_MODEL="qwen/qwen3-4b:free" create-pr-description --target dev
+```
+
+## Forçar uso de um único provider
+
+Defina `PR_PROVIDERS` com apenas um provider via variável de ambiente:
+
+```bash
+PR_PROVIDERS="gemini" create-pr-description
+```
+
+## PR apenas para dev (sem sprint)
+
+```bash
+create-pr-description --target dev
+```
+
+## Test card para PR e work item explícitos
+
+Quando a branch não tem o work item no nome ou o PR não é detectado automaticamente:
+
+```bash
+create-test-card --pr 10513 --work-item 11796
+```
+
+Com AreaPath e responsável específicos:
+
+```bash
+create-test-card --pr 10513 --work-item 11796 \
+  --area-path "MEU-PROJETO\\QA" \
+  --assigned-to "qa@empresa.com"
+```
+
+## Saída sem formatação para pipelines CI
+
+```bash
+create-pr-description --raw --target dev
+```
+
+## Salvar novo modelo permanentemente
+
+```bash
+# Salva no .env e sai (sem gerar PR)
+create-pr-description --set-groq-model qwen/qwen3-32b
+```
