@@ -7,7 +7,8 @@
     "postinstall": "bun scripts/postinstall.ts",
     "dev": "vite dev",
     "build": "vite build",
-    "start": "node .output/server/index.mjs"
+    "start": "node .output/server/index.mjs",
+    "deploy": "vite build && wrangler deploy"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.2.2",
@@ -20,11 +21,13 @@
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.31.0",
     "@types/mdx": "^2.0.13",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "latest",
     "typescript": "^5.9.3",
-    "vite": "latest"
+    "vite": "latest",
+    "wrangler": "^4.80.0"
   }
 }

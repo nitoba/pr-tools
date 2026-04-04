@@ -1,4 +1,4 @@
-import node from '@astrojs/node'
+import cloudflare from '@astrojs/cloudflare'
 import react from '@astrojs/react'
 import tailwindcss from '@tailwindcss/vite'
 import { defineConfig } from 'astro/config'
@@ -11,7 +11,9 @@ const version = readFileSync(resolve(__dirname, '../cli/VERSION'), 'utf-8').trim
 
 export default defineConfig({
   output: 'server',
-  adapter: node({ mode: 'standalone' }),
+  adapter: cloudflare({
+    platformProxy: { enabled: true },
+  }),
   integrations: [react()],
   vite: {
     plugins: [tailwindcss()],

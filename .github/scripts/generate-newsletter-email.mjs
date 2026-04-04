@@ -311,7 +311,7 @@ function renderCta(t) {
     spacer(20) +
     row(
       td('text-align:center',
-        `<a href="https://pr-tools.dev/docs" style="${buttonStyle}">Ver documentação &rarr;</a>`
+        `<a href="https://docs-pr-tools.nitodev.com.br" style="${buttonStyle}">Ver documentação &rarr;</a>`
       )
     ) +
     spacer(24)
@@ -328,7 +328,7 @@ function renderFooter(t) {
       td(wrapStyle,
         `<p style="${textStyle}">pr-tools &middot; ` +
         `<a href="https://github.com/nitoba/pr-tools" style="${linkStyle}">GitHub</a> &middot; ` +
-        `<a href="https://pr-tools.dev/docs" style="${linkStyle}">Docs</a></p>` +
+        `<a href="https://docs-pr-tools.nitodev.com.br" style="${linkStyle}">Docs</a></p>` +
         `<p style="${textStyle}">` +
         `<a href="{{unsubscribe_url}}" style="${linkStyle}">Cancelar inscri&ccedil;&atilde;o</a></p>`
       )
