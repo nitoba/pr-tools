@@ -47,9 +47,38 @@ jobs:
           zip -r "$DIST_DIR.zip" "$DIST_DIR"
           echo "DIST_FILE=$DIST_DIR.zip" >> "$GITHUB_ENV"
 
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/cli-go/go.mod
+
+      - name: Install GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: latest
+          install-only: true
+
+      - name: Build prt release artifacts
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: latest
+          args: release --clean --skip=publish --config .goreleaser.prt.yml
+
+      - name: Collect prt asset list
+        run: |
+          shopt -s nullglob
+          assets=(dist/*.tar.gz dist/*.zip dist/prt_*_checksums.txt)
+          test ${#assets[@]} -gt 0
+          printf 'PRT_ASSETS<<EOF\n' >> "$GITHUB_ENV"
+          printf '%s\n' "${assets[@]}" >> "$GITHUB_ENV"
+          printf 'EOF\n' >> "$GITHUB_ENV"
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           body: ${{ steps.changelog.outputs.changelog }}
           prerelease: ${{ contains(github.ref_name, '-') }}
-          files: ${{ env.DIST_FILE }}
+          files: |
+            ${{ env.DIST_FILE }}
+            ${{ env.PRT_ASSETS }}
