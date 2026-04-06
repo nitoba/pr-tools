@@ -39,7 +39,7 @@ func TestSetEnvVar_UpdatesExistingKey(t *testing.T) {
 	assert.NotContains(t, string(content), `SOME_KEY="old"`)
 }
 
-func TestSetEnvVar_AppendsBeforeManagedBlockEnd(t *testing.T) {
+func TestSetEnvVar_AppendsAfterManagedBlockEnd(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".env")
 
@@ -62,7 +62,7 @@ func TestSetEnvVar_AppendsBeforeManagedBlockEnd(t *testing.T) {
 			endIdx = i
 		}
 	}
-	assert.Less(t, newKeyIdx, endIdx, "NEW_KEY should appear before block end")
+	assert.Greater(t, newKeyIdx, endIdx, "NEW_KEY should appear after block end (outside the managed block)")
 }
 
 func TestSetEnvVar_AppendsAtEndIfNoBlock(t *testing.T) {

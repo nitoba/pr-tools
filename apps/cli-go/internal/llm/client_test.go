@@ -81,7 +81,7 @@ func TestFallbackClient_AllFail(t *testing.T) {
 
 	resp, provider, err := fc.Chat(context.Background(), "system prompt", "user prompt")
 	require.Error(t, err)
-	assert.Equal(t, "all providers failed", err.Error())
+	assert.Contains(t, err.Error(), "todos os provedores falharam")
 	assert.Empty(t, resp)
 	assert.Empty(t, provider)
 }

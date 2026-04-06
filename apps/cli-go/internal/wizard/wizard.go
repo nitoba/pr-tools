@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -37,6 +38,9 @@ func Run(stdin io.Reader, stderr io.Writer, envPath string) error {
 	fprintln(stderr, cyan("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"))
 	fprintln(stderr, cyan(" PRT — Setup Wizard"))
 	fprintln(stderr, cyan("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"))
+
+	// Ensure pr-template.md exists in the same directory as the .env file
+	ensurePRTemplate(stderr, envPath)
 
 	cfg := loadEnv(envPath)
 
@@ -196,6 +200,37 @@ func configureReviewer(stdin io.Reader, stderr io.Writer, envPath, envKey, label
 	}
 }
 
+// ensurePRTemplate creates pr-template.md in the config dir if it does not already exist.
+func ensurePRTemplate(stderr io.Writer, envPath string) {
+	templatePath := filepath.Join(filepath.Dir(envPath), "pr-template.md")
+	if _, err := os.Stat(templatePath); err == nil {
+		return // already exists
+	}
+	if err := os.WriteFile(templatePath, []byte(defaultPRTemplate), 0o644); err != nil {
+		_, _ = fmt.Fprintf(stderr, "[AVISO] Nao foi possivel criar pr-template.md: %v\n", err)
+		return
+	}
+	_, _ = fmt.Fprintf(stderr, "[INFO] Template criado em %s\n", templatePath)
+}
+
+const defaultPRTemplate = `Analise o diff e log do git fornecidos e gere um TITULO e uma DESCRIÇÃO de PR em portugues brasileiro.
+
+IMPORTANTE: A PRIMEIRA LINHA da sua resposta DEVE ser o titulo neste formato exato:
+TITULO: <texto curto e descritivo, max 80 caracteres>
+
+Depois do titulo, siga este formato para a descrição:
+## Descrição
+<Resumo conciso>
+
+## Alterações
+<Lista de componentes alterados>
+
+## Tipo de mudança
+- [ ] Bug fix
+- [ ] Nova feature
+- [ ] Breaking change
+- [ ] Refactoring`
+
 func testAndSave(stderr io.Writer, envPath, key, value string, test func(string) bool) {
 	_, _ = fmt.Fprint(stderr, "  Testando credencial... ")
 	if test(value) {
@@ -320,13 +355,12 @@ func mask(s string) string {
 var httpClient = &http.Client{Timeout: 10 * time.Second}
 
 func testOpenRouter(key string) bool {
-	body := `{"model":"meta-llama/llama-3.3-70b-instruct:free","messages":[{"role":"user","content":"ok"}],"max_tokens":1}`
-	req, err := http.NewRequest(http.MethodPost, "https://openrouter.ai/api/v1/chat/completions", strings.NewReader(body))
+	// Use lightweight models list endpoint instead of chat completion
+	req, err := http.NewRequest(http.MethodGet, "https://openrouter.ai/api/v1/models", nil)
 	if err != nil {
 		return false
 	}
 	req.Header.Set("Authorization", "Bearer "+key)
-	req.Header.Set("Content-Type", "application/json")
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return false
@@ -336,13 +370,12 @@ func testOpenRouter(key string) bool {
 }
 
 func testGroq(key string) bool {
-	body := `{"model":"llama-3.3-70b-versatile","messages":[{"role":"user","content":"ok"}],"max_tokens":1}`
-	req, err := http.NewRequest(http.MethodPost, "https://api.groq.com/openai/v1/chat/completions", strings.NewReader(body))
+	// Use lightweight models list endpoint instead of chat completion
+	req, err := http.NewRequest(http.MethodGet, "https://api.groq.com/openai/v1/models", nil)
 	if err != nil {
 		return false
 	}
 	req.Header.Set("Authorization", "Bearer "+key)
-	req.Header.Set("Content-Type", "application/json")
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return false
@@ -352,13 +385,12 @@ func testGroq(key string) bool {
 }
 
 func testGemini(key string) bool {
-	url := "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=" + key
-	body := `{"contents":[{"parts":[{"text":"ok"}]}]}`
-	req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(body))
+	// Use lightweight models list endpoint instead of generateContent
+	url := "https://generativelanguage.googleapis.com/v1beta/models?key=" + key
+	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return false
 	}
-	req.Header.Set("Content-Type", "application/json")
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return false
@@ -368,13 +400,12 @@ func testGemini(key string) bool {
 }
 
 func testOllama(key string) bool {
-	body := `{"model":"qwen3.5:cloud","messages":[{"role":"user","content":"ok"}],"max_tokens":1}`
-	req, err := http.NewRequest(http.MethodPost, "https://ollama.com/v1/chat/completions", strings.NewReader(body))
+	// Use lightweight models list endpoint
+	req, err := http.NewRequest(http.MethodGet, "https://ollama.com/v1/models", nil)
 	if err != nil {
 		return false
 	}
 	req.Header.Set("Authorization", "Bearer "+key)
-	req.Header.Set("Content-Type", "application/json")
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return false
@@ -384,7 +415,8 @@ func testOllama(key string) bool {
 }
 
 func testAzurePAT(pat string) bool {
-	req, err := http.NewRequest(http.MethodGet, "https://dev.azure.com/_apis/profile/profiles/me?api-version=7.0", nil)
+	// Use the VSSPS profile endpoint (works without org context)
+	req, err := http.NewRequest(http.MethodGet, "https://app.vssps.visualstudio.com/_apis/profile/profiles/me?api-version=6.0", nil)
 	if err != nil {
 		return false
 	}
