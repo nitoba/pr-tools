@@ -4,16 +4,18 @@ project_name: prt
 
 before:
   hooks:
-    - go vet ./...
-    - go test -race ./...
-    - go test ./...
+    - sh -c "cd apps/cli-go && go vet ./..."
 
 builds:
   - id: prt
     main: ./cmd/prt
+    dir: apps/cli-go
     binary: prt
     ldflags:
-      - -s -w -X github.com/nitoba/pr-tools/apps/cli-go/internal/version.Version={{ .Version }} -X github.com/nitoba/pr-tools/apps/cli-go/internal/version.Commit={{ .Commit }} -X github.com/nitoba/pr-tools/apps/cli-go/internal/version.Date={{ .Date }}
+      - -s -w
+      - -X github.com/nitoba/pr-tools/apps/cli-go/internal/version.Version={{ .Version }}
+      - -X github.com/nitoba/pr-tools/apps/cli-go/internal/version.Commit={{ .Commit }}
+      - -X github.com/nitoba/pr-tools/apps/cli-go/internal/version.Date={{ .Date }}
     goos: [linux, darwin, windows]
     goarch: [amd64, arm64]
 

@@ -25,52 +25,20 @@ jobs:
           chmod +x /usr/local/bin/git-cliff
 
       - name: Generate changelog
-        id: changelog
         run: |
           TAG=${GITHUB_REF#refs/tags/}
-          git-cliff --tag "$TAG" > changelog.md
-          echo "changelog<<CHANGELOG_EOF" >> "$GITHUB_OUTPUT"
-          cat changelog.md >> "$GITHUB_OUTPUT"
-          echo "CHANGELOG_EOF" >> "$GITHUB_OUTPUT"
-
-      - name: Package release assets
-        run: |
-          # Bash CLI assets no longer included in releases
-          # All releases now use the Go CLI (prt) via GoReleaser
-          echo "DIST_FILE=" >> "$GITHUB_ENV"
+          git-cliff --tag "$TAG" > /tmp/release-notes.md
 
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
           go-version-file: apps/cli-go/go.mod
 
-      - name: Install GoReleaser
-        uses: goreleaser/goreleaser-action@v6
-        with:
-          version: latest
-          install-only: true
-
-      - name: Build prt release artifacts
+      - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:
           distribution: goreleaser
           version: latest
-          args: release --clean --skip=publish --config apps/cli-go/.goreleaser.prt.yml
-
-      - name: Collect prt asset list
-        run: |
-          shopt -s nullglob
-          assets=(dist/*.tar.gz dist/*.zip dist/prt_*_checksums.txt)
-          test ${#assets[@]} -gt 0
-          printf 'PRT_ASSETS<<EOF\n' >> "$GITHUB_ENV"
-          printf '%s\n' "${assets[@]}" >> "$GITHUB_ENV"
-          printf 'EOF\n' >> "$GITHUB_ENV"
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          body: ${{ steps.changelog.outputs.changelog }}
-          prerelease: ${{ contains(github.ref_name, '-') }}
-          files: |
-            ${{ env.DIST_FILE }}
-            ${{ env.PRT_ASSETS }}
+          args: release --clean --config apps/cli-go/.goreleaser.prt.yml --release-notes /tmp/release-notes.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
