@@ -25,7 +25,7 @@ jobs:
           go-version-file: apps/cli-go/go.mod
       - uses: golangci/golangci-lint-action@v9
         with:
-          version: v2
+          version: v2.11.4
           working-directory: apps/cli-go
       - run: go vet ./...
       - run: go test -race ./...
