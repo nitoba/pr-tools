@@ -28,6 +28,7 @@ type testFlagSet struct {
 	noCreate   bool
 	dryRun     bool
 	raw        bool
+	debug      bool
 }
 
 func NewTestCmd(cfg *config.Config) *cobra.Command {
@@ -52,6 +53,7 @@ func NewTestCmd(cfg *config.Config) *cobra.Command {
 	cmd.Flags().BoolVar(&flags.noCreate, "no-create", false, "Generate only, do not create in Azure DevOps")
 	cmd.Flags().BoolVar(&flags.dryRun, "dry-run", false, "Show prompt without calling LLM")
 	cmd.Flags().BoolVar(&flags.raw, "raw", false, "Output only markdown")
+	cmd.Flags().BoolVar(&flags.debug, "debug", false, "Show diagnostic details")
 
 	_ = cmd.MarkFlagRequired("work-item")
 
@@ -64,6 +66,14 @@ func runTest(ctx context.Context, cfg *config.Config, flags testFlagSet, cmd *co
 
 	ui.Init(stderr)
 	ui.Title(stderr, "Gerando card de teste...")
+
+	if flags.debug {
+		ui.Info(stderr, fmt.Sprintf("work-item: %s", flags.workItem))
+		ui.Info(stderr, fmt.Sprintf("pr: %d", flags.pr))
+		ui.Info(stderr, fmt.Sprintf("org flag: %q  project flag: %q  repo flag: %q", flags.org, flags.project, flags.repo))
+		ui.Info(stderr, fmt.Sprintf("providers: %s", cfg.Providers))
+		ui.Info(stderr, fmt.Sprintf("azure pat set: %v", cfg.AzurePAT != ""))
+	}
 
 	// Resolve org/project/repo from flags or git remote
 	org := flags.org
@@ -90,6 +100,10 @@ func runTest(ctx context.Context, cfg *config.Config, flags testFlagSet, cmd *co
 	} else {
 		stepRes := ui.Step(stderr, "Resolvendo contexto Azure DevOps")
 		stepRes(true)
+	}
+
+	if flags.debug {
+		ui.Info(stderr, fmt.Sprintf("resolved → org: %q  project: %q  repo: %q", org, project, repo))
 	}
 
 	// Parse work item ID

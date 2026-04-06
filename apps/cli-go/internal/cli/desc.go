@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -15,6 +16,7 @@ import (
 	"github.com/nitoba/pr-tools/apps/cli-go/internal/git"
 	"github.com/nitoba/pr-tools/apps/cli-go/internal/llm"
 	"github.com/nitoba/pr-tools/apps/cli-go/internal/ui"
+	"github.com/nitoba/pr-tools/apps/cli-go/internal/wizard"
 	"github.com/spf13/cobra"
 )
 
@@ -40,10 +42,15 @@ func (e *ExitError) Unwrap() error {
 }
 
 type descFlagSet struct {
-	source   string
-	workItem string
-	dryRun   bool
-	raw      bool
+	source              string
+	targets             []string
+	workItem            string
+	dryRun              bool
+	raw                 bool
+	setOpenRouterModel  string
+	setGroqModel        string
+	setGeminiModel      string
+	setOllamaModel      string
 }
 
 func NewDescCmd(cfg *config.Config) *cobra.Command {
@@ -58,9 +65,14 @@ func NewDescCmd(cfg *config.Config) *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&flags.source, "source", "", "Source branch (defaults to current branch)")
+	cmd.Flags().StringArrayVar(&flags.targets, "target", nil, "Target branch for PR (can repeat; e.g. --target dev --target sprint)")
 	cmd.Flags().StringVar(&flags.workItem, "work-item", "", "Work item ID")
 	cmd.Flags().BoolVar(&flags.dryRun, "dry-run", false, "Show prompt without calling LLM")
 	cmd.Flags().BoolVar(&flags.raw, "raw", false, "Output without markdown rendering")
+	cmd.Flags().StringVar(&flags.setOpenRouterModel, "set-openrouter-model", "", "Save OpenRouter model to config")
+	cmd.Flags().StringVar(&flags.setGroqModel, "set-groq-model", "", "Save Groq model to config")
+	cmd.Flags().StringVar(&flags.setGeminiModel, "set-gemini-model", "", "Save Gemini model to config")
+	cmd.Flags().StringVar(&flags.setOllamaModel, "set-ollama-model", "", "Save Ollama model to config")
 	// Keep --create for backward compat but hidden; interactivity is now automatic
 	cmd.Flags().Bool("create", false, "Create PR in Azure DevOps (deprecated: now automatic when interactive)")
 	_ = cmd.Flags().MarkHidden("create")
@@ -74,6 +86,12 @@ func runDesc(ctx context.Context, cfg *config.Config, flags descFlagSet, cmd *co
 
 	ui.Init(stderr)
 
+	// Handle --set-*-model flags: save to .env and exit
+	if flags.setOpenRouterModel != "" || flags.setGroqModel != "" ||
+		flags.setGeminiModel != "" || flags.setOllamaModel != "" {
+		return saveModels(stderr, flags)
+	}
+
 	// Collect git context
 	ui.Title(stderr, "Gerando PR description...")
 	stepGit := ui.Step(stderr, "Coletando contexto git")
@@ -85,11 +103,17 @@ func runDesc(ctx context.Context, cfg *config.Config, flags descFlagSet, cmd *co
 	}
 	stepGit(true)
 
+	// Resolve target branches
+	targets := flags.targets
+	if len(targets) == 0 {
+		targets = []string{gitCtx.BaseBranch}
+	}
+
 	// Load system prompt
 	systemPrompt := loadDescTemplate(cfg)
 
 	// Build user prompt
-	userPrompt := buildDescPrompt(gitCtx)
+	userPrompt := buildDescPrompt(gitCtx, targets)
 
 	if flags.dryRun {
 		_, _ = fmt.Fprintln(stdout, "=== SYSTEM ===")
@@ -156,32 +180,39 @@ func runDesc(ctx context.Context, cfg *config.Config, flags descFlagSet, cmd *co
 			if answer == "y" || answer == "yes" {
 				azClient := azure.NewClient(cfg.AzurePAT, gitCtx.AzureOrg)
 
-				// Default reviewer
-				reviewer := cfg.PRReviewerDev
-				_, _ = fmt.Fprintf(stderr, "  Reviewer (email) [%s]: ", reviewer)
+				// Pick default reviewer based on target
+				defaultReviewer := cfg.PRReviewerDev
+				_, _ = fmt.Fprintf(stderr, "  Reviewer (email) [%s]: ", defaultReviewer)
 				if scanner.Scan() {
 					if input := strings.TrimSpace(scanner.Text()); input != "" {
-						reviewer = input
+						defaultReviewer = input
 					}
 				}
 
-				stepPR := ui.Step(stderr, fmt.Sprintf("Criando PR → %s", gitCtx.BaseBranch))
-				prReq := azure.CreatePRRequest{
-					Title:       title,
-					Description: body,
-					SourceRef:   "refs/heads/" + gitCtx.SourceBranch,
-					TargetRef:   "refs/heads/" + gitCtx.BaseBranch,
-				}
-				if reviewer != "" {
-					prReq.Reviewers = []azure.PRReviewer{{UniqueName: reviewer}}
-				}
-				pr, prErr := azClient.CreatePullRequest(ctx, gitCtx.AzureProject, gitCtx.AzureRepo, prReq)
-				if prErr != nil {
-					stepPR(false)
-					ui.Error(stderr, fmt.Sprintf("Erro ao criar PR: %v", prErr))
-				} else {
-					stepPR(true)
-					_, _ = fmt.Fprintf(stderr, "  %s│%s   %s\n", ui.OrangeDim, ui.Reset, pr.URL)
+				for _, target := range targets {
+					reviewer := defaultReviewer
+					if strings.Contains(target, "sprint") && cfg.PRReviewerSprint != "" {
+						reviewer = cfg.PRReviewerSprint
+					}
+
+					stepPR := ui.Step(stderr, fmt.Sprintf("Criando PR → %s", target))
+					prReq := azure.CreatePRRequest{
+						Title:       title,
+						Description: body,
+						SourceRef:   "refs/heads/" + gitCtx.SourceBranch,
+						TargetRef:   "refs/heads/" + target,
+					}
+					if reviewer != "" {
+						prReq.Reviewers = []azure.PRReviewer{{UniqueName: reviewer}}
+					}
+					pr, prErr := azClient.CreatePullRequest(ctx, gitCtx.AzureProject, gitCtx.AzureRepo, prReq)
+					if prErr != nil {
+						stepPR(false)
+						ui.Error(stderr, fmt.Sprintf("Erro ao criar PR → %s: %v", target, prErr))
+					} else {
+						stepPR(true)
+						_, _ = fmt.Fprintf(stderr, "  %s│%s   %s\n", ui.OrangeDim, ui.Reset, pr.URL)
+					}
 				}
 			}
 		}
@@ -228,18 +259,51 @@ func loadDescTemplate(cfg *config.Config) string {
 	return s
 }
 
-func buildDescPrompt(gc *git.Context) string {
+func buildDescPrompt(gc *git.Context, targets []string) string {
 	var b strings.Builder
 	b.WriteString("## Contexto Git\n\n")
 	_, _ = fmt.Fprintf(&b, "**Branch:** %s\n", gc.BranchName)
-	_, _ = fmt.Fprintf(&b, "**Base:** %s\n", gc.BaseBranch)
-	_, _ = fmt.Fprintf(&b, "**Base branches alvo:** %s\n", gc.BaseBranch)
+	_, _ = fmt.Fprintf(&b, "**Base branches alvo:** %s\n", strings.Join(targets, ", "))
 	if gc.WorkItemID != "" {
 		_, _ = fmt.Fprintf(&b, "**Work Item:** %s\n", gc.WorkItemID)
 	}
 	_, _ = fmt.Fprintf(&b, "\n**Diff:**\n```\n%s\n```\n", gc.Diff)
 	_, _ = fmt.Fprintf(&b, "\n**Log:**\n```\n%s\n```\n", gc.Log)
 	return b.String()
+}
+
+// saveModels writes model names to the config .env file and prints confirmation.
+func saveModels(w io.Writer, flags descFlagSet) error {
+	type modelSave struct {
+		key   string
+		value string
+		label string
+	}
+
+	saves := []modelSave{
+		{"OPENROUTER_MODEL", flags.setOpenRouterModel, "OpenRouter"},
+		{"GROQ_MODEL", flags.setGroqModel, "Groq"},
+		{"GEMINI_MODEL", flags.setGeminiModel, "Gemini"},
+		{"OLLAMA_MODEL", flags.setOllamaModel, "Ollama"},
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("home dir: %w", err)
+	}
+	envPath := filepath.Join(home, ".config", "pr-tools", ".env")
+
+	for _, s := range saves {
+		if s.value == "" {
+			continue
+		}
+		if err := wizard.SetEnvVar(envPath, s.key, s.value); err != nil {
+			_, _ = fmt.Fprintf(w, "Erro ao salvar %s model: %v\n", s.label, err)
+			continue
+		}
+		_, _ = fmt.Fprintf(w, "[OK] %s model salvo: %s\n", s.label, s.value)
+	}
+	return nil
 }
 
 var thinkBlockRe = regexp.MustCompile(`(?s)<think>.*?</think>`)
