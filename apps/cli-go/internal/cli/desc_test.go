@@ -33,7 +33,7 @@ func TestParseTitleAndBody_ExtractsTITULO(t *testing.T) {
 	t.Parallel()
 
 	resp := "TITULO: My PR Title\n## Descrição\nSome description"
-	title, body := parseTitleAndBody(resp)
+	title, body := parseTitleAndBody(resp, "")
 
 	require.Equal(t, "My PR Title", title)
 	require.Contains(t, body, "## Descrição")
@@ -43,7 +43,7 @@ func TestParseTitleAndBody_FallbackToFirstLine(t *testing.T) {
 	t.Parallel()
 
 	resp := "First line\nSecond line"
-	title, body := parseTitleAndBody(resp)
+	title, body := parseTitleAndBody(resp, "")
 
 	require.Equal(t, "First line", title)
 	require.Equal(t, "Second line", body)

@@ -1,8 +1,12 @@
 package cli
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/nitoba/pr-tools/apps/cli-go/internal/azure"
@@ -10,6 +14,7 @@ import (
 	"github.com/nitoba/pr-tools/apps/cli-go/internal/config"
 	"github.com/nitoba/pr-tools/apps/cli-go/internal/git"
 	"github.com/nitoba/pr-tools/apps/cli-go/internal/llm"
+	"github.com/nitoba/pr-tools/apps/cli-go/internal/ui"
 	"github.com/spf13/cobra"
 )
 
@@ -39,7 +44,6 @@ type descFlagSet struct {
 	workItem string
 	dryRun   bool
 	raw      bool
-	createPR bool
 }
 
 func NewDescCmd(cfg *config.Config) *cobra.Command {
@@ -57,30 +61,46 @@ func NewDescCmd(cfg *config.Config) *cobra.Command {
 	cmd.Flags().StringVar(&flags.workItem, "work-item", "", "Work item ID")
 	cmd.Flags().BoolVar(&flags.dryRun, "dry-run", false, "Show prompt without calling LLM")
 	cmd.Flags().BoolVar(&flags.raw, "raw", false, "Output without markdown rendering")
-	cmd.Flags().BoolVar(&flags.createPR, "create", false, "Create PR in Azure DevOps")
+	// Keep --create for backward compat but hidden; interactivity is now automatic
+	cmd.Flags().Bool("create", false, "Create PR in Azure DevOps (deprecated: now automatic when interactive)")
+	_ = cmd.Flags().MarkHidden("create")
 
 	return cmd
 }
 
 func runDesc(ctx context.Context, cfg *config.Config, flags descFlagSet, cmd *cobra.Command) error {
+	stderr := cmd.ErrOrStderr()
+	stdout := cmd.OutOrStdout()
+
+	ui.Init(stderr)
+
 	// Collect git context
+	ui.Title(stderr, "Gerando PR description...")
+	stepGit := ui.Step(stderr, "Coletando contexto git")
+
 	gitCtx := git.NewContext(git.ExecRunner{})
 	if err := gitCtx.Collect(ctx, flags.source); err != nil {
+		stepGit(false)
 		return fmt.Errorf("git context: %w", err)
 	}
+	stepGit(true)
+
+	// Load system prompt
+	systemPrompt := loadDescTemplate(cfg)
 
 	// Build user prompt
 	userPrompt := buildDescPrompt(gitCtx)
 
 	if flags.dryRun {
-		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "=== SYSTEM ===")
-		_, _ = fmt.Fprintln(cmd.OutOrStdout(), descSystemPrompt)
-		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\n=== USER ===")
-		_, _ = fmt.Fprintln(cmd.OutOrStdout(), userPrompt)
+		_, _ = fmt.Fprintln(stdout, "=== SYSTEM ===")
+		_, _ = fmt.Fprintln(stdout, systemPrompt)
+		_, _ = fmt.Fprintln(stdout, "\n=== USER ===")
+		_, _ = fmt.Fprintln(stdout, userPrompt)
 		return nil
 	}
 
 	// Call LLM with fallback
+	stepLLM := ui.Step(stderr, "Chamando LLM")
 	llmCfg := llm.Config{
 		Providers:        cfg.Providers,
 		OpenRouterAPIKey: cfg.OpenRouterAPIKey,
@@ -93,39 +113,77 @@ func runDesc(ctx context.Context, cfg *config.Config, flags descFlagSet, cmd *co
 		OllamaModel:      cfg.OllamaModel,
 	}
 	fallback := llm.NewFallbackClient(llmCfg)
-	resp, provider, err := fallback.Chat(ctx, descSystemPrompt, userPrompt)
+	resp, provider, err := fallback.Chat(ctx, systemPrompt, userPrompt)
 	if err != nil {
+		stepLLM(false)
 		return fmt.Errorf("LLM call failed: %w", err)
 	}
-	_ = provider
+	stepLLM(true)
+
+	ui.TitleDone(stderr)
+
+	// Strip <think> blocks
+	resp = stripThinkBlocks(resp)
 
 	// Parse title and body
-	title, body := parseTitleAndBody(resp)
+	title, body := parseTitleAndBody(resp, gitCtx.BranchName)
 
-	// Output
-	out := cmd.OutOrStdout()
-	_, _ = fmt.Fprintf(out, "\nTitulo: %s\n\n", title)
-	_, _ = fmt.Fprintf(out, "Descricao:\n%s\n", body)
+	// Print summary header to stderr
+	fmt.Fprintf(stderr, "\n %s%s✦%s %sPR — %s%s\n", ui.Orange, ui.Bold, ui.Reset, ui.OrangeDim, gitCtx.BranchName, ui.Reset)
+	fmt.Fprintf(stderr, "  %s│%s Provider: %s\n", ui.OrangeDim, ui.Reset, provider)
+	if workItemID := gitCtx.WorkItemID; workItemID != "" {
+		fmt.Fprintf(stderr, "  %s│%s Work Item: #%s\n", ui.OrangeDim, ui.Reset, workItemID)
+	}
+	fmt.Fprintf(stderr, "  %s└%s\n", ui.OrangeDim, ui.Reset)
+
+	// Print result to stdout
+	fmt.Fprintf(stdout, "\nTitulo: %s%s%s\n\n", ui.Cyan, title, ui.Reset)
+	fmt.Fprintf(stdout, "Descricao:\n%s\n", body)
 
 	// Copy body to clipboard (best effort)
 	if err := clipboard.Write(body); err == nil {
-		_, _ = fmt.Fprintln(out, "\n✓ Copiado para clipboard")
+		fmt.Fprintf(stderr, "\n%s✓%s Copiado para clipboard\n", ui.Green, ui.Reset)
 	}
 
-	// Create PR in Azure DevOps if requested
-	if flags.createPR && cfg.AzurePAT != "" && gitCtx.IsAzureDevOps {
-		azClient := azure.NewClient(cfg.AzurePAT, gitCtx.AzureOrg)
-		prReq := azure.CreatePRRequest{
-			Title:       title,
-			Description: body,
-			SourceRef:   "refs/heads/" + gitCtx.SourceBranch,
-			TargetRef:   "refs/heads/" + gitCtx.BaseBranch,
-		}
-		pr, err := azClient.CreatePullRequest(ctx, gitCtx.AzureProject, gitCtx.AzureRepo, prReq)
-		if err != nil {
-			_, _ = fmt.Fprintf(out, "\n⚠ Erro ao criar PR: %v\n", err)
-		} else {
-			_, _ = fmt.Fprintf(out, "\n✓ PR criado: %s\n", pr.URL)
+	// Interactive PR creation
+	if isTerminal(os.Stdin) && gitCtx.IsAzureDevOps && cfg.AzurePAT != "" {
+		fmt.Fprintf(stderr, "\n  %s│%s\n", ui.OrangeDim, ui.Reset)
+		fmt.Fprintf(stderr, "  Criar PR(s) no Azure DevOps? [y/N]: ")
+
+		scanner := bufio.NewScanner(os.Stdin)
+		if scanner.Scan() {
+			answer := strings.TrimSpace(strings.ToLower(scanner.Text()))
+			if answer == "y" || answer == "yes" {
+				azClient := azure.NewClient(cfg.AzurePAT, gitCtx.AzureOrg)
+
+				// Default reviewer
+				reviewer := cfg.PRReviewerDev
+				fmt.Fprintf(stderr, "  Reviewer (email) [%s]: ", reviewer)
+				if scanner.Scan() {
+					if input := strings.TrimSpace(scanner.Text()); input != "" {
+						reviewer = input
+					}
+				}
+
+				stepPR := ui.Step(stderr, fmt.Sprintf("Criando PR → %s", gitCtx.BaseBranch))
+				prReq := azure.CreatePRRequest{
+					Title:       title,
+					Description: body,
+					SourceRef:   "refs/heads/" + gitCtx.SourceBranch,
+					TargetRef:   "refs/heads/" + gitCtx.BaseBranch,
+				}
+				if reviewer != "" {
+					prReq.Reviewers = []azure.PRReviewer{{UniqueName: reviewer}}
+				}
+				pr, prErr := azClient.CreatePullRequest(ctx, gitCtx.AzureProject, gitCtx.AzureRepo, prReq)
+				if prErr != nil {
+					stepPR(false)
+					ui.Error(stderr, fmt.Sprintf("Erro ao criar PR: %v", prErr))
+				} else {
+					stepPR(true)
+					fmt.Fprintf(stderr, "  %s│%s   %s\n", ui.OrangeDim, ui.Reset, pr.URL)
+				}
+			}
 		}
 	}
 
@@ -150,11 +208,32 @@ Depois do titulo, siga este formato para a descrição:
 - [ ] Breaking change
 - [ ] Refactoring`
 
+// loadDescTemplate reads the PR description template from ~/.config/pr-tools/pr-template.md,
+// falling back to the hardcoded constant.
+func loadDescTemplate(cfg *config.Config) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return descSystemPrompt
+	}
+	templatePath := filepath.Join(home, ".config", "pr-tools", "pr-template.md")
+	data, err := os.ReadFile(templatePath)
+	if err != nil {
+		return descSystemPrompt
+	}
+	s := strings.TrimSpace(string(data))
+	if s == "" {
+		return descSystemPrompt
+	}
+	_ = cfg
+	return s
+}
+
 func buildDescPrompt(gc *git.Context) string {
 	var b strings.Builder
 	b.WriteString("## Contexto Git\n\n")
 	fmt.Fprintf(&b, "**Branch:** %s\n", gc.BranchName)
 	fmt.Fprintf(&b, "**Base:** %s\n", gc.BaseBranch)
+	fmt.Fprintf(&b, "**Base branches alvo:** %s\n", gc.BaseBranch)
 	if gc.WorkItemID != "" {
 		fmt.Fprintf(&b, "**Work Item:** %s\n", gc.WorkItemID)
 	}
@@ -163,20 +242,111 @@ func buildDescPrompt(gc *git.Context) string {
 	return b.String()
 }
 
-func parseTitleAndBody(resp string) (title, body string) {
+var thinkBlockRe = regexp.MustCompile(`(?s)<think>.*?</think>`)
+var thinkTagRe = regexp.MustCompile(`(?i)</?think>`)
+
+// stripThinkBlocks removes <think>...</think> blocks and standalone tags.
+func stripThinkBlocks(s string) string {
+	s = thinkBlockRe.ReplaceAllString(s, "")
+	s = thinkTagRe.ReplaceAllString(s, "")
+	// Trim leading blank lines
+	lines := strings.Split(s, "\n")
+	start := 0
+	for start < len(lines) && strings.TrimSpace(lines[start]) == "" {
+		start++
+	}
+	return strings.TrimRight(strings.Join(lines[start:], "\n"), "\n")
+}
+
+func parseTitleAndBody(resp, branchName string) (title, body string) {
 	lines := strings.Split(resp, "\n")
 	for i, line := range lines {
 		if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(line)), "TITULO:") {
 			idx := strings.Index(strings.ToUpper(line), "TITULO:")
-			title = strings.TrimSpace(line[idx+len("TITULO:"):])
-			body = strings.TrimSpace(strings.Join(lines[i+1:], "\n"))
+			title = cleanTitle(line[idx+len("TITULO:"):])
+			body = cleanBody(strings.Join(lines[i+1:], "\n"))
 			return
 		}
 	}
-	// Fallback: first line is title
+
+	// Fallback 1: extract first sentence from ## Descrição section
+	if t := extractDescTitle(resp); t != "" {
+		title = cleanTitle(t)
+		body = cleanBody(resp)
+		return
+	}
+
+	// Fallback 2: use branch name
+	if branchName != "" {
+		title = cleanTitle(branchName)
+		body = cleanBody(resp)
+		return
+	}
+
+	// Last resort: first line
 	if len(lines) > 0 {
-		title = strings.TrimSpace(lines[0])
-		body = strings.TrimSpace(strings.Join(lines[1:], "\n"))
+		title = cleanTitle(lines[0])
+		body = cleanBody(strings.Join(lines[1:], "\n"))
 	}
 	return
+}
+
+func cleanTitle(s string) string {
+	s = strings.TrimSpace(s)
+	s = strings.Trim(s, `"'`)
+	s = strings.TrimRight(s, ".")
+	return s
+}
+
+func cleanBody(s string) string {
+	lines := strings.Split(s, "\n")
+	// Remove leading blank lines
+	start := 0
+	for start < len(lines) && strings.TrimSpace(lines[start]) == "" {
+		start++
+	}
+	// If first non-empty line is ---, skip it
+	if start < len(lines) && strings.TrimSpace(lines[start]) == "---" {
+		start++
+	}
+	// Remove leading blank lines again after ---
+	for start < len(lines) && strings.TrimSpace(lines[start]) == "" {
+		start++
+	}
+	return strings.TrimSpace(strings.Join(lines[start:], "\n"))
+}
+
+func extractDescTitle(s string) string {
+	lines := strings.Split(s, "\n")
+	inDesc := false
+	for _, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "## Descrição") ||
+			strings.HasPrefix(strings.TrimSpace(line), "## Descricao") {
+			inDesc = true
+			continue
+		}
+		if inDesc {
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
+			if strings.HasPrefix(line, "#") {
+				break
+			}
+			// First sentence (truncate to 80 chars)
+			sentence := strings.TrimSpace(line)
+			if idx := strings.IndexAny(sentence, ".!?"); idx >= 0 {
+				sentence = sentence[:idx+1]
+			}
+			if len(sentence) > 80 {
+				sentence = sentence[:80]
+			}
+			return sentence
+		}
+	}
+	return ""
+}
+
+// isTerminal reports whether the given file is a terminal.
+func isTerminal(f *os.File) bool {
+	return isTerminalFd(int(f.Fd()))
 }

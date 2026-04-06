@@ -21,7 +21,7 @@ func TestNewTestCmdHasCorrectMetadata(t *testing.T) {
 
 func TestBuildTestPrompt_WithNilWorkItem(t *testing.T) {
 	t.Parallel()
-	prompt := buildTestPrompt(nil, 42, testFlagSet{})
+	prompt := buildTestPrompt(nil, 42, nil, nil, nil, testFlagSet{})
 	require.Contains(t, prompt, "ID: 42")
-	require.Contains(t, prompt, "## Work Item")
+	require.Contains(t, prompt, "## Contexto do Work Item")
 }
