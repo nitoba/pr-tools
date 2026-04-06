@@ -1,9 +1,30 @@
 # Changelog
 
+## 3.1.0 — 2026-04-06
+
+
+### Bug Fixes
+
+- Fix remaining errcheck in cli package (`86622aa`)
+
+- Fix errcheck in ui package (`cdc6f12`)
+
+- Fix lint issues in wizard and ui packages (`b838c4b`)
+
+
+### Features
+
+- Add UI, full prompts, and interactive flows for prt desc/test (`38219ba`)
+
+- Add interactive setup wizard for prt init (`566813e`)
+
+
 ## 3.0.0 — 2026-04-06
 
 
 ### Bug Fixes
+
+- Extract git-cliff to /tmp to avoid dirty git state (`fde6174`)
 
 - Fix remaining errcheck lint issues in test.go and llm providers (`342c8b3`)
 
@@ -62,6 +83,8 @@
 
 
 ### Chores
+
+- Bump version to v3.0.0 (`626416e`)
 
 - Simplify pipeline — goreleaser only, fix monorepo build paths (`6ba3df8`)
 
