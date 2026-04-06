@@ -25,8 +25,6 @@ var (
 	Reset       = "\033[0m"
 )
 
-var colorEnabled = true
-
 // Init disables colors if PRT_NO_COLOR or NO_COLOR are set, or if w is not a terminal.
 func Init(w io.Writer) {
 	if os.Getenv("PRT_NO_COLOR") != "" || os.Getenv("NO_COLOR") != "" {
@@ -45,7 +43,6 @@ func Init(w io.Writer) {
 }
 
 func disableColors() {
-	colorEnabled = false
 	Bold = ""
 	Dim = ""
 	Green = ""

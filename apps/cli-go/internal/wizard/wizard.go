@@ -51,7 +51,7 @@ func Run(stdin io.Reader, stderr io.Writer, envPath string) error {
 	if everythingSet {
 		fprintln(stderr, "\n[INFO] Configuracao atual:")
 		printMaskedSummary(stderr, cfg)
-		fmt.Fprint(stderr, "\nDeseja alterar alguma configuracao? [y/N]: ")
+		_, _ = fmt.Fprint(stderr, "\nDeseja alterar alguma configuracao? [y/N]: ")
 		answer := readLine(stdin)
 		if !isYes(answer) {
 			fprintln(stderr, "[OK] Nenhuma alteracao feita.")
@@ -104,10 +104,10 @@ func Run(stdin io.Reader, stderr io.Writer, envPath string) error {
 	if cfg["AZURE_PAT"] == "" {
 		fprintln(stderr, "\n[AZURE] Configurar Azure DevOps")
 		fprintln(stderr, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-		fmt.Fprint(stderr, "Configurar Azure DevOps PAT? [Y/n]: ")
+		_, _ = fmt.Fprint(stderr, "Configurar Azure DevOps PAT? [Y/n]: ")
 		if answer := readLine(stdin); !isNo(answer) {
 			fprintln(stderr, "  Gere seu PAT em: https://dev.azure.com → User Settings → Personal Access Tokens")
-			fmt.Fprint(stderr, "PAT Token: ")
+			_, _ = fmt.Fprint(stderr, "PAT Token: ")
 			pat := readSecret(stdin, stderr)
 			if pat != "" {
 				testAndSave(stderr, envPath, "AZURE_PAT", pat, testAzurePAT)
@@ -168,12 +168,12 @@ var (
 // ─── helper functions ────────────────────────────────────────────────────────
 
 func configureProvider(stdin io.Reader, stderr io.Writer, envPath string, p providerDef) string {
-	fmt.Fprintf(stderr, "Configurar %s? [Y/n]: ", p.name)
+	_, _ = fmt.Fprintf(stderr, "Configurar %s? [Y/n]: ", p.name)
 	if isNo(readLine(stdin)) {
 		return ""
 	}
-	fmt.Fprintf(stderr, "  Obtenha sua chave em: %s\n", p.infoURL)
-	fmt.Fprintf(stderr, "API Key (%s): ", p.name)
+	_, _ = fmt.Fprintf(stderr, "  Obtenha sua chave em: %s\n", p.infoURL)
+	_, _ = fmt.Fprintf(stderr, "API Key (%s): ", p.name)
 	key := readSecret(stdin, stderr)
 	if key == "" {
 		return ""
@@ -184,12 +184,12 @@ func configureProvider(stdin io.Reader, stderr io.Writer, envPath string, p prov
 
 func configureReviewer(stdin io.Reader, stderr io.Writer, envPath, envKey, label, current string) {
 	if current != "" {
-		fmt.Fprintf(stderr, "%s [atual: %s] Alterar? [y/N]: ", label, current)
+		_, _ = fmt.Fprintf(stderr, "%s [atual: %s] Alterar? [y/N]: ", label, current)
 		if !isYes(readLine(stdin)) {
 			return
 		}
 	}
-	fmt.Fprintf(stderr, "%s: ", label)
+	_, _ = fmt.Fprintf(stderr, "%s: ", label)
 	email := readLine(stdin)
 	if email != "" {
 		_ = SetEnvVar(envPath, envKey, email)
@@ -197,7 +197,7 @@ func configureReviewer(stdin io.Reader, stderr io.Writer, envPath, envKey, label
 }
 
 func testAndSave(stderr io.Writer, envPath, key, value string, test func(string) bool) {
-	fmt.Fprint(stderr, "  Testando credencial... ")
+	_, _ = fmt.Fprint(stderr, "  Testando credencial... ")
 	if test(value) {
 		fprintln(stderr, green("valida!"))
 	} else {
@@ -237,7 +237,7 @@ func readLine(r io.Reader) string {
 }
 
 func fprintln(w io.Writer, s string) {
-	fmt.Fprintln(w, s)
+	_, _ = fmt.Fprintln(w, s)
 }
 
 func isYes(s string) bool {
@@ -301,9 +301,9 @@ func printMaskedSummary(w io.Writer, cfg map[string]string) {
 	for _, kv := range keys {
 		v := cfg[kv.key]
 		if v == "" {
-			fmt.Fprintf(w, "  %-22s (nao configurado)\n", kv.label)
+			_, _ = fmt.Fprintf(w, "  %-22s (nao configurado)\n", kv.label)
 		} else {
-			fmt.Fprintf(w, "  %-22s %s\n", kv.label, mask(v))
+			_, _ = fmt.Fprintf(w, "  %-22s %s\n", kv.label, mask(v))
 		}
 	}
 }
@@ -331,7 +331,7 @@ func testOpenRouter(key string) bool {
 	if err != nil {
 		return false
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	return resp.StatusCode == http.StatusOK
 }
 
@@ -347,7 +347,7 @@ func testGroq(key string) bool {
 	if err != nil {
 		return false
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	return resp.StatusCode == http.StatusOK
 }
 
@@ -363,7 +363,7 @@ func testGemini(key string) bool {
 	if err != nil {
 		return false
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	return resp.StatusCode == http.StatusOK
 }
 
@@ -379,7 +379,7 @@ func testOllama(key string) bool {
 	if err != nil {
 		return false
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	return resp.StatusCode == http.StatusOK
 }
 
@@ -394,6 +394,6 @@ func testAzurePAT(pat string) bool {
 	if err != nil {
 		return false
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	return resp.StatusCode == http.StatusOK
 }
