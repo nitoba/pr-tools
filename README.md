@@ -1,361 +1,164 @@
 # pr-tools
 
-Ferramentas de produtividade para Pull Requests e Test Cases no Azure DevOps. Gera descrições de PR e cards de teste automaticamente usando IA.
+Ferramentas de produtividade para Pull Requests e Test Cases no Azure DevOps.
+Gera descrições de PR e cards de teste automaticamente usando IA.
 
 ## Instalação
 
+**Linux / macOS**
+
 ```bash
-curl -fsSL https://raw.githubusercontent.com/nitoba/pr-tools/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/nitoba/pr-tools/main/apps/cli-go/install.sh | bash
 ```
 
-### Instalar uma versão específica
+**Windows (PowerShell)**
+
+```powershell
+irm https://raw.githubusercontent.com/nitoba/pr-tools/main/apps/cli-go/install.ps1 | iex
+```
+
+**Versão específica**
 
 ```bash
-# Instalar uma versão estável (veja Releases: https://github.com/nitoba/pr-tools/releases)
-curl -fsSL https://raw.githubusercontent.com/nitoba/pr-tools/main/install.sh | INSTALL_VERSION=v2.9.0 bash
+# Linux/macOS
+curl -fsSL https://raw.githubusercontent.com/nitoba/pr-tools/main/apps/cli-go/install.sh | INSTALL_VERSION=v1.0.0 bash
+```
 
-# Instalar do branch main (bleeding edge)
-curl -fsSL https://raw.githubusercontent.com/nitoba/pr-tools/main/install.sh | bash
+```powershell
+# Windows
+$env:INSTALL_VERSION="v1.0.0"; irm https://raw.githubusercontent.com/nitoba/pr-tools/main/apps/cli-go/install.ps1 | iex
 ```
 
 ### Requisitos
 
-- `git`, `curl`, `jq`
-- Bash 4+ (macOS, Linux, Windows WSL/Git Bash)
-- API key de pelo menos um provider: [OpenRouter](https://openrouter.ai), [Groq](https://console.groq.com) ou [Google Gemini](https://aistudio.google.com)
-- (Opcional) Renderizador Markdown no terminal: [`glow`](https://github.com/charmbracelet/glow) (recomendado), [`bat`](https://github.com/sharkdp/bat) ou `batcat` para visualização formatada da descrição
+- `curl` e `tar` (Linux/macOS) — sem dependências adicionais
+- PowerShell 5+ (Windows)
+- API key de pelo menos um provider de LLM
 
-### Atualização
+## Quick Start
 
 ```bash
-create-pr-description --update
-create-test-card --update
+prt init      # cria ~/.config/pr-tools/.env
+# edite o arquivo com suas API keys
+prt doctor    # verifica configuração
+prt desc      # gera descrição de PR
+prt test      # gera card de teste no Azure DevOps
 ```
 
 ## Configuração
 
-Na primeira execução com TTY disponível, um **wizard interativo** guia a configuração. Em instalações não interativas, rode `--init` manualmente depois:
-
-- Escolha de providers (OpenRouter, Groq, Gemini ou todos)
-- API keys (com validação automática)
-- Azure DevOps PAT (para links, leitura de contexto e criação automática de PR/Test Case)
-- Reviewers padrão para PRs (emails para criação automática)
-
-Para reconfigurar a qualquer momento:
+Edite `~/.config/pr-tools/.env`:
 
 ```bash
-create-pr-description --init
-create-test-card --init
-```
+# Providers (ordem de fallback)
+PR_PROVIDERS="openrouter,groq,gemini,ollama"
 
-### Configuração manual
-
-Também é possível editar diretamente `~/.config/pr-tools/.env`:
-
-```bash
-vi ~/.config/pr-tools/.env
-```
-
-```bash
-PR_PROVIDERS="openrouter,groq,gemini"
+# API Keys
 OPENROUTER_API_KEY="sk-or-..."
 GROQ_API_KEY="gsk_..."
 GEMINI_API_KEY="..."
-AZURE_PAT="your-pat-token"
+OLLAMA_API_KEY="..."
 
-# Modelos (opcional - usa padrão gratuito se não definir)
+# Modelos (opcional — usa padrão se não definir)
 # OPENROUTER_MODEL="meta-llama/llama-3.3-70b-instruct:free"
 # GROQ_MODEL="llama-3.3-70b-versatile"
-# GEMINI_MODEL="gemini-3.1-flash-lite-preview"
+# GEMINI_MODEL="gemini-2.0-flash"
+# OLLAMA_MODEL="llama3.2"
 
-# Reviewers padrão para criação automática de PRs
+# Azure DevOps
+AZURE_PAT="seu-pat-token"
+
+# Reviewers padrão para PRs (opcional)
 # PR_REVIEWER_DEV="email@exemplo.com"
 # PR_REVIEWER_SPRINT="email@exemplo.com"
 
-# Defaults para Test Cases
-# TEST_CARD_AREA_PATH="AGROTRACE\\Devops"
+# Defaults para Test Cases (opcional)
+# TEST_CARD_AREA_PATH="PROJETO\Devops"
 # TEST_CARD_ASSIGNED_TO="nome@exemplo.com"
+
+# Debug
+# PRT_DEBUG=true
+# PRT_NO_COLOR=true
 ```
 
-Variáveis de ambiente sobrescrevem o `.env`:
+Variáveis de ambiente do shell sobrescrevem o `.env`.
 
-```bash
-OPENROUTER_MODEL="qwen/qwen3-4b:free" create-pr-description
-```
-
-## Uso
-
-De dentro de um repositório git, em uma feature branch:
-
-```bash
-# Gera PR para dev + sprint (padrão)
-create-pr-description
-
-# Apenas para dev
-create-pr-description --target dev
-
-# Apenas para sprint
-create-pr-description --target sprint
-
-# Saída sem renderização Markdown (texto puro)
-create-pr-description --raw
-
-# PR usando outra branch como origem (sem precisar fazer checkout)
-create-pr-description --source feature/1234-login
-
-# Vincular work item específico ao PR
-create-pr-description --work-item 11763
-
-# Gerar card de teste detectando PR e work item a partir da branch atual
-create-test-card
-
-# Gerar card de teste para um PR específico
-create-test-card --pr 10513
-
-# Gerar o card sem tentar criar o Test Case no Azure DevOps
-create-test-card --no-create
-
-# Inspecionar o prompt e o payload sem chamar a LLM
-create-test-card --dry-run --debug
-```
-
-### Configuração do create-test-card
-
-Você pode definir defaults para o Test Case no mesmo `~/.config/pr-tools/.env`:
-
-```bash
-# AreaPath padrão para cards de teste
-# TEST_CARD_AREA_PATH="AGROTRACE\Devops"
-
-# Responsável padrão para cards de teste
-# TEST_CARD_ASSIGNED_TO="nome@empresa.com"
-```
-
-Precedência de configuração:
-
-1. flags CLI
-2. variáveis de ambiente do shell
-3. `.env`
-4. defaults internos
-
-No projeto `AGROTRACE`, o `AreaPath` padrão do Test Case é `AGROTRACE\Devops`.
-
-Na criação de `Test Case` para `AGROTRACE`, o script também envia estes defaults do processo:
-
-- `Priority = 2`
-- `Team = DevOps`
-- `Programas Agrotrace = Agrotrace`
-
-Além disso, o comando mostra logs de progresso no modo normal para indicar fases longas como resolução de PR, busca de changes e geração via LLM.
-
-Antes da criação real do `Test Case`, o script mostra o texto gerado e pede confirmação interativa, em linha com o fluxo do `create-pr-description`.
-
-### Output
-
-```
-==========================================
-Test Card - PR #10513
-==========================================
-Provider: groq (qwen/qwen3-32b)
-Work Item pai: #11796 - Novo tipo de pergunta: Anexo (upload de documentos)
-AreaPath Teste: AGROTRACE\Devops
-Responsável: qa@empresa.com
-
-Titulo: Testar novo tipo de pergunta 'Anexo' no CMS e formulários
-
-## Objetivo
-Validar a implementação do novo tipo de pergunta "Anexo"...
-
-## Cenario base
-1. Cadastro no CMS...
-2. Configuração da estrutura...
-3. Resposta do produtor...
-
-## Checklist de testes
-- [ ] Opção Anexo aparece no CMS...
-- [ ] Campo de tamanho máximo respeita valor padrão...
-- [ ] Upload acima do limite exibe erro...
-
-## Resultado esperado
-O tipo de pergunta Anexo funciona corretamente...
-
-[OK] Test Case criado com sucesso: #12345
-https://dev.azure.com/org/project/_workitems/edit/12345
-==========================================
-```
-
-Se a criação falhar por regra do processo do Azure DevOps, o comando mantém o Markdown gerado visível no terminal e informa que pode ser necessário criar o card manualmente.
-
-## Funcionalidades
-
-- Gera descrições de PR em português brasileiro via LLM
-- Gera cards de teste em português brasileiro a partir de PR + Work Item
-- Suporta OpenRouter, Groq e Gemini com fallback automático
-- Detecta sprint vigente automaticamente (`sprint/*` branches)
-- Cria PR automaticamente no Azure DevOps via API (com reviewers obrigatórios e work items)
-- Tenta detectar automaticamente PR e Work Item da branch atual para criar Test Cases
-- Tenta criar `Test Case` filho no Azure DevOps com fallback para Markdown quando regras do processo bloqueiam a criação
-- Vincula work items ao PR automaticamente (via branch ou flag `--work-item`)
-- Gera links clicáveis para abrir PR no Azure DevOps
-- Cacheia `repositoryId` e IDs de reviewers localmente
-- Copia descrição para clipboard (pbcopy/wl-copy/xclip/xsel)
-- Renderiza descrição com syntax highlight no terminal (glow/bat/batcat) com fallback para texto puro
-- Permite definir a branch de origem do PR via `--source` sem precisar fazer checkout
-- Extrai título do PR automaticamente da resposta do LLM
-- Remove blocos `<think>` de modelos de raciocínio (ex: qwen3)
-- Funciona em macOS, Linux e Windows (WSL/Git Bash)
+Precedência: flags CLI > variáveis de ambiente > `.env` > defaults internos.
 
 ## Comandos
 
-```
-create-pr-description [opções]
+### `prt desc` — Gera descrição de PR
 
-Opções:
-  --init                        Inicializa arquivos de configuração
-  --source <branch>             Branch de origem do PR (padrão: branch atual)
-  --target <branch>             Target do PR: dev, sprint (pode repetir; padrão: ambos)
-  --work-item <id>              ID do work item do Azure DevOps (ex: 11763)
-  --set-openrouter-model <mod>  Salva modelo do OpenRouter no .env
-  --set-groq-model <mod>        Salva modelo do Groq no .env
-  --set-gemini-model <mod>      Salva modelo do Google Gemini no .env
-  --dry-run                     Mostra o prompt sem chamar a LLM
-  --raw                         Exibe a descrição sem renderização Markdown (texto puro)
-  --update                      Atualiza o script para a versão mais recente
-  --help                        Mostra ajuda
-  --version                     Mostra a versão
-```
+```bash
+# Gera descrição para a branch atual
+prt desc
 
-### `create-test-card`
+# Apenas mostra o prompt, sem chamar a LLM
+prt desc --dry-run
 
-Veja os exemplos na seção `Uso` e rode `create-test-card --help` para a lista completa de flags.
+# Define a branch de origem manualmente
+prt desc --source feature/1234-login
 
-Exemplo de saída do `create-test-card`:
+# Vincula um work item ao PR
+prt desc --work-item 11763
 
-```text
-========================================
-Test Card - PR #10513
-========================================
-Provider: groq (qwen/qwen3-32b)
-Work Item pai: #11796 - Novo tipo de pergunta: Anexo (upload de documentos)
-AreaPath Teste: AGROTRACE\Devops
-Responsável: qa@empresa.com
+# Saída sem renderização Markdown
+prt desc --raw
 
-Titulo: Testar novo tipo de pergunta 'Anexo' no CMS e formulários
-
-## Objetivo
-...
-
-## Cenario base
-...
-
-## Checklist de testes
-...
-
-## Resultado esperado
-...
-
-[OK] Test Case criado com sucesso: #12345
-https://dev.azure.com/org/project/_workitems/edit/12345
+# Cria o PR no Azure DevOps automaticamente
+prt desc --create
 ```
 
-Se a criação falhar por regra do processo no Azure DevOps, o comando mantém o Markdown visível e informa que pode ser necessário criar o card manualmente.
+### `prt test` — Gera card de teste no Azure DevOps
 
-## Como funciona
+```bash
+# Gera card de teste para um work item
+prt test --work-item 11763
 
-### `create-pr-description`
+# Especifica org/project do Azure DevOps
+prt test --work-item 11763 --org myorg --project myproject
 
-1. Coleta `git diff` e `git log` da branch atual vs branch base (sprint ou dev)
-2. Detecta a sprint vigente (maior número em `origin/sprint/*`)
-3. Detecta o work item a partir do nome da branch (ex: `feat/1234-descrição`) ou via `--work-item`
-4. Parseia o remote para extrair org/project/repo do Azure DevOps
-5. Envia o contexto para um LLM via API REST (com fallback entre providers)
-6. Extrai título e descrição da resposta do LLM
-7. Imprime a descrição formatada + links de PR
-8. Copia a descrição para o clipboard
-9. Oferece criar o PR automaticamente no Azure DevOps (com reviewers e work items)
+# Apenas gera o markdown, não cria no Azure DevOps
+prt test --work-item 11763 --no-create
 
-### `create-test-card`
+# Apenas mostra o prompt, sem chamar a LLM
+prt test --work-item 11763 --dry-run
+```
 
-O fluxo do `create-test-card` está documentado nas seções `Uso` e `Output`, incluindo autodetecção de PR/work item, geração em Markdown e fallback para criação manual quando o Azure DevOps bloquear a criação automática.
+### `prt init` — Inicializa configuração
+
+```bash
+prt init
+```
+
+Cria ou atualiza `~/.config/pr-tools/.env` com os valores padrão.
+
+### `prt doctor` — Verifica configuração
+
+```bash
+prt doctor
+```
+
+Reporta o estado da configuração, versão e ambiente.
 
 ## Providers suportados
 
-| Provider                                     | Modelo padrão (gratuito)                 |
-| -------------------------------------------- | ---------------------------------------- |
-| [OpenRouter](https://openrouter.ai)          | `meta-llama/llama-3.3-70b-instruct:free` |
-| [Groq](https://console.groq.com)             | `llama-3.3-70b-versatile`                |
-| [Google Gemini](https://aistudio.google.com) | `gemini-3.1-flash-lite-preview`          |
+| Provider | Modelo padrão |
+|----------|---------------|
+| [OpenRouter](https://openrouter.ai) | `meta-llama/llama-3.3-70b-instruct:free` |
+| [Groq](https://console.groq.com) | `llama-3.3-70b-versatile` |
+| [Google Gemini](https://aistudio.google.com) | `gemini-2.0-flash` |
+| [Ollama](https://ollama.com) | `llama3.2` |
 
-Você pode trocar o modelo via `.env` ou variável de ambiente:
+## Processo de Release
 
 ```bash
-OPENROUTER_MODEL="qwen/qwen3-4b:free" create-pr-description
+./release.sh 1.0.1
 ```
 
-## Estrutura de arquivos
-
-```
-~/.local/bin/create-pr-description    # Script principal
-~/.local/bin/create-test-card         # Script para gerar/criar Test Cases
-~/.config/pr-tools/pr-template.md     # Template da descrição (editável)
-~/.config/pr-tools/.env               # API keys e configuração
-~/.config/pr-tools/.cache             # Cache de repositoryId e reviewers
-```
+O script atualiza a versão, gera o CHANGELOG e abre um PR.
+Após o merge, o workflow `auto-tag.yml` cria a tag e o `release.yml` publica os binários `prt` via goreleaser para Linux, macOS e Windows.
 
 ## Licença
 
 MIT
-
-## Processo de Release
-
-### Criar uma nova versão
-
-**Automaticamente (recomendado):**
-
-```bash
-./release.sh 2.9.1
-```
-
-O script faz:
-
-1. Valida a versao (SemVer), branch e estado do repositorio
-2. Atualiza `VERSION` e versoes hardcoded nos scripts
-3. Regenera `CHANGELOG.md` com git-cliff
-4. Cria branch `release/2.9.1` com commit
-5. Push e abre PR para `main`
-
-**Apos o merge do PR:**
-
-- O workflow `auto-tag.yml` cria a tag `v2.9.1` automaticamente
-- O workflow `release.yml` cria o GitHub Release com changelog e assets
-
-### Versionamento Semântico
-
-- **MAJOR** — Breaking changes
-- **MINOR** — Novas features
-- **PATCH** — Bug fixes
-
----
-
-## CLI Go experimental: `prt`
-
-O projeto agora também possui uma fundação em Go para a futura CLI unificada.
-
-Comandos atuais:
-
-```bash
-prt init
-prt doctor
-prt desc
-prt test
-```
-
-Instalação nesta fase:
-
-- baixar o arquivo `.tar.gz` ou `.zip` correspondente na página de Releases
-- extrair o binário `prt` ou `prt.exe`
-- colocá-lo no seu `PATH`
-
-Observação: o instalador `install.sh` continua sendo o fluxo oficial da CLI Bash durante a migração.
-Fluxo oficial Bash mantido: `bash install.sh`.
-Procure artefatos com nomes como `prt_<version>_<os>_<arch>.tar.gz` e `prt_<version>_<os>_<arch>.zip`.
