@@ -33,8 +33,8 @@ const markdown = readFileSync(inputPath, 'utf-8')
 
 // Hue distribution — single-brand palette, surfaces use HUE_BASE
 const HUE_BRAND = 292 // violet-purple: pr-tools primary
-const HUE_BASE  = 220 // blue-gray: neutral surfaces, text
-const HUE_CODE  = 270 // muted purple: code blocks
+const HUE_BASE = 220 // blue-gray: neutral surfaces, text
+const HUE_CODE = 270 // muted purple: code blocks
 
 /** @param {number} h @param {number} s @param {number} l */
 const hsl = (h, s, l) => `hsl(${h},${s}%,${l}%)`
@@ -51,25 +51,25 @@ const hsl = (h, s, l) => `hsl(${h},${s}%,${l}%)`
  *   border  85–90% — hairline dividers, low weight
  *   codeBg  93%    — tinted surface, code distinct from prose
  */
-const LIGHT = {
-  bg:           hsl(HUE_BASE,  15,  95),
-  cardBg:       '#ffffff',
-  headerBg:     hsl(HUE_BRAND, 55,  18),  // dark purple header
-  headerText:   '#ffffff',
-  text:         hsl(HUE_BASE,  15,  14),
-  textSecondary:hsl(HUE_BASE,  10,  38),
-  textMuted:    hsl(HUE_BASE,   8,  52),
-  accent:       hsl(HUE_BRAND, 65,  45),
-  accentText:   '#ffffff',
-  border:       hsl(HUE_BASE,  15,  88),
-  divider:      hsl(HUE_BASE,  12,  90),
-  codeBg:       hsl(HUE_CODE,  20,  94),
-  codeBorder:   hsl(HUE_CODE,  20,  85),
-  codeText:     hsl(HUE_BRAND, 55,  35),
-  footerBg:     hsl(HUE_BASE,  10,  93),
-  footerText:   hsl(HUE_BASE,   8,  52),
-  tagBg:        hsl(HUE_BRAND, 50,  92),
-  tagText:      hsl(HUE_BRAND, 60,  28),
+const _LIGHT = {
+  bg: hsl(HUE_BASE, 15, 95),
+  cardBg: '#ffffff',
+  headerBg: hsl(HUE_BRAND, 55, 18), // dark purple header
+  headerText: '#ffffff',
+  text: hsl(HUE_BASE, 15, 14),
+  textSecondary: hsl(HUE_BASE, 10, 38),
+  textMuted: hsl(HUE_BASE, 8, 52),
+  accent: hsl(HUE_BRAND, 65, 45),
+  accentText: '#ffffff',
+  border: hsl(HUE_BASE, 15, 88),
+  divider: hsl(HUE_BASE, 12, 90),
+  codeBg: hsl(HUE_CODE, 20, 94),
+  codeBorder: hsl(HUE_CODE, 20, 85),
+  codeText: hsl(HUE_BRAND, 55, 35),
+  footerBg: hsl(HUE_BASE, 10, 93),
+  footerText: hsl(HUE_BASE, 8, 52),
+  tagBg: hsl(HUE_BRAND, 50, 92),
+  tagText: hsl(HUE_BRAND, 60, 28)
 }
 
 /**
@@ -85,30 +85,31 @@ const LIGHT = {
  *   codeBg  12–14% — tinted dark surface for code
  */
 const DARK = {
-  bg:           hsl(HUE_BASE,  10,   7),
-  cardBg:       hsl(HUE_BASE,  10,  10),
-  headerBg:     hsl(HUE_BRAND, 45,  14),
-  headerText:   '#ffffff',
-  text:         hsl(HUE_BASE,  10,  84),
-  textSecondary:hsl(HUE_BASE,   8,  63),
-  textMuted:    hsl(HUE_BASE,   5,  46),
-  accent:       hsl(HUE_BRAND, 85,  70),
-  accentText:   hsl(HUE_BASE,  10,   7),
-  border:       hsl(HUE_BASE,  10,  16),
-  divider:      hsl(HUE_BASE,  10,  18),
-  codeBg:       hsl(HUE_CODE,  25,  12),
-  codeBorder:   hsl(HUE_CODE,  25,  20),
-  codeText:     hsl(HUE_BRAND, 80,  72),
-  footerBg:     hsl(HUE_BASE,  10,   8),
-  footerText:   hsl(HUE_BASE,   5,  46),
-  tagBg:        hsl(HUE_BRAND, 30,  18),
-  tagText:      hsl(HUE_BRAND, 65,  72),
+  bg: hsl(HUE_BASE, 10, 7),
+  cardBg: hsl(HUE_BASE, 10, 10),
+  headerBg: hsl(HUE_BRAND, 45, 14),
+  headerText: '#ffffff',
+  text: hsl(HUE_BASE, 10, 84),
+  textSecondary: hsl(HUE_BASE, 8, 63),
+  textMuted: hsl(HUE_BASE, 5, 46),
+  accent: hsl(HUE_BRAND, 85, 70),
+  accentText: hsl(HUE_BASE, 10, 7),
+  border: hsl(HUE_BASE, 10, 16),
+  divider: hsl(HUE_BASE, 10, 18),
+  codeBg: hsl(HUE_CODE, 25, 12),
+  codeBorder: hsl(HUE_CODE, 25, 20),
+  codeText: hsl(HUE_BRAND, 80, 72),
+  footerBg: hsl(HUE_BASE, 10, 8),
+  footerText: hsl(HUE_BASE, 5, 46),
+  tagBg: hsl(HUE_BRAND, 30, 18),
+  tagText: hsl(HUE_BRAND, 65, 72)
 }
 
 // ─── Font ────────────────────────────────────────────────────────────────────
 
-const FONT_SANS  = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
-const FONT_MONO  = "'Geist Mono', 'Courier New', Courier, monospace"
+const FONT_SANS =
+  "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
+const FONT_MONO = "'Geist Mono', 'Courier New', Courier, monospace"
 
 // ─── Table helpers ───────────────────────────────────────────────────────────
 
@@ -140,15 +141,14 @@ function dividerRow(t) {
  * Avoids regex catastrophic backtracking by processing line-by-line.
  *
  * @param {string} md
- * @param {typeof LIGHT} t — theme tokens for inline styles
+ * @param {typeof _LIGHT} t — theme tokens for inline styles
  */
 function markdownToHtml(md, t) {
   const lines = md.split('\n')
   const out = []
-  let inCode  = false
-  let codeLang = ''
+  let inCode = false
   let codeLines = []
-  let inList  = false
+  let inList = false
   let listTag = ''
 
   function flushList() {
@@ -159,27 +159,36 @@ function markdownToHtml(md, t) {
   }
 
   function inlineStyles(text) {
-    return text
-      // Code spans — process before bold/italic to avoid conflicts
-      .replace(/`([^`]+)`/g, (_, c) =>
-        `<code style="font-family:${FONT_MONO};font-size:12px;background:${t.codeBg};color:${t.codeText};padding:2px 6px;border-radius:3px;border:1px solid ${t.codeBorder}">${escHtml(c)}</code>`)
-      // Bold
-      .replace(/\*\*(.+?)\*\*/g, (_, c) =>
-        `<strong style="font-weight:700;color:${t.text}">${c}</strong>`)
-      // Italic
-      .replace(/\*(.+?)\*/g, (_, c) =>
-        `<em style="font-style:italic">${c}</em>`)
-      // Links — validate href scheme to prevent phishing
-      .replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, (_, label, href) =>
-        `<a href="${escAttr(href)}" style="color:${t.accent};text-decoration:underline" target="_blank" rel="noopener noreferrer">${label}</a>`)
+    return (
+      text
+        // Code spans — process before bold/italic to avoid conflicts
+        .replace(
+          /`([^`]+)`/g,
+          (_, c) =>
+            `<code style="font-family:${FONT_MONO};font-size:12px;background:${t.codeBg};color:${t.codeText};padding:2px 6px;border-radius:3px;border:1px solid ${t.codeBorder}">${escHtml(c)}</code>`
+        )
+        // Bold
+        .replace(
+          /\*\*(.+?)\*\*/g,
+          (_, c) => `<strong style="font-weight:700;color:${t.text}">${c}</strong>`
+        )
+        // Italic
+        .replace(/\*(.+?)\*/g, (_, c) => `<em style="font-style:italic">${c}</em>`)
+        // Links — validate href scheme to prevent phishing
+        .replace(
+          /\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g,
+          (_, label, href) =>
+            `<a href="${escAttr(href)}" style="color:${t.accent};text-decoration:underline" target="_blank" rel="noopener noreferrer">${label}</a>`
+        )
+    )
   }
 
   function escHtml(s) {
-    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   }
 
   function escAttr(s) {
-    return s.replace(/"/g,'&quot;').replace(/'/g,'&#39;')
+    return s.replace(/"/g, '&quot;').replace(/'/g, '&#39;')
   }
 
   for (const raw of lines) {
@@ -196,7 +205,9 @@ function markdownToHtml(md, t) {
       } else {
         const preStyle = `background:${t.codeBg};border:1px solid ${t.codeBorder};border-radius:6px;padding:14px 16px;margin:8px 0 14px;overflow-x:auto;`
         const codeStyle = `font-family:${FONT_MONO};font-size:12px;line-height:1.6;color:${t.codeText};white-space:pre;`
-        out.push(`<table width="100%" cellpadding="0" cellspacing="0" role="presentation"><tr><td style="${preStyle}"><pre style="margin:0;padding:0"><code style="${codeStyle}">${escHtml(codeLines.join('\n'))}</code></pre></td></tr></table>`)
+        out.push(
+          `<table width="100%" cellpadding="0" cellspacing="0" role="presentation"><tr><td style="${preStyle}"><pre style="margin:0;padding:0"><code style="${codeStyle}">${escHtml(codeLines.join('\n'))}</code></pre></td></tr></table>`
+        )
         inCode = false
         codeLines = []
         continue
@@ -246,7 +257,9 @@ function markdownToHtml(md, t) {
     if (ulItem) {
       if (!inList || listTag !== 'ul') {
         flushList()
-        out.push(`<ul style="font-family:${FONT_SANS};font-size:14px;line-height:1.6;color:${t.text};margin:6px 0 12px;padding-left:20px">`)
+        out.push(
+          `<ul style="font-family:${FONT_SANS};font-size:14px;line-height:1.6;color:${t.text};margin:6px 0 12px;padding-left:20px">`
+        )
         inList = true
         listTag = 'ul'
       }
@@ -259,7 +272,9 @@ function markdownToHtml(md, t) {
     if (olItem) {
       if (!inList || listTag !== 'ol') {
         flushList()
-        out.push(`<ol style="font-family:${FONT_SANS};font-size:14px;line-height:1.6;color:${t.text};margin:6px 0 12px;padding-left:20px">`)
+        out.push(
+          `<ol style="font-family:${FONT_SANS};font-size:14px;line-height:1.6;color:${t.text};margin:6px 0 12px;padding-left:20px">`
+        )
         inList = true
         listTag = 'ol'
       }
@@ -276,7 +291,7 @@ function markdownToHtml(md, t) {
     // ── Paragraph ──────────────────────────────────────────────────────────
     flushList()
     const pStyle = `font-family:${FONT_SANS};font-size:14px;line-height:1.7;color:${t.text};margin:0 0 12px;padding:0`
-    out.push(`<p style="${pStyle}">${inlineStyles(escHtml(line).replace(/\\n/g,'<br />'))}</p>`)
+    out.push(`<p style="${pStyle}">${inlineStyles(escHtml(line).replace(/\\n/g, '<br />'))}</p>`)
   }
 
   flushList()
@@ -286,13 +301,14 @@ function markdownToHtml(md, t) {
 // ─── Section renderers ───────────────────────────────────────────────────────
 
 function renderHeader(tag, t) {
-  const titleStyle  = `font-family:${FONT_SANS};font-size:22px;font-weight:700;color:${t.headerText};margin:0 0 4px;padding:0;letter-spacing:-0.5px`
+  const titleStyle = `font-family:${FONT_SANS};font-size:22px;font-weight:700;color:${t.headerText};margin:0 0 4px;padding:0;letter-spacing:-0.5px`
   const subtitleStyle = `font-family:${FONT_MONO};font-size:12px;color:${t.headerText};opacity:.75;margin:0;padding:0;letter-spacing:.5px`
 
   return row(
-    td(`background:${t.headerBg};padding:28px 32px;border-radius:8px 8px 0 0`,
+    td(
+      `background:${t.headerBg};padding:28px 32px;border-radius:8px 8px 0 0`,
       `<h1 style="${titleStyle}">pr-tools</h1>` +
-      `<p style="${subtitleStyle}">${tag} · Release Notes</p>`
+        `<p style="${subtitleStyle}">${tag} · Release Notes</p>`
     )
   )
 }
@@ -310,7 +326,8 @@ function renderCta(t) {
     dividerRow(t) +
     spacer(20) +
     row(
-      td('text-align:center',
+      td(
+        'text-align:center',
         `<a href="https://docs-pr-tools.nitodev.com.br" style="${buttonStyle}">Ver documentação &rarr;</a>`
       )
     ) +
@@ -319,19 +336,18 @@ function renderCta(t) {
 }
 
 function renderFooter(t) {
-  const wrapStyle  = `background:${t.footerBg};padding:18px 32px;border-radius:0 0 8px 8px;border-top:1px solid ${t.divider}`
-  const textStyle  = `font-family:${FONT_MONO};font-size:11px;color:${t.footerText};margin:0 0 4px;padding:0;text-align:center`
-  const linkStyle  = `color:${t.accent};text-decoration:underline`
+  const wrapStyle = `background:${t.footerBg};padding:18px 32px;border-radius:0 0 8px 8px;border-top:1px solid ${t.divider}`
+  const textStyle = `font-family:${FONT_MONO};font-size:11px;color:${t.footerText};margin:0 0 4px;padding:0;text-align:center`
+  const linkStyle = `color:${t.accent};text-decoration:underline`
 
-  return (
-    row(
-      td(wrapStyle,
-        `<p style="${textStyle}">pr-tools &middot; ` +
+  return row(
+    td(
+      wrapStyle,
+      `<p style="${textStyle}">pr-tools &middot; ` +
         `<a href="https://github.com/nitoba/pr-tools" style="${linkStyle}">GitHub</a> &middot; ` +
         `<a href="https://docs-pr-tools.nitodev.com.br" style="${linkStyle}">Docs</a></p>` +
         `<p style="${textStyle}">` +
         `<a href="{{unsubscribe_url}}" style="${linkStyle}">Cancelar inscri&ccedil;&atilde;o</a></p>`
-      )
     )
   )
 }
@@ -410,7 +426,12 @@ function renderEmail(tag, markdown) {
 }
 
 function escapeHtmlAttr(s) {
-  return s.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
 }
 
 // ─── Run ─────────────────────────────────────────────────────────────────────
