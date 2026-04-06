@@ -3,6 +3,7 @@ package cli
 import (
 	"testing"
 
+	"github.com/nitoba/pr-tools/apps/cli-go/internal/config"
 	"github.com/stretchr/testify/require"
 )
 
@@ -15,19 +16,35 @@ func TestExitErrorIsNilSafe(t *testing.T) {
 	require.NoError(t, err.Unwrap())
 }
 
-func TestNewDescCmdReportsNotImplemented(t *testing.T) {
+func TestNewDescCmdHasCorrectMetadata(t *testing.T) {
 	t.Parallel()
 
-	cmd := NewDescCmd()
+	cfg := &config.Config{}
+	cmd := NewDescCmd(cfg)
 
 	require.Equal(t, "desc", cmd.Use)
 	require.Equal(t, "Generate PR descriptions.", cmd.Short)
+	require.NotNil(t, cmd.Flags().Lookup("source"))
+	require.NotNil(t, cmd.Flags().Lookup("dry-run"))
+	require.NotNil(t, cmd.Flags().Lookup("create"))
+}
 
-	err := cmd.RunE(cmd, nil)
+func TestParseTitleAndBody_ExtractsTITULO(t *testing.T) {
+	t.Parallel()
 
-	var exitErr *ExitError
-	require.ErrorAs(t, err, &exitErr)
-	require.Equal(t, 2, exitErr.Code)
-	require.EqualError(t, exitErr.Unwrap(), "desc not implemented yet; see docs/superpowers/specs/2026-04-06-prt-go-foundation-design.md")
-	require.Equal(t, exitErr.Unwrap().Error(), exitErr.Error())
+	resp := "TITULO: My PR Title\n## Descrição\nSome description"
+	title, body := parseTitleAndBody(resp)
+
+	require.Equal(t, "My PR Title", title)
+	require.Contains(t, body, "## Descrição")
+}
+
+func TestParseTitleAndBody_FallbackToFirstLine(t *testing.T) {
+	t.Parallel()
+
+	resp := "First line\nSecond line"
+	title, body := parseTitleAndBody(resp)
+
+	require.Equal(t, "First line", title)
+	require.Equal(t, "Second line", body)
 }

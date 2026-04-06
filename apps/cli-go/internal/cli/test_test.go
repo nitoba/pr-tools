@@ -3,13 +3,14 @@ package cli
 import (
 	"testing"
 
+	"github.com/nitoba/pr-tools/apps/cli-go/internal/config"
 	"github.com/stretchr/testify/require"
 )
 
 func TestNewTestCmdReportsNotImplemented(t *testing.T) {
 	t.Parallel()
 
-	cmd := NewTestCmd()
+	cmd := NewTestCmd(&config.Config{})
 
 	require.Equal(t, "test", cmd.Use)
 	require.Equal(t, "Run CLI checks and tests.", cmd.Short)

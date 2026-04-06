@@ -3,10 +3,11 @@ package cli
 import (
 	"errors"
 
+	"github.com/nitoba/pr-tools/apps/cli-go/internal/config"
 	"github.com/spf13/cobra"
 )
 
-func NewTestCmd() *cobra.Command {
+func NewTestCmd(_ *config.Config) *cobra.Command {
 	return &cobra.Command{
 		Use:   "test",
 		Short: "Run CLI checks and tests.",
