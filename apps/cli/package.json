@@ -1,6 +1,0 @@
-{
-  "name": "@pr-tools/cli",
-  "private": true,
-  "version": "0.0.0",
-  "description": "CLI bash para gerar descrições de PR e cards de teste no Azure DevOps"
-}

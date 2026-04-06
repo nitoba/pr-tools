@@ -5,7 +5,7 @@ on:
     branches: [main]
     paths:
       - 'apps/www/**'
-      - 'apps/cli/VERSION'
+      - 'apps/cli-go/VERSION'
   workflow_dispatch:
 
 permissions:

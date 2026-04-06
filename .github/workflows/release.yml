@@ -35,17 +35,9 @@ jobs:
 
       - name: Package release assets
         run: |
-          TAG=${GITHUB_REF#refs/tags/}
-          DIST_DIR="pr-tools-$TAG"
-          mkdir -p "$DIST_DIR/bin" "$DIST_DIR/lib"
-
-          cp apps/cli/install.sh "$DIST_DIR/"
-          cp apps/cli/src/bin/create-pr-description "$DIST_DIR/bin/"
-          cp apps/cli/src/bin/create-test-card "$DIST_DIR/bin/"
-          cp apps/cli/src/lib/*.sh "$DIST_DIR/lib/"
-
-          zip -r "$DIST_DIR.zip" "$DIST_DIR"
-          echo "DIST_FILE=$DIST_DIR.zip" >> "$GITHUB_ENV"
+          # Bash CLI assets no longer included in releases
+          # All releases now use the Go CLI (prt) via GoReleaser
+          echo "DIST_FILE=" >> "$GITHUB_ENV"
 
       - name: Setup Go
         uses: actions/setup-go@v5
