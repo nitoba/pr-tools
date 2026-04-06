@@ -7,19 +7,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestNewTestCmdReportsNotImplemented(t *testing.T) {
+func TestNewTestCmdHasCorrectMetadata(t *testing.T) {
 	t.Parallel()
-
-	cmd := NewTestCmd(&config.Config{})
-
+	cfg := &config.Config{}
+	cmd := NewTestCmd(cfg)
 	require.Equal(t, "test", cmd.Use)
-	require.Equal(t, "Run CLI checks and tests.", cmd.Short)
+	require.Equal(t, "Generate Azure DevOps test card from Work Item.", cmd.Short)
+	require.NotNil(t, cmd.Flags().Lookup("work-item"))
+	require.NotNil(t, cmd.Flags().Lookup("dry-run"))
+	require.NotNil(t, cmd.Flags().Lookup("no-create"))
+	require.NotNil(t, cmd.Flags().Lookup("raw"))
+}
 
-	err := cmd.RunE(cmd, nil)
-
-	var exitErr *ExitError
-	require.ErrorAs(t, err, &exitErr)
-	require.Equal(t, 2, exitErr.Code)
-	require.EqualError(t, exitErr.Unwrap(), "test not implemented yet; see docs/superpowers/specs/2026-04-06-prt-go-foundation-design.md")
-	require.Equal(t, exitErr.Unwrap().Error(), exitErr.Error())
+func TestBuildTestPrompt_WithNilWorkItem(t *testing.T) {
+	t.Parallel()
+	prompt := buildTestPrompt(nil, 42, testFlagSet{})
+	require.Contains(t, prompt, "ID: 42")
+	require.Contains(t, prompt, "## Work Item")
 }
