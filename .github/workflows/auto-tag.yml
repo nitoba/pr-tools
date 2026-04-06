@@ -24,14 +24,6 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Verify VERSION file matches
-        run: |
-          FILE_VERSION="$(cat apps/cli-go/VERSION | tr -d '[:space:]')"
-          if [[ "$FILE_VERSION" != "${{ steps.version.outputs.version }}" ]]; then
-            echo "VERSION file ($FILE_VERSION) does not match branch version (${{ steps.version.outputs.version }})"
-            exit 1
-          fi
-
       - name: Create and push tag
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}

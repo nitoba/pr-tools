@@ -94,22 +94,13 @@ if git rev-parse "$TAG" &>/dev/null; then
 fi
 
 # ---- Confirm ----
-CURRENT_VERSION="$(cat "$SCRIPT_DIR/apps/cli/VERSION" 2>/dev/null || echo "unknown")"
-
-if [[ "$CURRENT_VERSION" == "$VERSION" ]]; then
-  log_warn "A versao atual ($CURRENT_VERSION) ja e a mesma que a informada ($VERSION)."
-  read -rp "Continuar mesmo assim? (y/N) " confirm_same
-  if [[ "$confirm_same" != "y" && "$confirm_same" != "Y" ]]; then
-    log_info "Cancelado."
-    exit 0
-  fi
-fi
+CURRENT_VERSION="$(git tag --sort=-version:refname | head -1 | sed 's/^v//' || echo "unknown")"
 
 echo ""
 echo -e "${BOLD}Release $TAG${NC}"
 echo -e "${BOLD}==================${NC}"
 echo ""
-echo -e "Versao atual:  $CURRENT_VERSION"
+echo -e "Ultima tag:    ${CURRENT_VERSION:-none}"
 echo -e "Nova versao:   $VERSION"
 echo -e "Branch:        $BRANCH"
 echo ""
@@ -132,26 +123,10 @@ log_info "Criando branch $BRANCH..."
 git checkout -b "$BRANCH"
 log_success "Branch criada"
 
-# ---- Update VERSION file ----
-log_info "Atualizando VERSION para $VERSION..."
-printf '%s\n' "$VERSION" > "$SCRIPT_DIR/apps/cli/VERSION"
-log_success "VERSION atualizado"
-
-# ---- Update hardcoded versions in CLI scripts ----
-log_info "Atualizando versao hardcoded nos scripts..."
-
-for script in "$SCRIPT_DIR/apps/cli/src/bin/create-pr-description" "$SCRIPT_DIR/apps/cli/src/bin/create-test-card"; do
-  if [[ -f "$script" ]]; then
-    # Update the fallback VERSION line (VERSION="X.Y.Z")
-    sed -i "s/^VERSION=\"[0-9]\+\.[0-9]\+\.[0-9]\+\"$/VERSION=\"$VERSION\"/" "$script"
-    log_success "Atualizado: $script"
-  fi
-done
-
 # ---- Regenerate CHANGELOG.md ----
 if command -v git-cliff &>/dev/null; then
   log_info "Regenerando CHANGELOG.md..."
-  git-cliff > "$SCRIPT_DIR/CHANGELOG.md"
+  git-cliff --tag "$TAG" > "$SCRIPT_DIR/CHANGELOG.md"
   log_success "CHANGELOG.md atualizado"
 else
   log_warn "git-cliff nao encontrado. CHANGELOG.md sera gerado pelo workflow de release."
@@ -159,7 +134,7 @@ fi
 
 # ---- Commit ----
 log_info "Criando commit..."
-git add apps/cli/VERSION apps/cli/src/bin/create-pr-description apps/cli/src/bin/create-test-card CHANGELOG.md
+git add CHANGELOG.md
 git commit -m "chore: bump version to $TAG"
 log_success "Commit criado"
 
@@ -176,17 +151,14 @@ if command -v gh &>/dev/null; then
     --body "$(cat <<EOF
 ## Release $TAG
 
-Atualiza versao para **$VERSION**.
+Prepara release da versao **$VERSION** do \`prt\`.
 
 ### O que muda
-- \`VERSION\` atualizado para $VERSION
-- \`create-pr-description\` version → $VERSION
-- \`create-test-card\` version → $VERSION
-- \`CHANGELOG.md\` regenerado
+- \`CHANGELOG.md\` atualizado para $VERSION
 
 ### Apos o merge
 - O workflow \`auto-tag.yml\` cria a tag \`$TAG\` automaticamente
-- O workflow \`release.yml\` cria o GitHub Release com changelog e assets
+- O workflow \`release.yml\` publica os binarios \`prt\` via goreleaser
 EOF
 )"
   )
