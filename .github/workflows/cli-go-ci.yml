@@ -19,8 +19,8 @@ jobs:
       run:
         working-directory: apps/cli-go
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
         with:
           go-version-file: apps/cli-go/go.mod
       - uses: golangci/golangci-lint-action@v9
