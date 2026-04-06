@@ -74,7 +74,14 @@ func TestLoadEnvConfigUsesLookupEnvAndOwnedSubset(t *testing.T) {
 
 	cfg, issues := LoadEnvConfig(lookupEnv)
 
-	require.Equal(t, []string{"PRT_CONFIG_VERSION", "PRT_NO_COLOR", "PRT_DEBUG"}, lookupCalls)
+	require.Equal(t, []string{
+		"PRT_CONFIG_VERSION", "PRT_NO_COLOR", "PRT_DEBUG",
+		"PR_PROVIDERS", "OPENROUTER_API_KEY", "GROQ_API_KEY",
+		"GEMINI_API_KEY", "OLLAMA_API_KEY",
+		"OPENROUTER_MODEL", "GROQ_MODEL", "GEMINI_MODEL", "OLLAMA_MODEL",
+		"AZURE_PAT", "PR_REVIEWER_DEV", "PR_REVIEWER_SPRINT",
+		"TEST_CARD_AREA_PATH", "TEST_CARD_ASSIGNED_TO",
+	}, lookupCalls)
 	require.Equal(t, Config{
 		ConfigVersion: "2",
 		NoColor:       Bool(false),
@@ -133,4 +140,23 @@ func TestLoadFileConfigAllowsLaterValidOwnedValueAfterInvalidDuplicate(t *testin
 	require.Equal(t, Config{NoColor: Bool(false)}, cfg)
 	require.Len(t, issues, 1)
 	require.Equal(t, "PRT_NO_COLOR", issues[0].Key)
+}
+
+func TestLoadFileConfigMapsPRConfigKeys(t *testing.T) {
+	t.Parallel()
+
+	input := strings.Join([]string{
+		"PR_PROVIDERS=openrouter,groq",
+		"OPENROUTER_API_KEY=sk-or-xxx",
+		"GROQ_API_KEY=gsk_xxx",
+		"AZURE_PAT=xxx",
+	}, "\n")
+
+	cfg, issues := LoadFileConfig(strings.NewReader(input))
+
+	require.Equal(t, "openrouter,groq", cfg.Providers)
+	require.Equal(t, "sk-or-xxx", cfg.OpenRouterAPIKey)
+	require.Equal(t, "gsk_xxx", cfg.GroqAPIKey)
+	require.Equal(t, "xxx", cfg.AzurePAT)
+	require.Empty(t, issues)
 }
