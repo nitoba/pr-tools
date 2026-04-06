@@ -58,32 +58,32 @@ func disableColors() {
 
 // Title prints: ✦ <msg>  in orange/bold to w.
 func Title(w io.Writer, msg string) {
-	fmt.Fprintf(w, "\n %s%s✦%s %s%s%s\n", Orange, Bold, Reset, OrangeLight, msg, Reset)
+	_, _ = fmt.Fprintf(w, "\n %s%s✦%s %s%s%s\n", Orange, Bold, Reset, OrangeLight, msg, Reset)
 }
 
 // TitleDone prints the closing │ └ to w.
 func TitleDone(w io.Writer) {
-	fmt.Fprintf(w, "  %s│%s └\n", OrangeDim, Reset)
+	_, _ = fmt.Fprintf(w, "  %s│%s └\n", OrangeDim, Reset)
 }
 
 // Info prints: │ <msg> (dim) to w.
 func Info(w io.Writer, msg string) {
-	fmt.Fprintf(w, "  %s│%s %s%s%s\n", OrangeDim, Reset, Dim, msg, Reset)
+	_, _ = fmt.Fprintf(w, "  %s│%s %s%s%s\n", OrangeDim, Reset, Dim, msg, Reset)
 }
 
 // Warn prints: │ ⚠ <msg> (yellow) to w.
 func Warn(w io.Writer, msg string) {
-	fmt.Fprintf(w, "  %s│%s %s⚠ %s%s\n", OrangeDim, Reset, Yellow, msg, Reset)
+	_, _ = fmt.Fprintf(w, "  %s│%s %s⚠ %s%s\n", OrangeDim, Reset, Yellow, msg, Reset)
 }
 
 // Error prints: │ ✗ <msg> (red) to w.
 func Error(w io.Writer, msg string) {
-	fmt.Fprintf(w, "  %s│%s %s✗ %s%s\n", OrangeDim, Reset, Red, msg, Reset)
+	_, _ = fmt.Fprintf(w, "  %s│%s %s✗ %s%s\n", OrangeDim, Reset, Red, msg, Reset)
 }
 
 // Success prints: │ ✓ <msg> (green) to w.
 func Success(w io.Writer, msg string) {
-	fmt.Fprintf(w, "  %s│%s %s✓ %s%s\n", OrangeDim, Reset, Green, msg, Reset)
+	_, _ = fmt.Fprintf(w, "  %s│%s %s✓ %s%s\n", OrangeDim, Reset, Green, msg, Reset)
 }
 
 // Step prints: │ ● <msg>...  to w (inline, no newline).
@@ -101,9 +101,9 @@ func Step(w io.Writer, msg string) func(ok bool) {
 				return
 			default:
 				if bold {
-					fmt.Fprintf(w, "\r  %s│%s %s●%s  %s...", OrangeDim, Reset, Bold, Reset, msg)
+					_, _ = fmt.Fprintf(w, "\r  %s│%s %s●%s  %s...", OrangeDim, Reset, Bold, Reset, msg)
 				} else {
-					fmt.Fprintf(w, "\r  %s│%s %s●%s  %s...", OrangeDim, Reset, Dim, Reset, msg)
+					_, _ = fmt.Fprintf(w, "\r  %s│%s %s●%s  %s...", OrangeDim, Reset, Dim, Reset, msg)
 				}
 				bold = !bold
 				time.Sleep(300 * time.Millisecond)
@@ -117,11 +117,11 @@ func Step(w io.Writer, msg string) func(ok bool) {
 			// Small sleep to let the goroutine stop before we print
 			time.Sleep(50 * time.Millisecond)
 			// Clear the line
-			fmt.Fprintf(w, "\r\033[2K")
+			_, _ = fmt.Fprintf(w, "\r\033[2K")
 			if ok {
-				fmt.Fprintf(w, "  %s│%s %s✓%s  %s\n", OrangeDim, Reset, Green, Reset, msg)
+				_, _ = fmt.Fprintf(w, "  %s│%s %s✓%s  %s\n", OrangeDim, Reset, Green, Reset, msg)
 			} else {
-				fmt.Fprintf(w, "  %s│%s %s✗%s  %s\n", OrangeDim, Reset, Red, Reset, msg)
+				_, _ = fmt.Fprintf(w, "  %s│%s %s✗%s  %s\n", OrangeDim, Reset, Red, Reset, msg)
 			}
 		})
 	}
