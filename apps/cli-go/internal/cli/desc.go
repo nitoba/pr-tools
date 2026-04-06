@@ -13,8 +13,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const approvedSpecPath = "docs/superpowers/specs/2026-04-06-prt-go-foundation-design.md"
-
 type ExitError struct {
 	Code int
 	Err  error
@@ -75,10 +73,10 @@ func runDesc(ctx context.Context, cfg *config.Config, flags descFlagSet, cmd *co
 	userPrompt := buildDescPrompt(gitCtx)
 
 	if flags.dryRun {
-		fmt.Fprintln(cmd.OutOrStdout(), "=== SYSTEM ===")
-		fmt.Fprintln(cmd.OutOrStdout(), descSystemPrompt)
-		fmt.Fprintln(cmd.OutOrStdout(), "\n=== USER ===")
-		fmt.Fprintln(cmd.OutOrStdout(), userPrompt)
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "=== SYSTEM ===")
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), descSystemPrompt)
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\n=== USER ===")
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), userPrompt)
 		return nil
 	}
 
@@ -106,12 +104,12 @@ func runDesc(ctx context.Context, cfg *config.Config, flags descFlagSet, cmd *co
 
 	// Output
 	out := cmd.OutOrStdout()
-	fmt.Fprintf(out, "\nTitulo: %s\n\n", title)
-	fmt.Fprintf(out, "Descricao:\n%s\n", body)
+	_, _ = fmt.Fprintf(out, "\nTitulo: %s\n\n", title)
+	_, _ = fmt.Fprintf(out, "Descricao:\n%s\n", body)
 
 	// Copy body to clipboard (best effort)
 	if err := clipboard.Write(body); err == nil {
-		fmt.Fprintln(out, "\n✓ Copiado para clipboard")
+		_, _ = fmt.Fprintln(out, "\n✓ Copiado para clipboard")
 	}
 
 	// Create PR in Azure DevOps if requested
@@ -125,9 +123,9 @@ func runDesc(ctx context.Context, cfg *config.Config, flags descFlagSet, cmd *co
 		}
 		pr, err := azClient.CreatePullRequest(ctx, gitCtx.AzureProject, gitCtx.AzureRepo, prReq)
 		if err != nil {
-			fmt.Fprintf(out, "\n⚠ Erro ao criar PR: %v\n", err)
+			_, _ = fmt.Fprintf(out, "\n⚠ Erro ao criar PR: %v\n", err)
 		} else {
-			fmt.Fprintf(out, "\n✓ PR criado: %s\n", pr.URL)
+			_, _ = fmt.Fprintf(out, "\n✓ PR criado: %s\n", pr.URL)
 		}
 	}
 

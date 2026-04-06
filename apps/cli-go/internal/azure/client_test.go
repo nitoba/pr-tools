@@ -14,7 +14,7 @@ import (
 func TestGetWorkItem_ParsesResponse(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"id": 42,
 			"fields": map[string]interface{}{
 				"System.Title":        "My Work Item",
@@ -42,9 +42,9 @@ func TestCreateTestCase_SendsCorrectPatchOps(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		capturedContentType = r.Header.Get("Content-Type")
-		json.NewDecoder(r.Body).Decode(&capturedBody)
+		_ = json.NewDecoder(r.Body).Decode(&capturedBody)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"id": 99,
 			"fields": map[string]interface{}{
 				"System.Title": "Test Case Title",
@@ -93,7 +93,7 @@ func TestCreateTestCase_SendsCorrectPatchOps(t *testing.T) {
 func TestGetWorkItem_ReturnsErrorOn404(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		w.Write([]byte(`{"message":"Work item not found"}`))
+		_, _ = w.Write([]byte(`{"message":"Work item not found"}`))
 	}))
 	defer srv.Close()
 

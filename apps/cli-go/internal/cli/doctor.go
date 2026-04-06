@@ -67,7 +67,7 @@ func runDoctor() (doctor.Report, error) {
 		if err != nil {
 			envFileReadable = false
 		} else {
-			defer file.Close()
+			defer func() { _ = file.Close() }()
 			_, parseIssues := config.ParseEnv(file)
 			for _, issue := range parseIssues {
 				if isGoOwnedKey(issue.Key) {
@@ -113,8 +113,8 @@ func isDirCreatable(path string) bool {
 	if err != nil {
 		return false
 	}
-	file.Close()
-	os.Remove(testFile)
+	_ = file.Close()
+	_ = os.Remove(testFile)
 	return true
 }
 

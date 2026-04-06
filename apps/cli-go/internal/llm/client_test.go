@@ -23,19 +23,6 @@ func (m *mockLLMClient) Chat(_ context.Context, _ []Message) (string, error) {
 	return m.response, m.err
 }
 
-// mockProvider is a test-only provider that wraps a pre-built client.
-type mockProvider struct {
-	name   string
-	client LLMClient
-	err    error
-}
-
-func (p *mockProvider) Name() string         { return p.name }
-func (p *mockProvider) DefaultModel() string { return "mock-model" }
-func (p *mockProvider) NewClient(_, _ string) (LLMClient, error) {
-	return p.client, p.err
-}
-
 // newTestFallbackClient builds a FallbackClient directly from a list of clients,
 // bypassing the registry, to allow precise test control.
 func newTestFallbackClient(clients ...LLMClient) *FallbackClient {

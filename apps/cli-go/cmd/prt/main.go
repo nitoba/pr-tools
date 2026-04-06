@@ -24,7 +24,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 
-	fmt.Fprintln(stderr, err)
+	_, _ = fmt.Fprintln(stderr, err)
 
 	var exitErr *cli.ExitError
 	if ok := errors.As(err, &exitErr); ok {

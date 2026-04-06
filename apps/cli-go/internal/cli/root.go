@@ -32,7 +32,7 @@ func loadConfig() *config.Config {
 	var fileCfg config.Config
 	if dir, err := config.Dir(); err == nil {
 		if f, err := os.Open(filepath.Join(dir, ".env")); err == nil {
-			defer f.Close()
+			defer func() { _ = f.Close() }()
 			fileCfg, _ = config.LoadFileConfig(f)
 		}
 	}

@@ -67,7 +67,7 @@ func (c *Client) CreateTestCase(ctx context.Context, project string, req CreateT
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
