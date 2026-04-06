@@ -1,11 +1,13 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 
 	"github.com/nitoba/pr-tools/apps/cli-go/internal/config"
 	"github.com/nitoba/pr-tools/apps/cli-go/internal/setup"
+	"github.com/nitoba/pr-tools/apps/cli-go/internal/wizard"
 	"github.com/spf13/cobra"
 )
 
@@ -67,6 +69,16 @@ func (d *defaultInitDeps) run() (InitResult, error) {
 		return InitResult{}, err
 	}
 
+	// Run the interactive wizard when stdin is a real terminal.
+	if wizard.IsTerminal(os.Stdin.Fd()) {
+		if werr := wizard.Run(os.Stdin, os.Stderr, envPath); werr != nil {
+			return InitResult{}, fmt.Errorf("wizard: %w", werr)
+		}
+		return InitResult{Summary: ""}, nil
+	}
+
+	// Non-interactive mode: just print the standard summary.
+	fmt.Fprintln(os.Stderr, "[AVISO] Edite ~/.config/pr-tools/.env e preencha suas API keys.")
 	summary := computeSummary(dirCreated, result)
 	return InitResult{Summary: summary}, nil
 }
