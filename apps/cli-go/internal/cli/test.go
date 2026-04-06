@@ -81,10 +81,10 @@ func runTest(ctx context.Context, cfg *config.Config, flags testFlagSet, cmd *co
 	userPrompt := buildTestPrompt(wi, wiID, flags)
 
 	if flags.dryRun {
-		fmt.Fprintln(out, "=== SYSTEM ===")
-		fmt.Fprintln(out, testSystemPrompt)
-		fmt.Fprintln(out, "\n=== USER ===")
-		fmt.Fprintln(out, userPrompt)
+		_, _ = fmt.Fprintln(out, "=== SYSTEM ===")
+		_, _ = fmt.Fprintln(out, testSystemPrompt)
+		_, _ = fmt.Fprintln(out, "\n=== USER ===")
+		_, _ = fmt.Fprintln(out, userPrompt)
 		return nil
 	}
 
@@ -111,12 +111,12 @@ func runTest(ctx context.Context, cfg *config.Config, flags testFlagSet, cmd *co
 
 	// Output
 	if flags.raw {
-		fmt.Fprintln(out, body)
+		_, _ = fmt.Fprintln(out, body)
 		return nil
 	}
 
-	fmt.Fprintf(out, "\nTitulo: %s\n\n", title)
-	fmt.Fprintf(out, "Test Card:\n%s\n", body)
+	_, _ = fmt.Fprintf(out, "\nTitulo: %s\n\n", title)
+	_, _ = fmt.Fprintf(out, "Test Card:\n%s\n", body)
 
 	// Create test case in Azure DevOps unless --no-create
 	if !flags.noCreate && cfg.AzurePAT != "" && org != "" && project != "" {
@@ -130,9 +130,9 @@ func runTest(ctx context.Context, cfg *config.Config, flags testFlagSet, cmd *co
 		}
 		tc, err := azClient.CreateTestCase(ctx, project, tcReq)
 		if err != nil {
-			fmt.Fprintf(out, "\n⚠ Erro ao criar test case: %v\n", err)
+			_, _ = fmt.Fprintf(out, "\n⚠ Erro ao criar test case: %v\n", err)
 		} else {
-			fmt.Fprintf(out, "\n✓ Test Case criado: #%d\n", tc.ID)
+			_, _ = fmt.Fprintf(out, "\n✓ Test Case criado: #%d\n", tc.ID)
 		}
 	}
 
