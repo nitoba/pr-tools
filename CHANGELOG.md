@@ -1,28 +1,254 @@
 # Changelog
 
-## Unreleased
+## 3.0.0 — 2026-04-06
+
+
+### Bug Fixes
+
+- Fix remaining errcheck lint issues in test.go and llm providers (`342c8b3`)
+
+- Resolve all golangci-lint errors (`c902a43`)
+
+- Remove unused codeLang assignment in markdown parser (`de01cac`)
+
+- Update release.sh and auto-tag.yml for Go-only CLI (`4b9bd1b`)
+
+- Switch ollama to cloud API (https://ollama.com/v1/chat/completions) (`f54a3e4`)
+
+- Replace @vercel/og with satori + @resvg/resvg-wasm (`07f3b25`)
+
+- Update bun.lock with @vercel/og dependency (`a222d73`)
+
+- Add missing Steps, Step, Tabs, Tab imports to MDX files (`fb4551f`)
+
+- Use @tailwindcss/vite plugin (correct TanStack Start setup) (`3da7de5`)
+
+- Add postcss-import to resolve CSS @import ordering with Tailwind v4 (`1d861f8`)
+
+- Fix PostCSS ordering by importing fumadocs CSS from JS instead of CSS chain (`b556c37`)
+
+- Align TanStack Start setup with official fumadocs guide (`1f1e11f`)
+
+- Use target vite in postinstall (bun target not available in installed version) (`f5d0367`)
+
+- Add postinstall script to generate .source/ for fumadocs-mdx Vite (`0c1a65e`)
+
+- Pin fumadocs deps versions and add docs scripts to monorepo root (`f037cff`)
+
+- Add trailing newlines and commit bun.lock for apps/www (`3445b25`)
+
+- Remove broken schema path from .oxfmtrc.json (`4e46191`)
+
+
+### CI/CD
+
+- Fix golangci-lint version to v2.11.4 (`cedffb0`)
+
+- Upgrade all GitHub Actions to latest major versions (`12ad48e`)
+
+- Upgrade golangci-lint-action to v9 (`a301473`)
+
+- Pin golangci-lint to v2 for config schema compatibility (`8caa6a2`)
+
+- Update golangci-lint configuration (`9650481`)
+
+- Add path filters for cli app to workflow triggers (`7d0bfc6`)
+
+- Specify config path for wrangler deploy (`ab09595`)
+
+- Switch deployment from Cloudflare Pages to Workers (`8622b04`)
+
+- Add Cloudflare deployment for docs and www apps (`960a44b`)
+
+
+### Chores
+
+- Simplify pipeline — goreleaser only, fix monorepo build paths (`6ba3df8`)
+
+- Remove Bash CLI and its CI workflow (`4277dc7`)
+
+- Add Go binaries to gitignore (`a07cfa1`)
+
+- Update generated route tree with /api/og route (`e047474`)
+
+- Replace vite-tsconfig-paths with Vite native tsconfigPaths (`a771876`)
+
+- Update bun.lock after full workspace install (`2492fd6`)
+
+- Update release paths to apps/cli (`85c438c`)
+
+- Migrate cli code to apps/cli (`89ba9cd`)
+
+- Add oxlint and oxfmt to monorepo root (`cd2c872`)
+
+- Initialize bun monorepo workspace (`540ccd7`)
+
+
+### Documentation
+
+- Rewrite README for prt Go CLI as primary (`b3383c9`)
+
+- Add Phase 3 implementation plan (`6df9713`)
+
+- Add Phase 3 migration design spec (`ad4701d`)
+
+- Write changelog placeholder page (`baac2d1`)
+
+- Write troubleshooting reference page (`414770b`)
+
+- Write environment-variables reference page (`d88353f`)
+
+- Write advanced-examples guide page (`34d42c3`)
+
+- Write markdown-rendering guide page (`31341aa`)
+
+- Write ai-providers guide page (`025ccea`)
+
+- Write azure-devops guide page (`f32caa1`)
+
+- Write create-test-card command page (`1fcdeaf`)
+
+- Write create-pr-description command page (`933887d`)
+
+- Write configuration page (`825e8d7`)
+
+- Write quickstart page (`5554d4d`)
+
+- Write installation page (`067dbf9`)
+
+- Write introduction page (`435fd70`)
+
+- Add documentation implementation plan (`3bcabe5`)
+
+- Add documentation design spec for pr-tools docs site (`0240173`)
+
+- Update plan and spec to Fumadocs Vite (replace Mintlify) (`e21420f`)
+
+- Update monorepo foundation plan and design spec to use Fumadocs instead of Mintlify (`42a7b33`)
+
+- Rewrite plan to use CLI scaffolding + correct oxfmt package (`f601fd7`)
+
+- Add monorepo foundation implementation plan (`a572e96`)
+
+- Scope spec to foundation only, defer content implementation (`c5aabce`)
+
+- Add monorepo design spec (www + docs + newsletter) (`5480bf9`)
+
+
+### Features
+
+- Add Windows PowerShell install script (`8272474`)
+
+- Add Linux/macOS install script (`dab3349`)
+
+- Implement prt test command (`8775a80`)
+
+- Implement prt desc command (`78b28fc`)
+
+- Add cross-platform clipboard support (`6147437`)
+
+- Add Azure DevOps client (`1bce868`)
+
+- Add LLM client interface and implementations (`9c49c5e`)
+
+- Add git context package (`31a42af`)
+
+- Add PR/Test config keys (`ad59341`)
+
+- Add prt CLI foundation (`7f53eec`)
+
+- Add golang skills and go cli foundation (`ad7deed`)
+
+- Add dynamic OG image generation with @vercel/og (`5664e90`)
+
+- Add per-page SEO meta tags based on frontmatter (`48681f9`)
+
+- Add SEO meta tags and favicons for better search ranking (`08e1cbb`)
+
+- Externalize docs link in navbar (`68ba4c8`)
+
+- Implement landing page and newsletter automation (`7a36faf`)
+
+- Migrate from vinext/Next.js to TanStack Start with fumadocs-ui (`015f2f5`)
+
+- Migrate to Next.js App Router with vinext (`96a730b`)
+
+- Monorepo foundation — apps/cli, apps/www (Astro), apps/docs (Fumadocs Vite) (`e842fb2`)
+
+- Scaffold apps/docs with Fumadocs Vite and MDX stubs (`2791c5d`)
+
+- Scaffold apps/docs with Fumadocs Vite and MDX stubs (`97e478c`)
+
+- Scaffold apps/www with Astro 5, Tailwind CSS 4 and React (`dff0541`)
+
+
+### Refactoring
+
+- Move Go config to apps/cli-go/ (`b5a4bf9`)
+
+- Update Cloudflare deployment workflows to direct wrangler execution (`ed29f6f`)
+
+- Update workflow paths to apps/cli and integrate Node build steps (`abf8bea`)
+
+- Remove custom theme color variables from app.css (`5731f48`)
+
+
+### Tests
+
+- Add testing script and switch email template to dark mode (`28ffae6`)
+
+
+### Build
+
+- Add tailwindcss dependency (`2207c95`)
+
+
+### Redesign
+
+- Refactor UI with emerald palette and premium design (`b6a3a9d`)
+
+
+### Style
+
+- Standardize code formatting and update development configurations (`a3d5985`)
+
+
+## 2.9.8 — 2026-04-03
+
 
 ### Bug Fixes
 
 - Add workflow_dispatch trigger to release workflow (`eb49f0f`)
 
+
+### Chores
+
+- Bump version to v2.9.8 (`a4b8450`)
+
+
 ## 2.9.7 — 2026-04-03
+
 
 ### Bug Fixes
 
 - Explicitly trigger Release workflow after auto-tag creation (`eef62f0`)
 
+
 ### Chores
 
 - Bump version to v2.9.7 (`77c8cf9`)
 
+
 ## 2.9.6 — 2026-04-03
+
 
 ### Chores
 
 - Bump version to v2.9.6 (`85c4bbf`)
 
+
 ## 2.9.5 — 2026-04-03
+
 
 ### Chores
 
@@ -30,15 +256,19 @@
 
 - Bump version to v2.9.6 (`e9adf71`)
 
+
 ### Features
 
 - Switch release flow to PR-based workflow with auto-tagging (`6716c87`)
 
+
 ## 2.9.4 — 2026-04-03
+
 
 ### Bug Fixes
 
 - Include OLLAMA_API_KEY in validate_api_keys and validate_provider_keys (`df04b6d`)
+
 
 ### Chores
 
@@ -48,11 +278,13 @@
 
 - Bump version to v2.9.3 (`93bdef5`)
 
+
 ### Documentation
 
 - Add Ollama Cloud provider implementation plan (`d9f58c5`)
 
 - Add Ollama Cloud provider design spec (`e88dbce`)
+
 
 ### Features
 
@@ -66,17 +298,22 @@
 
 - Add ollama to test_provider_key and load_config in common.sh (`9d6fa25`)
 
+
 ## 2.9.2 — 2026-04-03
+
 
 ### Bug Fixes
 
 - Package release assets into a single zip archive (`c574fdd`)
 
+
 ### Chores
 
 - Bump version to v2.9.2 (`1ef8ace`)
 
+
 ## 2.9.1 — 2026-04-03
+
 
 ### Bug Fixes
 
@@ -144,6 +381,7 @@
 
 - Prompt functions now display correctly in interactive wizard (`ac0f6f9`)
 
+
 ### CI/CD
 
 - Add release workflow with git-cliff changelog generation (`26d6823`)
@@ -151,6 +389,7 @@
 - Add CI workflow with shellcheck, syntax check, and smoke tests (`c789be7`)
 
 - Add opencode workflow (`4baa452`)
+
 
 ### Chores
 
@@ -186,6 +425,7 @@
 
 - Bump version to 1.1.0 (`4de5fe9`)
 
+
 ### Documentation
 
 - Document versioned installation and release process (`92196d9`)
@@ -203,6 +443,7 @@
 - Add groq reasoning fallback spec and plan (`a5089ff`)
 
 - Update README with Gemini support, auto PR creation, and all CLI flags (`626bcc0`)
+
 
 ### Features
 
@@ -258,9 +499,10 @@
 
 - Add PR title generation, --dry-run and --update flags (`56dd80d`)
 
-- Add interactive setup wizard and --set-\*-model flags (`62418c6`)
+- Add interactive setup wizard and --set-*-model flags (`62418c6`)
 
 - Initial release - PR description generator with LLM support (`a16b688`)
+
 
 ### Refactoring
 
@@ -281,3 +523,5 @@
 - Extract shared utilities into lib/common.sh (`011e294`)
 
 - Improve test card generation to focus on observable behavior (`d5e987a`)
+
+
