@@ -63,7 +63,7 @@ jobs:
         with:
           distribution: goreleaser
           version: latest
-          args: release --clean --skip=publish --config .goreleaser.prt.yml
+          args: release --clean --skip=publish --config apps/cli-go/.goreleaser.prt.yml
 
       - name: Collect prt asset list
         run: |

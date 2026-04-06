@@ -5,15 +5,11 @@ on:
     branches: [main]
     paths:
       - "apps/cli-go/**"
-      - ".golangci.yml"
-      - ".goreleaser.prt.yml"
       - ".github/workflows/cli-go-ci.yml"
   push:
     branches: [main]
     paths:
       - "apps/cli-go/**"
-      - ".golangci.yml"
-      - ".goreleaser.prt.yml"
       - ".github/workflows/cli-go-ci.yml"
 
 jobs:

@@ -4,13 +4,12 @@ project_name: prt
 
 before:
   hooks:
-    - sh -c 'cd apps/cli-go && go vet ./...'
-    - sh -c 'cd apps/cli-go && go test -race ./...'
-    - sh -c 'cd apps/cli-go && go test ./...'
+    - go vet ./...
+    - go test -race ./...
+    - go test ./...
 
 builds:
   - id: prt
-    dir: apps/cli-go
     main: ./cmd/prt
     binary: prt
     ldflags:
