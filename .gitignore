@@ -11,3 +11,8 @@ dist/
 .wrangler/
 .output/
 .worker-dist/
+
+# Go binaries
+apps/cli-go/bin/
+apps/cli-go/prt
+prt
