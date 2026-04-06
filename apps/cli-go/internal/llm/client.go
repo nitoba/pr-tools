@@ -101,16 +101,22 @@ func NewFallbackClient(cfg Config) *FallbackClient {
 // Chat tries each provider in order, returning the first success.
 // Returns (response, providerName, error).
 func (fc *FallbackClient) Chat(ctx context.Context, system, user string) (string, string, error) {
+	if len(fc.clients) == 0 {
+		return "", "", fmt.Errorf("nenhum provedor configurado — execute 'prt init' para configurar suas API keys")
+	}
+
 	messages := []Message{
 		{Role: "system", Content: system},
 		{Role: "user", Content: user},
 	}
 
+	var errs []string
 	for _, client := range fc.clients {
 		resp, err := client.Chat(ctx, messages)
 		if err == nil {
 			return resp, client.Name(), nil
 		}
+		errs = append(errs, fmt.Sprintf("%s: %v", client.Name(), err))
 	}
-	return "", "", fmt.Errorf("all providers failed")
+	return "", "", fmt.Errorf("todos os provedores falharam:\n  %s", strings.Join(errs, "\n  "))
 }

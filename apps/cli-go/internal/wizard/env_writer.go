@@ -58,7 +58,7 @@ func replaceKey(lines []string, key, value string) ([]string, bool) {
 	return result, false
 }
 
-// appendKey inserts KEY="VALUE" before the managed-block end marker if present,
+// appendKey inserts KEY="VALUE" after the managed-block end marker if present,
 // otherwise appends at the end.
 func appendKey(lines []string, key, value string) []string {
 	const blockEnd = "# --- PRT managed block end ---"
@@ -67,9 +67,9 @@ func appendKey(lines []string, key, value string) []string {
 	for i, line := range lines {
 		if strings.TrimSpace(line) == blockEnd {
 			result := make([]string, 0, len(lines)+1)
-			result = append(result, lines[:i]...)
+			result = append(result, lines[:i+1]...)
 			result = append(result, newLine)
-			result = append(result, lines[i:]...)
+			result = append(result, lines[i+1:]...)
 			return result
 		}
 	}
