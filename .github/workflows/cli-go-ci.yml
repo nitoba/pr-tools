@@ -1,0 +1,38 @@
+name: CLI Go CI
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "apps/cli-go/**"
+      - ".golangci.yml"
+      - ".goreleaser.prt.yml"
+      - ".github/workflows/cli-go-ci.yml"
+  push:
+    branches: [main]
+    paths:
+      - "apps/cli-go/**"
+      - ".golangci.yml"
+      - ".goreleaser.prt.yml"
+      - ".github/workflows/cli-go-ci.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/cli-go
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/cli-go/go.mod
+      - uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          working-directory: apps/cli-go
+      - run: go vet ./...
+      - run: go test -race ./...
+      - run: go test ./...
+      - run: go build ./cmd/prt
+      - run: go run ./cmd/prt --help

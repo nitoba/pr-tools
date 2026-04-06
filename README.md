@@ -334,3 +334,28 @@ O script faz:
 - **MAJOR** — Breaking changes
 - **MINOR** — Novas features
 - **PATCH** — Bug fixes
+
+---
+
+## CLI Go experimental: `prt`
+
+O projeto agora também possui uma fundação em Go para a futura CLI unificada.
+
+Comandos atuais:
+
+```bash
+prt init
+prt doctor
+prt desc
+prt test
+```
+
+Instalação nesta fase:
+
+- baixar o arquivo `.tar.gz` ou `.zip` correspondente na página de Releases
+- extrair o binário `prt` ou `prt.exe`
+- colocá-lo no seu `PATH`
+
+Observação: o instalador `install.sh` continua sendo o fluxo oficial da CLI Bash durante a migração.
+Fluxo oficial Bash mantido: `bash install.sh`.
+Procure artefatos com nomes como `prt_<version>_<os>_<arch>.tar.gz` e `prt_<version>_<os>_<arch>.zip`.
