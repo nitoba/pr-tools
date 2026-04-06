@@ -199,7 +199,6 @@ function markdownToHtml(md, t) {
       if (!inCode) {
         flushList()
         inCode = true
-        codeLang = line.slice(3).trim()
         codeLines = []
         continue
       } else {
