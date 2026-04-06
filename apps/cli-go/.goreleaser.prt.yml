@@ -21,13 +21,12 @@ builds:
 
 archives:
   - id: prt-archives
-    builds: [prt]
+    ids: [prt]
     name_template: "prt_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-    formats:
-      - tar.gz
+    formats: [tar.gz]
     format_overrides:
       - goos: windows
-        format: zip
+        formats: [zip]
 
 checksum:
   name_template: prt_{{ .Version }}_checksums.txt
