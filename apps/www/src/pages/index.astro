@@ -50,9 +50,9 @@ import Footer from "../components/Footer.astro";
     <meta name="author" content="pr-tools" />
     <meta name="robots" content="index, follow" />
     <link rel="canonical" href="https://pr-tools.dev" />
-    <meta name="theme-color" content="#0F172A" />
+    <meta name="theme-color" content="#0f1114" />
   </head>
-  <body>
+  <body class="noise-overlay">
     <Navbar />
     <main>
       <Hero />
@@ -63,5 +63,24 @@ import Footer from "../components/Footer.astro";
       <Newsletter />
     </main>
     <Footer />
+
+    <!-- Scroll-entry animation observer -->
+    <script>
+      const observer = new IntersectionObserver(
+        (entries) => {
+          entries.forEach((entry) => {
+            if (entry.isIntersecting) {
+              entry.target.classList.add("is-visible");
+              observer.unobserve(entry.target);
+            }
+          });
+        },
+        { threshold: 0.1, rootMargin: "0px 0px -40px 0px" }
+      );
+
+      document.querySelectorAll(".fade-in-up").forEach((el) => {
+        observer.observe(el);
+      });
+    </script>
   </body>
 </html>

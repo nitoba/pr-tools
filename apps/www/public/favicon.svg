@@ -1,9 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none">
-  <rect width="128" height="128" rx="24" fill="#0F172A"/>
-  <path d="M40 32v64M88 96V68" stroke="#38BDF8" stroke-width="8" stroke-linecap="round"/>
-  <circle cx="40" cy="32" r="10" fill="#38BDF8"/>
-  <circle cx="40" cy="96" r="10" fill="#38BDF8"/>
-  <circle cx="88" cy="96" r="10" fill="#38BDF8"/>
-  <path d="M40 52c0 0 0 16 24 16s24-16 24-16" stroke="#38BDF8" stroke-width="8" stroke-linecap="round" fill="none"/>
-  <path d="M56 44l8 8-8 8" stroke="#F472B6" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <rect width="128" height="128" rx="28" fill="#111318"/>
+  <!-- > chevron -->
+  <path d="M32 40l28 24-28 24" stroke="#34d399" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- _ underscore -->
+  <path d="M68 88h28" stroke="#34d399" stroke-width="10" stroke-linecap="round"/>
 </svg>

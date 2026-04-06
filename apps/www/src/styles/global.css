@@ -41,45 +41,45 @@
 :root {
   --radius: 0.5rem;
 
-  /* Surface */
-  --background:    oklch(0.06 0 0);
-  --foreground:    oklch(1 0 0);
+  /* Surface — off-black with slight warm tint */
+  --background:    oklch(0.07 0.005 260);
+  --foreground:    oklch(0.96 0 0);
 
   /* Card — slightly elevated over background */
-  --card:          oklch(0.10 0 0);
-  --card-foreground: oklch(1 0 0);
+  --card:          oklch(0.11 0.005 260);
+  --card-foreground: oklch(0.96 0 0);
 
   /* Popover */
-  --popover:       oklch(0.08 0 0);
-  --popover-foreground: oklch(1 0 0);
+  --popover:       oklch(0.09 0.005 260);
+  --popover-foreground: oklch(0.96 0 0);
 
-  /* Primary — purple accent #A855F7 */
-  --primary:       oklch(0.59 0.24 292);
-  --primary-foreground: oklch(1 0 0);
+  /* Primary — desaturated emerald accent */
+  --primary:       oklch(0.72 0.15 162);
+  --primary-foreground: oklch(0.14 0.005 162);
 
-  /* Secondary — subtle elevated surface #1A1A1A */
-  --secondary:     oklch(0.13 0 0);
-  --secondary-foreground: oklch(0.92 0 0);
+  /* Secondary — subtle elevated surface */
+  --secondary:     oklch(0.14 0.005 260);
+  --secondary-foreground: oklch(0.88 0 0);
 
   /* Muted */
-  --muted:         oklch(0.13 0 0);
-  --muted-foreground: oklch(0.67 0 0);
+  --muted:         oklch(0.14 0.005 260);
+  --muted-foreground: oklch(0.60 0 0);
 
   /* Accent */
-  --accent:        oklch(0.13 0 0);
-  --accent-foreground: oklch(0.92 0 0);
+  --accent:        oklch(0.14 0.005 260);
+  --accent-foreground: oklch(0.88 0 0);
 
   /* Destructive */
-  --destructive:   oklch(0.65 0.22 22);
+  --destructive:   oklch(0.65 0.20 25);
 
-  /* Border / Input */
-  --border:        oklch(0.16 0 0);
-  --input:         oklch(0.16 0 0);
-  --ring:          oklch(0.59 0.24 292);
+  /* Border / Input — slightly visible */
+  --border:        oklch(0.18 0.005 260);
+  --input:         oklch(0.18 0.005 260);
+  --ring:          oklch(0.72 0.15 162);
 
   /* Charts */
-  --chart-1:       oklch(0.65 0.27 350);
-  --chart-2:       oklch(0.71 0.17 162);
+  --chart-1:       oklch(0.65 0.20 350);
+  --chart-2:       oklch(0.72 0.15 162);
 }
 
 @layer base {
@@ -94,4 +94,44 @@
   body {
     @apply bg-background text-foreground font-sans antialiased;
   }
+}
+
+/* Scroll-entry animation */
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.fade-in-up {
+  opacity: 0;
+  transform: translateY(16px);
+}
+
+.fade-in-up.is-visible {
+  animation: fade-in-up 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Stagger delay utility */
+.stagger-1 { animation-delay: 80ms; }
+.stagger-2 { animation-delay: 160ms; }
+.stagger-3 { animation-delay: 240ms; }
+.stagger-4 { animation-delay: 320ms; }
+
+/* Noise overlay */
+.noise-overlay::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  pointer-events: none;
+  opacity: 0.03;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+  background-repeat: repeat;
+  background-size: 256px 256px;
 }

@@ -12,9 +12,14 @@ export const GET: APIRoute = async () => {
     wasmInitialized = true
   }
 
-  const fontData = await fetch(
-    'https://cdn.jsdelivr.net/fontsource/fonts/geist-sans@latest/latin-700-normal.woff'
-  ).then((r) => r.arrayBuffer())
+  const [fontBold, fontRegular] = await Promise.all([
+    fetch(
+      'https://cdn.jsdelivr.net/fontsource/fonts/geist-sans@latest/latin-700-normal.woff'
+    ).then((r) => r.arrayBuffer()),
+    fetch(
+      'https://cdn.jsdelivr.net/fontsource/fonts/geist-sans@latest/latin-400-normal.woff'
+    ).then((r) => r.arrayBuffer()),
+  ])
 
   const svg = await satori(
     {
@@ -25,19 +30,38 @@ export const GET: APIRoute = async () => {
           flexDirection: 'column',
           width: '100%',
           height: '100%',
-          backgroundColor: '#0F172A',
-          padding: '60px',
+          backgroundColor: '#111318',
+          padding: '60px 70px',
           fontFamily: 'Geist Sans',
+          position: 'relative',
+          overflow: 'hidden',
         },
         children: [
+          // Subtle gradient accent in top-right corner
+          {
+            type: 'div',
+            props: {
+              style: {
+                position: 'absolute',
+                top: '-120px',
+                right: '-120px',
+                width: '400px',
+                height: '400px',
+                borderRadius: '50%',
+                background: 'radial-gradient(circle, rgba(52,211,153,0.08) 0%, transparent 70%)',
+              },
+            },
+          },
+          // Top bar: logo + domain
           {
             type: 'div',
             props: {
               style: {
                 display: 'flex',
                 alignItems: 'center',
-                gap: '16px',
-                marginBottom: '40px',
+                justifyContent: 'space-between',
+                width: '100%',
+                marginBottom: '48px',
               },
               children: [
                 {
@@ -46,31 +70,59 @@ export const GET: APIRoute = async () => {
                     style: {
                       display: 'flex',
                       alignItems: 'center',
-                      justifyContent: 'center',
-                      width: '56px',
-                      height: '56px',
-                      borderRadius: '12px',
-                      backgroundColor: '#1E293B',
-                      fontSize: '28px',
-                      color: '#38BDF8',
+                      gap: '14px',
                     },
-                    children: '>_',
+                    children: [
+                      // Terminal icon
+                      {
+                        type: 'div',
+                        props: {
+                          style: {
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            width: '44px',
+                            height: '44px',
+                            borderRadius: '10px',
+                            backgroundColor: '#1a1d24',
+                            border: '1px solid #2a2d35',
+                            fontSize: '20px',
+                            fontWeight: 700,
+                            color: '#34d399',
+                          },
+                          children: '>_',
+                        },
+                      },
+                      {
+                        type: 'div',
+                        props: {
+                          style: {
+                            fontSize: '22px',
+                            fontWeight: 700,
+                            color: '#e5e7eb',
+                            letterSpacing: '-0.02em',
+                          },
+                          children: 'pr-tools',
+                        },
+                      },
+                    ],
                   },
                 },
                 {
                   type: 'div',
                   props: {
                     style: {
-                      fontSize: '32px',
-                      fontWeight: 700,
-                      color: '#38BDF8',
+                      fontSize: '16px',
+                      color: '#4b5563',
+                      fontWeight: 400,
                     },
-                    children: 'pr-tools',
+                    children: 'pr-tools.dev',
                   },
                 },
               ],
             },
           },
+          // Main content
           {
             type: 'div',
             props: {
@@ -85,11 +137,13 @@ export const GET: APIRoute = async () => {
                   type: 'div',
                   props: {
                     style: {
-                      fontSize: '72px',
+                      fontSize: '56px',
                       fontWeight: 700,
-                      color: '#F8FAFC',
+                      color: '#f3f4f6',
                       lineHeight: 1.1,
-                      marginBottom: '24px',
+                      letterSpacing: '-0.03em',
+                      marginBottom: '20px',
+                      maxWidth: '900px',
                     },
                     children: 'AI-powered PR tools para devs no Azure DevOps',
                   },
@@ -98,9 +152,11 @@ export const GET: APIRoute = async () => {
                   type: 'div',
                   props: {
                     style: {
-                      fontSize: '32px',
-                      color: '#94A3B8',
-                      lineHeight: 1.4,
+                      fontSize: '24px',
+                      color: '#6b7280',
+                      lineHeight: 1.5,
+                      fontWeight: 400,
+                      maxWidth: '700px',
                     },
                     children:
                       'Gere descrições de PR e cards de teste automaticamente. Suporta OpenRouter, Groq, Gemini e Ollama.',
@@ -109,16 +165,41 @@ export const GET: APIRoute = async () => {
               ],
             },
           },
+          // Bottom bar: accent line
           {
             type: 'div',
             props: {
               style: {
                 display: 'flex',
-                justifyContent: 'flex-end',
-                fontSize: '24px',
-                color: '#475569',
+                alignItems: 'center',
+                gap: '12px',
               },
-              children: 'pr-tools.dev',
+              children: [
+                {
+                  type: 'div',
+                  props: {
+                    style: {
+                      width: '32px',
+                      height: '3px',
+                      backgroundColor: '#34d399',
+                      borderRadius: '2px',
+                    },
+                  },
+                },
+                {
+                  type: 'div',
+                  props: {
+                    style: {
+                      fontSize: '14px',
+                      color: '#4b5563',
+                      fontWeight: 400,
+                      letterSpacing: '0.05em',
+                      textTransform: 'uppercase' as const,
+                    },
+                    children: 'CLI  ·  Open Source  ·  Multi-provider',
+                  },
+                },
+              ],
             },
           },
         ],
@@ -130,9 +211,15 @@ export const GET: APIRoute = async () => {
       fonts: [
         {
           name: 'Geist Sans',
-          data: fontData,
+          data: fontBold,
           weight: 700,
-          style: 'normal',
+          style: 'normal' as const,
+        },
+        {
+          name: 'Geist Sans',
+          data: fontRegular,
+          weight: 400,
+          style: 'normal' as const,
         },
       ],
     }

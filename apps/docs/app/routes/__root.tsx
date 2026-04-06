@@ -44,7 +44,7 @@ export const Route = createRootRoute({
       { name: 'twitter:image', content: '/api/og' },
       { name: 'author', content: 'pr-tools' },
       { name: 'robots', content: 'index, follow' },
-      { name: 'theme-color', content: '#0F172A' }
+      { name: 'theme-color', content: '#0f1114' }
     ],
     links: [
       { rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' },

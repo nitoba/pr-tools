@@ -2,53 +2,78 @@
 ---
 
 <section
-  class="mx-auto flex max-w-7xl flex-col items-center px-6 pb-24 pt-24 text-center lg:px-10 lg:pt-32"
+  class="mx-auto grid max-w-7xl grid-cols-1 items-center gap-16 px-6 pb-32 pt-24 lg:grid-cols-2 lg:px-10 lg:pt-32"
 >
-  <!-- Badge -->
-  <div
-    class="mb-8 inline-flex items-center gap-2 rounded-full border border-border bg-secondary px-3 py-1.5"
-  >
-    <span class="h-1.5 w-1.5 rounded-full bg-primary"></span>
-    <span class="font-mono text-xs text-muted-foreground">
-      Agora com suporte a Ollama →
-    </span>
+  <!-- Left — content -->
+  <div class="fade-in-up">
+    <!-- Badge -->
+    <div
+      class="mb-8 inline-flex items-center gap-2 rounded-md border border-border bg-secondary px-3 py-1.5"
+    >
+      <span class="h-1.5 w-1.5 rounded-full bg-primary"></span>
+      <span class="font-mono text-xs text-muted-foreground">
+        Agora com suporte a Ollama
+      </span>
+    </div>
+
+    <!-- Headline -->
+    <h1
+      class="max-w-[540px] text-4xl font-bold leading-[1.08] tracking-[-0.04em] text-foreground md:text-5xl lg:text-[3.5rem]"
+    >
+      Escreva menos.<br />
+      Entregue mais.<br />
+      <span class="text-primary">Deixa a IA cuidar do PR.</span>
+    </h1>
+
+    <!-- Subtext -->
+    <p
+      class="mt-6 max-w-[480px] text-base leading-relaxed text-muted-foreground"
+    >
+      CLI tools para gerar descrições de PR e cards de teste no Azure DevOps.
+      Suporta OpenRouter, Groq, Gemini e Ollama. Um comando. Zero burocracia.
+    </p>
+
+    <!-- CTAs -->
+    <div class="mt-8 flex flex-wrap items-center gap-3">
+      <a
+        href="#install"
+        class="rounded-md bg-foreground px-5 py-2.5 text-sm font-semibold text-background transition-all duration-200 hover:bg-foreground/90 active:scale-[0.98] active:translate-y-px"
+      >
+        Instalar agora
+      </a>
+      <a
+        href="https://docs-pr-tools.nitodev.com.br"
+        target="_blank"
+        rel="noopener"
+        class="rounded-md border border-border px-5 py-2.5 text-sm text-muted-foreground transition-all duration-200 hover:border-foreground/20 hover:text-foreground active:scale-[0.98]"
+      >
+        Ver documentação
+      </a>
+    </div>
+
+    <!-- Trust -->
+    <p class="mt-6 font-mono text-xs text-muted-foreground/50">
+      Sem cadastro. Funciona no terminal. Código aberto.
+    </p>
   </div>
 
-  <!-- Headline -->
-  <h1
-    class="max-w-[900px] text-5xl font-bold leading-[1.05] tracking-[-0.04em] text-foreground md:text-6xl lg:text-[4.5rem]"
-  >
-    Escreva menos.<br />
-    Entregue mais.<br />
-    <span class="text-primary whitespace-nowrap">Deixa a IA cuidar do PR.</span>
-  </h1>
-
-  <!-- Subtext -->
-  <p
-    class="mt-8 max-w-[560px] text-base leading-relaxed text-muted-foreground md:text-lg"
-  >
-    CLI tools para gerar descrições de PR e cards de teste no Azure DevOps.
-    Suporta OpenRouter, Groq, Gemini e Ollama. Um comando. Zero burocracia.
-  </p>
-
-  <!-- CTAs -->
-  <div class="mt-10 flex flex-wrap items-center justify-center gap-3">
-    <a
-      href="#install"
-      class="rounded-full bg-primary px-6 py-3 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90"
-    >
-      Instalar agora
-    </a>
-    <a
-      href="/docs"
-      class="rounded-full border border-border bg-secondary px-6 py-3 text-sm text-muted-foreground transition-colors hover:text-foreground"
-    >
-      Ver documentação →
-    </a>
+  <!-- Right — decorative terminal preview -->
+  <div class="fade-in-up stagger-2 hidden lg:block">
+    <div class="rounded-lg border border-border bg-card p-5 shadow-[0_24px_48px_-12px_oklch(0.72_0.15_162/0.06)]">
+      <div class="flex items-center gap-2 pb-4">
+        <span class="h-2.5 w-2.5 rounded-full bg-muted-foreground/20"></span>
+        <span class="h-2.5 w-2.5 rounded-full bg-muted-foreground/20"></span>
+        <span class="h-2.5 w-2.5 rounded-full bg-muted-foreground/20"></span>
+      </div>
+      <div class="font-mono text-xs leading-[1.8] text-muted-foreground">
+        <p class="text-muted-foreground/40">~/project on <span class="text-primary">feat/streaming</span></p>
+        <p class="mt-1 text-foreground">$ create-pr-description</p>
+        <p class="mt-2 text-muted-foreground/60">&nbsp;&nbsp;<span class="text-primary">done</span> Contexto git coletado</p>
+        <p class="text-muted-foreground/60">&nbsp;&nbsp;<span class="text-primary">done</span> Descrição gerada via groq</p>
+        <p class="text-muted-foreground/60">&nbsp;&nbsp;<span class="text-primary">done</span> PR criado com reviewers</p>
+        <p class="mt-2 text-foreground/70">PR #847 criado com sucesso</p>
+        <p class="mt-2 text-primary/70">$ <span class="animate-pulse">_</span></p>
+      </div>
+    </div>
   </div>
-
-  <!-- Trust -->
-  <p class="mt-6 font-mono text-xs text-muted-foreground/60">
-    Sem cadastro. Funciona no terminal. Código aberto.
-  </p>
 </section>
