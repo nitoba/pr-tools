@@ -215,8 +215,8 @@ func runTest(ctx context.Context, cfg *config.Config, flags testFlagSet, cmd *co
 	// Interactive test case creation
 	var createdTCID int
 	if !flags.noCreate && isTerminal(os.Stdin) && cfg.AzurePAT != "" && org != "" && project != "" {
-		fmt.Fprintf(stderr, "\n  %s│%s\n", ui.OrangeDim, ui.Reset)
-		fmt.Fprintf(stderr, "  Criar este Test Case no Azure DevOps? [y/N]: ")
+		_, _ = fmt.Fprintf(stderr, "\n  %s│%s\n", ui.OrangeDim, ui.Reset)
+		_, _ = fmt.Fprintf(stderr, "  Criar este Test Case no Azure DevOps? [y/N]: ")
 
 		scanner := bufio.NewScanner(os.Stdin)
 		if scanner.Scan() {
@@ -242,7 +242,7 @@ func runTest(ctx context.Context, cfg *config.Config, flags testFlagSet, cmd *co
 
 		// Ask to update work item state
 		if createdTCID > 0 {
-			fmt.Fprintf(stderr, "  Atualizar o work item #%d para Test QA? [y/N]: ", wiID)
+			_, _ = fmt.Fprintf(stderr, "  Atualizar o work item #%d para Test QA? [y/N]: ", wiID)
 			scanner2 := bufio.NewScanner(os.Stdin)
 			if scanner2.Scan() {
 				answer := strings.TrimSpace(strings.ToLower(scanner2.Text()))
@@ -313,27 +313,27 @@ func buildTestPrompt(wi *azure.WorkItem, wiID int, pr *azure.PullRequest, change
 
 	// ## Contexto do Work Item
 	b.WriteString("## Contexto do Work Item\n\n")
-	fmt.Fprintf(&b, "ID: %d\n", wiID)
+	_, _ = fmt.Fprintf(&b, "ID: %d\n", wiID)
 	if wi != nil {
-		fmt.Fprintf(&b, "Título: %s\n", wi.Title())
-		fmt.Fprintf(&b, "Tipo: %s\n", wi.Type())
+		_, _ = fmt.Fprintf(&b, "Título: %s\n", wi.Title())
+		_, _ = fmt.Fprintf(&b, "Tipo: %s\n", wi.Type())
 		if area := wi.Field("System.AreaPath"); area != "" {
-			fmt.Fprintf(&b, "Área: %s\n", area)
+			_, _ = fmt.Fprintf(&b, "Área: %s\n", area)
 		}
 		if desc := wi.Description(); desc != "" {
-			fmt.Fprintf(&b, "Descrição: %s\n", desc)
+			_, _ = fmt.Fprintf(&b, "Descrição: %s\n", desc)
 		}
 	}
 
 	// ## Contexto do PR
 	if pr != nil {
 		b.WriteString("\n## Contexto do PR\n\n")
-		fmt.Fprintf(&b, "PR ID: %d\n", pr.ID)
-		fmt.Fprintf(&b, "Título: %s\n", pr.Title)
-		fmt.Fprintf(&b, "Branch origem: %s\n", pr.SourceRef)
-		fmt.Fprintf(&b, "Branch destino: %s\n", pr.TargetRef)
+		_, _ = fmt.Fprintf(&b, "PR ID: %d\n", pr.ID)
+		_, _ = fmt.Fprintf(&b, "Título: %s\n", pr.Title)
+		_, _ = fmt.Fprintf(&b, "Branch origem: %s\n", pr.SourceRef)
+		_, _ = fmt.Fprintf(&b, "Branch destino: %s\n", pr.TargetRef)
 		if pr.Description != "" {
-			fmt.Fprintf(&b, "Descrição: %s\n", pr.Description)
+			_, _ = fmt.Fprintf(&b, "Descrição: %s\n", pr.Description)
 		}
 	}
 
@@ -341,7 +341,7 @@ func buildTestPrompt(wi *azure.WorkItem, wiID int, pr *azure.PullRequest, change
 	if len(changedFiles) > 0 {
 		b.WriteString("\n## Arquivos alterados e resumo técnico\n\n")
 		for _, f := range changedFiles {
-			fmt.Fprintf(&b, "- [%s] %s\n", f.ChangeType, f.Item.Path)
+			_, _ = fmt.Fprintf(&b, "- [%s] %s\n", f.ChangeType, f.Item.Path)
 		}
 	}
 

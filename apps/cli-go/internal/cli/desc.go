@@ -129,26 +129,26 @@ func runDesc(ctx context.Context, cfg *config.Config, flags descFlagSet, cmd *co
 	title, body := parseTitleAndBody(resp, gitCtx.BranchName)
 
 	// Print summary header to stderr
-	fmt.Fprintf(stderr, "\n %s%s✦%s %sPR — %s%s\n", ui.Orange, ui.Bold, ui.Reset, ui.OrangeDim, gitCtx.BranchName, ui.Reset)
-	fmt.Fprintf(stderr, "  %s│%s Provider: %s\n", ui.OrangeDim, ui.Reset, provider)
+	_, _ = fmt.Fprintf(stderr, "\n %s%s✦%s %sPR — %s%s\n", ui.Orange, ui.Bold, ui.Reset, ui.OrangeDim, gitCtx.BranchName, ui.Reset)
+	_, _ = fmt.Fprintf(stderr, "  %s│%s Provider: %s\n", ui.OrangeDim, ui.Reset, provider)
 	if workItemID := gitCtx.WorkItemID; workItemID != "" {
-		fmt.Fprintf(stderr, "  %s│%s Work Item: #%s\n", ui.OrangeDim, ui.Reset, workItemID)
+		_, _ = fmt.Fprintf(stderr, "  %s│%s Work Item: #%s\n", ui.OrangeDim, ui.Reset, workItemID)
 	}
-	fmt.Fprintf(stderr, "  %s└%s\n", ui.OrangeDim, ui.Reset)
+	_, _ = fmt.Fprintf(stderr, "  %s└%s\n", ui.OrangeDim, ui.Reset)
 
 	// Print result to stdout
-	fmt.Fprintf(stdout, "\nTitulo: %s%s%s\n\n", ui.Cyan, title, ui.Reset)
-	fmt.Fprintf(stdout, "Descricao:\n%s\n", body)
+	_, _ = fmt.Fprintf(stdout, "\nTitulo: %s%s%s\n\n", ui.Cyan, title, ui.Reset)
+	_, _ = fmt.Fprintf(stdout, "Descricao:\n%s\n", body)
 
 	// Copy body to clipboard (best effort)
 	if err := clipboard.Write(body); err == nil {
-		fmt.Fprintf(stderr, "\n%s✓%s Copiado para clipboard\n", ui.Green, ui.Reset)
+		_, _ = fmt.Fprintf(stderr, "\n%s✓%s Copiado para clipboard\n", ui.Green, ui.Reset)
 	}
 
 	// Interactive PR creation
 	if isTerminal(os.Stdin) && gitCtx.IsAzureDevOps && cfg.AzurePAT != "" {
-		fmt.Fprintf(stderr, "\n  %s│%s\n", ui.OrangeDim, ui.Reset)
-		fmt.Fprintf(stderr, "  Criar PR(s) no Azure DevOps? [y/N]: ")
+		_, _ = fmt.Fprintf(stderr, "\n  %s│%s\n", ui.OrangeDim, ui.Reset)
+		_, _ = fmt.Fprintf(stderr, "  Criar PR(s) no Azure DevOps? [y/N]: ")
 
 		scanner := bufio.NewScanner(os.Stdin)
 		if scanner.Scan() {
@@ -158,7 +158,7 @@ func runDesc(ctx context.Context, cfg *config.Config, flags descFlagSet, cmd *co
 
 				// Default reviewer
 				reviewer := cfg.PRReviewerDev
-				fmt.Fprintf(stderr, "  Reviewer (email) [%s]: ", reviewer)
+				_, _ = fmt.Fprintf(stderr, "  Reviewer (email) [%s]: ", reviewer)
 				if scanner.Scan() {
 					if input := strings.TrimSpace(scanner.Text()); input != "" {
 						reviewer = input
@@ -181,7 +181,7 @@ func runDesc(ctx context.Context, cfg *config.Config, flags descFlagSet, cmd *co
 					ui.Error(stderr, fmt.Sprintf("Erro ao criar PR: %v", prErr))
 				} else {
 					stepPR(true)
-					fmt.Fprintf(stderr, "  %s│%s   %s\n", ui.OrangeDim, ui.Reset, pr.URL)
+					_, _ = fmt.Fprintf(stderr, "  %s│%s   %s\n", ui.OrangeDim, ui.Reset, pr.URL)
 				}
 			}
 		}
@@ -231,14 +231,14 @@ func loadDescTemplate(cfg *config.Config) string {
 func buildDescPrompt(gc *git.Context) string {
 	var b strings.Builder
 	b.WriteString("## Contexto Git\n\n")
-	fmt.Fprintf(&b, "**Branch:** %s\n", gc.BranchName)
-	fmt.Fprintf(&b, "**Base:** %s\n", gc.BaseBranch)
-	fmt.Fprintf(&b, "**Base branches alvo:** %s\n", gc.BaseBranch)
+	_, _ = fmt.Fprintf(&b, "**Branch:** %s\n", gc.BranchName)
+	_, _ = fmt.Fprintf(&b, "**Base:** %s\n", gc.BaseBranch)
+	_, _ = fmt.Fprintf(&b, "**Base branches alvo:** %s\n", gc.BaseBranch)
 	if gc.WorkItemID != "" {
-		fmt.Fprintf(&b, "**Work Item:** %s\n", gc.WorkItemID)
+		_, _ = fmt.Fprintf(&b, "**Work Item:** %s\n", gc.WorkItemID)
 	}
-	fmt.Fprintf(&b, "\n**Diff:**\n```\n%s\n```\n", gc.Diff)
-	fmt.Fprintf(&b, "\n**Log:**\n```\n%s\n```\n", gc.Log)
+	_, _ = fmt.Fprintf(&b, "\n**Diff:**\n```\n%s\n```\n", gc.Diff)
+	_, _ = fmt.Fprintf(&b, "\n**Log:**\n```\n%s\n```\n", gc.Log)
 	return b.String()
 }
 

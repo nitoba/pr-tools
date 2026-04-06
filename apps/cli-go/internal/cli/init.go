@@ -78,7 +78,7 @@ func (d *defaultInitDeps) run() (InitResult, error) {
 	}
 
 	// Non-interactive mode: just print the standard summary.
-	fmt.Fprintln(os.Stderr, "[AVISO] Edite ~/.config/pr-tools/.env e preencha suas API keys.")
+	_, _ = fmt.Fprintln(os.Stderr, "[AVISO] Edite ~/.config/pr-tools/.env e preencha suas API keys.")
 	summary := computeSummary(dirCreated, result)
 	return InitResult{Summary: summary}, nil
 }
