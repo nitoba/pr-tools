@@ -272,8 +272,15 @@ func runDesc(ctx context.Context, cfg *config.Config, flags descFlagSet, cmd *co
 		_, _ = fmt.Fprintln(stdout, body)
 	} else {
 		titleColor, titleReset := descStdoutTitleColors(stdout)
-		_, _ = fmt.Fprintf(stdout, "\nTitulo: %s%s%s\n\n", titleColor, title, titleReset)
-		_, _ = fmt.Fprintf(stdout, "Descricao:\n%s\n", body)
+		_, _ = fmt.Fprintf(stdout, "\n  Titulo: %s%s%s\n\n", titleColor, title, titleReset)
+		_, _ = fmt.Fprintln(stdout, "  Descricao:")
+		for _, line := range strings.Split(body, "\n") {
+			if line == "" {
+				_, _ = fmt.Fprintln(stdout, "  ")
+				continue
+			}
+			_, _ = fmt.Fprintf(stdout, "  %s\n", line)
+		}
 	}
 
 	if err := descClipboardWrite(body); err == nil {
@@ -431,7 +438,7 @@ func descPreviewPRURL(gitCtx *git.Context, target string) string {
 func publishDescPRs(ctx context.Context, stderr io.Writer, scanner *bufio.Scanner, cfg config.Config, gitCtx *git.Context, targets []string, title, body string) {
 	ui.Title(stderr, "Publicar no Azure DevOps")
 	ui.Info(stderr, "")
-	ui.Info(stderr, "Criar PR(s) no Azure DevOps?")
+	ui.Info(stderr, "Criar PR(s) no Azure DevOps? [y/N]")
 	if !scanner.Scan() {
 		ui.Info(stderr, "(cancelado)")
 		ui.TitleDone(stderr)
@@ -453,7 +460,11 @@ func publishDescPRs(ctx context.Context, stderr io.Writer, scanner *bufio.Scanne
 		if strings.Contains(target, "sprint") && cfg.PRReviewerSprint != "" {
 			reviewer = cfg.PRReviewerSprint
 		}
-		ui.Info(stderr, "Reviewer (email)")
+		prompt := "Reviewer (email) [Enter para deixar vazio]"
+		if reviewer != "" {
+			prompt = "Reviewer (email) [Enter para manter atual]"
+		}
+		ui.Info(stderr, prompt)
 		if scanner.Scan() {
 			if input := strings.TrimSpace(scanner.Text()); input != "" {
 				reviewer = input

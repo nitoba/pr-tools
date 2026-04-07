@@ -222,6 +222,7 @@ func TestRenderTickUsesBashSparkleFramesAndLineOffsets(t *testing.T) {
 	p := colorSnapshot{
 		Bold:        "<bold>",
 		Dim:         "<dim>",
+		Yellow:      "<yellow>",
 		Orange:      "<orange>",
 		OrangeLight: "<orange-light>",
 		OrangeDim:   "<orange-dim>",
@@ -242,8 +243,10 @@ func TestRenderTickUsesBashSparkleFramesAndLineOffsets(t *testing.T) {
 
 	require.Contains(t, frame0, "<orange><bold>✦<reset>")
 	require.Contains(t, frame0, "<orange-light>Gerando descrição do PR...<reset>")
+	require.Contains(t, frame0, "<yellow><bold>●<reset>")
 	require.Contains(t, frame1, "<orange-dim><dim>✧<reset>")
 	require.Contains(t, frame1, "<orange-dim>Gerando descrição do PR...<reset>")
+	require.Contains(t, frame1, "<yellow><dim>●<reset>")
 	require.Contains(t, frame2, "<orange><bold>✦<reset>")
 	require.Contains(t, frame3, "<orange-dim><dim>·<reset>")
 }

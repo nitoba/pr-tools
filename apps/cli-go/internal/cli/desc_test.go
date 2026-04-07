@@ -255,7 +255,7 @@ func TestRunDescStdoutIsPlainWhenOnlyStderrIsInteractive(t *testing.T) {
 	require.NoError(t, err)
 
 	out := stdout.String()
-	require.Contains(t, out, "Titulo: Melhorar login")
+	require.Contains(t, out, "  Titulo: Melhorar login\n\n  Descricao:\n  ## Descrição\n  Body\n")
 	require.NotContains(t, out, "\x1b[")
 	require.False(t, regexp.MustCompile(`\x1b\[[0-9;]*m`).MatchString(out))
 }
@@ -330,7 +330,7 @@ func TestRunDescPublishTranscriptCancelSuccessAndFailure(t *testing.T) {
 		err := runDesc(context.Background(), &config.Config{OpenRouterAPIKey: "key", AzurePAT: "pat", Providers: "openrouter"}, descFlagSet{targets: []string{"dev"}}, cmd)
 		require.NoError(t, err)
 		require.Contains(t, stderr.String(), "Publicar no Azure DevOps")
-		require.Contains(t, stderr.String(), "│ Criar PR(s) no Azure DevOps?")
+		require.Contains(t, stderr.String(), "│ Criar PR(s) no Azure DevOps? [y/N]")
 		require.Contains(t, stderr.String(), "(cancelado)")
 	})
 
@@ -344,7 +344,8 @@ func TestRunDescPublishTranscriptCancelSuccessAndFailure(t *testing.T) {
 
 		errOut := stderr.String()
 		require.Contains(t, errOut, "→ PR para dev")
-		require.Contains(t, errOut, "│ Reviewer (email)")
+		require.Contains(t, errOut, "│ Criar PR(s) no Azure DevOps? [y/N]")
+		require.Contains(t, errOut, "│ Reviewer (email) [Enter para manter atual]")
 		require.NotContains(t, errOut, "Reviewer (email) [dev@example.com]:")
 		require.NotContains(t, errOut, "✓ Criando PR → dev")
 		require.Contains(t, errOut, "✓ PR criado → dev")
@@ -355,6 +356,19 @@ func TestRunDescPublishTranscriptCancelSuccessAndFailure(t *testing.T) {
 		require.Contains(t, errOut, "✗ Falha ao criar PR → sprint")
 		require.Equal(t, 1, strings.Count(errOut, "Falha ao criar PR → sprint"))
 		require.Contains(t, errOut, "azure failed")
+	})
+
+	t.Run("without-default-reviewer", func(t *testing.T) {
+		stdout := new(bytes.Buffer)
+		stderr := new(bytes.Buffer)
+		cmd := newDescTestCommand(stdout, stderr, "y\n\n")
+
+		err := runDesc(context.Background(), &config.Config{OpenRouterAPIKey: "key", AzurePAT: "pat", Providers: "openrouter"}, descFlagSet{targets: []string{"dev"}}, cmd)
+		require.NoError(t, err)
+
+		errOut := stderr.String()
+		require.Contains(t, errOut, "│ Criar PR(s) no Azure DevOps? [y/N]")
+		require.Contains(t, errOut, "│ Reviewer (email) [Enter para deixar vazio]")
 	})
 }
 
