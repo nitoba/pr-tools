@@ -46,8 +46,18 @@ func TestRunReturnsOneForInvalidCommand(t *testing.T) {
 	require.Contains(t, stderr.String(), "unknown command \"missing-command\" for \"prt\"")
 }
 
-func TestRunReturnsOneForTestMissingRequiredFlag(t *testing.T) {
-	t.Parallel()
+func TestRunReturnsOneForTestWithoutConfig(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	for _, key := range []string{
+		"PRT_CONFIG_VERSION", "PRT_NO_COLOR", "PRT_DEBUG",
+		"PR_PROVIDERS", "OPENROUTER_API_KEY", "GROQ_API_KEY",
+		"GEMINI_API_KEY", "OLLAMA_API_KEY",
+		"OPENROUTER_MODEL", "GROQ_MODEL", "GEMINI_MODEL", "OLLAMA_MODEL",
+		"AZURE_PAT", "PR_REVIEWER_DEV", "PR_REVIEWER_SPRINT",
+		"TEST_CARD_AREA_PATH", "TEST_CARD_ASSIGNED_TO",
+	} {
+		t.Setenv(key, "")
+	}
 
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
@@ -56,5 +66,7 @@ func TestRunReturnsOneForTestMissingRequiredFlag(t *testing.T) {
 
 	require.Equal(t, 1, code)
 	require.Empty(t, stdout.String())
-	require.Contains(t, stderr.String(), "work-item")
+	require.Contains(t, stderr.String(), "Gerando card de teste...")
+	require.Contains(t, stderr.String(), "Validando Azure PAT")
+	require.Contains(t, stderr.String(), "configuracao incompleta: Azure PAT não configurado")
 }
