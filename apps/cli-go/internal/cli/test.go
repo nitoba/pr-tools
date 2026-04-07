@@ -215,7 +215,7 @@ func runTest(ctx context.Context, cfg *config.Config, flags testFlagSet, cmd *co
 	stepPR := ui.StepMessage(stderr, "Resolvendo PR")
 	if flags.pr <= 0 {
 		stepPR(false, "Resolvendo PR")
-		return fmt.Errorf("PR não informado. Use --pr explicitamente.")
+		return fmt.Errorf("PR não informado; use --pr explicitamente")
 	}
 	pr, err := fetchTestPullRequest(ctx, cfg.AzurePAT, org, project, repo, flags.pr)
 	if err != nil {
@@ -587,7 +587,7 @@ func resolveTestWorkItemID(ctx context.Context, cfg *config.Config, flags testFl
 		}
 	}
 
-	return 0, fmt.Errorf("Não foi possível resolver o work item pai. Use --work-item explicitamente.")
+	return 0, fmt.Errorf("não foi possível resolver o work item pai; use --work-item explicitamente")
 }
 
 func selectParentWorkItemID(ctx context.Context, cfg *config.Config, org, project string, ids []int) (int, bool) {

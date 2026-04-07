@@ -145,7 +145,7 @@ func TestRunTest_NoLinkedItemsFailsWithBashMessage(t *testing.T) {
 	cmd := newTestCommand(stdout, stderr, "")
 
 	err := runTest(context.Background(), &config.Config{AzurePAT: "pat", OpenRouterAPIKey: "key"}, testFlagSet{pr: 99, dryRun: true}, cmd)
-	require.EqualError(t, err, "Não foi possível resolver o work item pai. Use --work-item explicitamente.")
+	require.EqualError(t, err, "não foi possível resolver o work item pai; use --work-item explicitamente")
 	require.NotContains(t, stdout.String(), "=== SYSTEM ===")
 	require.NotContains(t, stderr.String(), "Work item: #")
 }
