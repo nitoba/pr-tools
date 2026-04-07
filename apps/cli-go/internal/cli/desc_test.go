@@ -36,6 +36,7 @@ func TestNewDescCmdHasCorrectMetadata(t *testing.T) {
 	require.Equal(t, "desc", cmd.Use)
 	require.Equal(t, "Generate PR descriptions.", cmd.Short)
 	require.NotNil(t, cmd.Flags().Lookup("source"))
+	require.NotNil(t, cmd.Flags().Lookup("debug"))
 	require.NotNil(t, cmd.Flags().Lookup("dry-run"))
 	require.NotNil(t, cmd.Flags().Lookup("create"))
 }
@@ -117,6 +118,72 @@ func TestRunDescDryRunUsesBashTranscript(t *testing.T) {
 	require.NotContains(t, errOut, "✓ Gerando descrição via LLM")
 	require.Contains(t, errOut, "✓ Descrição gerada (openrouter/default)")
 	require.NotContains(t, errOut, "Criar PR(s) no Azure DevOps?")
+}
+
+func TestRunDescLLMFailureIsConciseWithoutDebug(t *testing.T) {
+	stderr, err := runDescLLMFailure(t, &config.Config{OpenRouterAPIKey: "key", Providers: "openrouter"}, descFlagSet{})
+
+	require.EqualError(t, err, "LLM call failed")
+	require.Contains(t, stderr, "Todos os providers falharam")
+	require.NotContains(t, stderr, "todos os provedores falharam:")
+	require.NotContains(t, stderr, "provider/model: openrouter/default")
+	require.NotContains(t, stderr, "diff lines: 42")
+	require.NotContains(t, stderr, "prompt chars:")
+	require.NotContains(t, stderr, "openrouter: no choices in response")
+	require.NotContains(t, stderr, "groq: status 413: request too large")
+}
+
+func TestRunDescLLMFailureShowsTreeDiagnosticsWithFlagDebug(t *testing.T) {
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	cmd := newDescTestCommand(stdout, stderr, "")
+	cmd.Flags().Bool("debug", false, "Show diagnostic details")
+	require.NoError(t, cmd.Flags().Set("debug", "true"))
+
+	err := runDescLLMFailureWithCommand(t, &config.Config{OpenRouterAPIKey: "key", Providers: "openrouter"}, descFlagSet{debug: true}, cmd)
+
+	errOut := stderr.String()
+	require.EqualError(t, err, "LLM call failed")
+	require.Contains(t, errOut, "Todos os providers falharam")
+	require.Contains(t, errOut, "provider/model: openrouter/default")
+	require.Contains(t, errOut, "diff lines: 42")
+	require.Contains(t, errOut, "prompt chars:")
+	require.Contains(t, errOut, "openrouter: no choices in response")
+	require.Contains(t, errOut, "groq: status 413: request too large")
+	require.NotContains(t, errOut, "todos os provedores falharam:")
+	require.Contains(t, errOut, "  └")
+}
+
+func TestRunDescLLMFailureShowsTreeDiagnosticsWithConfigDebug(t *testing.T) {
+	stderr, err := runDescLLMFailure(t, &config.Config{OpenRouterAPIKey: "key", Providers: "openrouter", Debug: config.Bool(true)}, descFlagSet{})
+
+	require.EqualError(t, err, "LLM call failed")
+	require.Contains(t, stderr, "provider/model: openrouter/default")
+	require.Contains(t, stderr, "diff lines: 42")
+	require.Contains(t, stderr, "prompt chars:")
+	require.Contains(t, stderr, "openrouter: no choices in response")
+	require.Contains(t, stderr, "groq: status 413: request too large")
+	require.NotContains(t, stderr, "todos os provedores falharam:")
+}
+
+func TestRunDescLLMFailureFlagFalseOverridesConfigDebug(t *testing.T) {
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	cmd := newDescTestCommand(stdout, stderr, "")
+	cmd.Flags().Bool("debug", false, "Show diagnostic details")
+	require.NoError(t, cmd.Flags().Set("debug", "false"))
+
+	err := runDescLLMFailureWithCommand(t, &config.Config{OpenRouterAPIKey: "key", Providers: "openrouter", Debug: config.Bool(true)}, descFlagSet{}, cmd)
+
+	errOut := stderr.String()
+	require.EqualError(t, err, "LLM call failed")
+	require.Contains(t, errOut, "Todos os providers falharam")
+	require.NotContains(t, errOut, "provider/model: openrouter/default")
+	require.NotContains(t, errOut, "diff lines: 42")
+	require.NotContains(t, errOut, "prompt chars:")
+	require.NotContains(t, errOut, "openrouter: no choices in response")
+	require.NotContains(t, errOut, "groq: status 413: request too large")
+	require.NotContains(t, errOut, "todos os provedores falharam:")
 }
 
 func TestRunDescPromptsForWorkItemWhenNotDerived(t *testing.T) {
@@ -484,4 +551,36 @@ func newDescTestCommand(stdout, stderr *bytes.Buffer, input string) *cobra.Comma
 	cmd.SetErr(stderr)
 	cmd.SetIn(strings.NewReader(input))
 	return cmd
+}
+
+func runDescLLMFailure(t *testing.T, cfg *config.Config, flags descFlagSet) (string, error) {
+	t.Helper()
+
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	cmd := newDescTestCommand(stdout, stderr, "")
+
+	err := runDescLLMFailureWithCommand(t, cfg, flags, cmd)
+	return stderr.String(), err
+}
+
+func runDescLLMFailureWithCommand(t *testing.T, cfg *config.Config, flags descFlagSet, cmd *cobra.Command) error {
+	t.Helper()
+
+	restore := stubDescDeps(descTestDeps{
+		gitCtx: &git.Context{
+			BranchName:        "feature/123-login",
+			SourceBranch:      "feature/123-login",
+			BaseBranch:        "dev",
+			Diff:              "diff --git a/file b/file",
+			DiffOriginalLines: 42,
+			Log:               "abc123 feat: login",
+			WorkItemID:        "123",
+		},
+		systemPrompt: strings.Repeat("s", 20),
+		llmErr:       errors.New("todos os provedores falharam:\n  openrouter: no choices in response\n  groq: status 413: request too large"),
+	})
+	defer restore()
+
+	return runDesc(context.Background(), cfg, flags, cmd)
 }

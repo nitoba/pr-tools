@@ -48,6 +48,7 @@ type descFlagSet struct {
 	workItem           string
 	dryRun             bool
 	raw                bool
+	debug              bool
 	setOpenRouterModel string
 	setGroqModel       string
 	setGeminiModel     string
@@ -129,6 +130,7 @@ func NewDescCmd(cfg *config.Config) *cobra.Command {
 	cmd.Flags().StringVar(&flags.workItem, "work-item", "", "Work item ID")
 	cmd.Flags().BoolVar(&flags.dryRun, "dry-run", false, "Show prompt without calling LLM")
 	cmd.Flags().BoolVar(&flags.raw, "raw", false, "Output without markdown rendering")
+	cmd.Flags().BoolVar(&flags.debug, "debug", false, "Show diagnostic details")
 	cmd.Flags().StringVar(&flags.setOpenRouterModel, "set-openrouter-model", "", "Save OpenRouter model to config")
 	cmd.Flags().StringVar(&flags.setGroqModel, "set-groq-model", "", "Save Groq model to config")
 	cmd.Flags().StringVar(&flags.setGeminiModel, "set-gemini-model", "", "Save Gemini model to config")
@@ -231,6 +233,12 @@ func runDesc(ctx context.Context, cfg *config.Config, flags descFlagSet, cmd *co
 	systemPrompt := loadDescTemplateFn(cfg)
 	userPrompt := buildDescPrompt(gitCtx, targets)
 	configuredProvider, configuredModel := descConfiguredProviderModel(*cfg)
+	debugEnabled := false
+	if cmd.Flags().Changed("debug") {
+		debugEnabled = flags.debug
+	} else if cfg.Debug != nil && *cfg.Debug {
+		debugEnabled = true
+	}
 
 	stepLLM := ui.StepMessage(stderr, "Gerando descrição via LLM")
 	if flags.dryRun {
@@ -257,7 +265,23 @@ func runDesc(ctx context.Context, cfg *config.Config, flags descFlagSet, cmd *co
 	if err != nil {
 		stepLLM(false, "Gerando descrição via LLM")
 		ui.Error(stderr, "Todos os providers falharam")
-		return fmt.Errorf("LLM call failed: %w", err)
+
+		if debugEnabled {
+			ui.Info(stderr, fmt.Sprintf("provider/model: %s/%s", configuredProvider, configuredModel))
+			ui.Info(stderr, fmt.Sprintf("diff lines: %d", gitCtx.DiffOriginalLines))
+			ui.Info(stderr, fmt.Sprintf("prompt chars: %d (%d system + %d user)", len(systemPrompt)+len(userPrompt), len(systemPrompt), len(userPrompt)))
+			for _, line := range strings.Split(err.Error(), "\n") {
+				line = strings.TrimSpace(line)
+				if line == "" || strings.EqualFold(line, "todos os provedores falharam:") {
+					continue
+				}
+				ui.Info(stderr, line)
+			}
+		}
+
+		ui.TitleDone(stderr)
+		printDescBlockClose(stderr)
+		return fmt.Errorf("LLM call failed")
 	}
 	stepLLM(true, fmt.Sprintf("Descrição gerada (%s/%s)", provider, model))
 	ui.TitleDone(stderr)
