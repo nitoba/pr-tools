@@ -7,7 +7,7 @@ import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const version = readFileSync(resolve(__dirname, '../cli/VERSION'), 'utf-8').trim()
+const version = readFileSync(resolve(__dirname, '../cli-go/VERSION'), 'utf-8').trim()
 
 export default defineConfig({
   output: 'server',
