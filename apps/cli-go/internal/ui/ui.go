@@ -56,9 +56,25 @@ func disableColors() {
 	Reset = ""
 }
 
-// Title prints: ✦ <msg>  in orange/bold to w.
+// Title prints an animated ✦ <msg> header to w.
+// When writing to a real terminal it pulses the ✦ a few times before settling.
 func Title(w io.Writer, msg string) {
-	_, _ = fmt.Fprintf(w, "\n %s%s✦%s %s%s%s\n", Orange, Bold, Reset, OrangeLight, msg, Reset)
+	_, _ = fmt.Fprintf(w, "\n")
+	// Only animate when colors are active (i.e. we are in a real terminal).
+	if Orange != "" {
+		frames := []struct{ sym, txt string }{
+			{Bold + Orange, OrangeLight},
+			{Dim + Orange, OrangeDim},
+			{Bold + Orange, OrangeLight},
+			{Dim + Orange, OrangeDim},
+		}
+		for _, f := range frames {
+			_, _ = fmt.Fprintf(w, "\r %s✦%s %s%s%s  ", f.sym, Reset, f.txt, msg, Reset)
+			time.Sleep(110 * time.Millisecond)
+		}
+		_, _ = fmt.Fprintf(w, "\r\033[2K")
+	}
+	_, _ = fmt.Fprintf(w, " %s%s✦%s %s%s%s\n", Orange, Bold, Reset, OrangeLight, msg, Reset)
 }
 
 // TitleDone prints the closing │ └ to w.
