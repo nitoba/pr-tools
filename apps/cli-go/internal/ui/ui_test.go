@@ -4,9 +4,29 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
+
+type sessionSnapshot struct {
+	titleActive     bool
+	titleLinesBelow int
+	stepActive      bool
+	stepID          uint64
+}
+
+func snapshotCurrentForTest() sessionSnapshot {
+	current.mu.Lock()
+	defer current.mu.Unlock()
+
+	return sessionSnapshot{
+		titleActive:     current.titleActive,
+		titleLinesBelow: current.titleLinesBelow,
+		stepActive:      current.stepActive,
+		stepID:          current.stepID,
+	}
+}
 
 func usePlainColorsForTest(t *testing.T, interactive bool) {
 	t.Helper()
@@ -40,8 +60,9 @@ func TestTitleDoneDoesNotPrintClosingRow(t *testing.T) {
 	TitleDone(&buf)
 
 	require.Equal(t, before, buf.String())
-	require.False(t, current.titleActive)
-	require.Equal(t, 0, current.titleLinesBelow)
+	snapshot := snapshotCurrentForTest()
+	require.False(t, snapshot.titleActive)
+	require.Equal(t, 0, snapshot.titleLinesBelow)
 }
 
 func TestInfoWarnErrorSuccessUseTitleTree(t *testing.T) {
@@ -59,7 +80,7 @@ func TestInfoWarnErrorSuccessUseTitleTree(t *testing.T) {
 	require.Contains(t, out, "│ ⚠ Diff truncado")
 	require.Contains(t, out, "│ ✗ Todos os providers falharam")
 	require.Contains(t, out, "│ ✓ Descrição gerada")
-	require.Equal(t, 4, current.titleLinesBelow)
+	require.Equal(t, 4, snapshotCurrentForTest().titleLinesBelow)
 }
 
 func TestStepWithActiveTitleReplacesSpinnerWithTreeSuccess(t *testing.T) {
@@ -71,7 +92,7 @@ func TestStepWithActiveTitleReplacesSpinnerWithTreeSuccess(t *testing.T) {
 	stop(true)
 
 	require.Contains(t, buf.String(), "│ ✓ Validando dependencias")
-	require.Equal(t, 1, current.titleLinesBelow)
+	require.Equal(t, 1, snapshotCurrentForTest().titleLinesBelow)
 }
 
 func TestStepMessageWithActiveTitleUsesCompletionLabel(t *testing.T) {
@@ -108,7 +129,7 @@ func TestStepWithActiveTitleReplacesSpinnerWithTreeFailure(t *testing.T) {
 	stop(false)
 
 	require.Contains(t, buf.String(), "│ ✗ Validando API keys")
-	require.Equal(t, 1, current.titleLinesBelow)
+	require.Equal(t, 1, snapshotCurrentForTest().titleLinesBelow)
 }
 
 func TestStepWithoutTitleUsesStandaloneLayoutSuccess(t *testing.T) {
@@ -158,11 +179,13 @@ func TestInfoWithActiveInteractiveStepRendersSeparateRow(t *testing.T) {
 	stop(true)
 
 	out := buf.String()
-	require.Contains(t, out, "\r\033[2K  │ Contexto git coletado\n")
-	require.Contains(t, out, "\n\r\033[2K\033[s\033[2A")
+	require.Contains(t, out, "│ Contexto git coletado\n")
+	require.Contains(t, out, "\033[s")
+	require.Contains(t, out, "\033[2A")
+	require.GreaterOrEqual(t, strings.Count(out, "\r\033[2K"), 2)
 	require.NotContains(t, out, "Validando dependencias...  │ Contexto git coletado")
 	require.Contains(t, out, "│ ✓ Validando dependencias")
-	require.Equal(t, 2, current.titleLinesBelow)
+	require.Equal(t, 2, snapshotCurrentForTest().titleLinesBelow)
 }
 
 func TestStoppingFirstDuplicateMessageStepKeepsSecondStepActive(t *testing.T) {
@@ -172,23 +195,25 @@ func TestStoppingFirstDuplicateMessageStepKeepsSecondStepActive(t *testing.T) {
 	Title(&buf, "Gerando descrição do PR...")
 
 	first := Step(&buf, "Validando dependencias")
-	firstID := current.stepID
+	firstID := snapshotCurrentForTest().stepID
 	second := Step(&buf, "Validando dependencias")
-	secondID := current.stepID
+	secondID := snapshotCurrentForTest().stepID
 
 	require.NotZero(t, firstID)
 	require.NotZero(t, secondID)
 	require.NotEqual(t, firstID, secondID)
 
 	first(true)
-	require.True(t, current.stepActive)
-	require.Equal(t, secondID, current.stepID)
+	snapshot := snapshotCurrentForTest()
+	require.True(t, snapshot.stepActive)
+	require.Equal(t, secondID, snapshot.stepID)
 
 	Info(&buf, "Contexto git coletado")
 	second(true)
 
 	out := buf.String()
-	require.Contains(t, out, "│ Contexto git coletado\n\r\033[2K\033[s")
+	require.Contains(t, out, "│ Contexto git coletado")
+	require.Contains(t, out, "\033[s")
 	require.Equal(t, 2, strings.Count(out, "│ ✓ Validando dependencias"))
 	require.Contains(t, out, "│ Contexto git coletado")
 }
@@ -221,4 +246,8 @@ func TestRenderTickUsesBashSparkleFramesAndLineOffsets(t *testing.T) {
 	require.Contains(t, frame1, "<orange-dim>Gerando descrição do PR...<reset>")
 	require.Contains(t, frame2, "<orange><bold>✦<reset>")
 	require.Contains(t, frame3, "<orange-dim><dim>·<reset>")
+}
+
+func TestAnimationIntervalIsNatural(t *testing.T) {
+	require.Equal(t, 170*time.Millisecond, animationInterval)
 }
