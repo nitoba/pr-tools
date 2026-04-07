@@ -366,9 +366,9 @@ func renderTick(frame int, titleDistance int, titleMsg string, stepMsg string, p
 		{symbol: fmt.Sprintf("%s%s·%s", p.OrangeDim, p.Dim, p.Reset), text: p.OrangeDim},
 	}
 
-	stepStyle := p.Dim
+	stepStyle := p.Yellow + p.Dim
 	if frame%2 == 0 {
-		stepStyle = p.Bold
+		stepStyle = p.Yellow + p.Bold
 	}
 
 	if titleDistance <= 0 {
