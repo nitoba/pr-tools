@@ -4,7 +4,6 @@ package wizard
 import (
 	"bufio"
 	"bytes"
-	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
@@ -114,7 +113,8 @@ func Run(stdin io.Reader, stderr io.Writer, envPath string) error {
 			_, _ = fmt.Fprint(stderr, "PAT Token: ")
 			pat := readSecret(stdin, stderr)
 			if pat != "" {
-				testAndSave(stderr, envPath, "AZURE_PAT", pat, testAzurePAT)
+				_ = SetEnvVar(envPath, "AZURE_PAT", pat)
+				fprintln(stderr, green("  [OK] PAT salvo."))
 			}
 		}
 	}
@@ -414,18 +414,4 @@ func testOllama(key string) bool {
 	return resp.StatusCode == http.StatusOK
 }
 
-func testAzurePAT(pat string) bool {
-	// Use the VSSPS profile endpoint (works without org context)
-	req, err := http.NewRequest(http.MethodGet, "https://app.vssps.visualstudio.com/_apis/profile/profiles/me?api-version=6.0", nil)
-	if err != nil {
-		return false
-	}
-	encoded := base64.StdEncoding.EncodeToString([]byte(":" + pat))
-	req.Header.Set("Authorization", "Basic "+encoded)
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return false
-	}
-	defer func() { _ = resp.Body.Close() }()
-	return resp.StatusCode == http.StatusOK
-}
+

@@ -5,20 +5,24 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"strconv"
 	"strings"
 )
 
 type Context struct {
-	BranchName    string
-	SourceBranch  string
-	BaseBranch    string
-	Diff          string
-	Log           string
-	WorkItemID    string
-	IsAzureDevOps bool
-	AzureOrg      string
-	AzureProject  string
-	AzureRepo     string
+	BranchName         string
+	SourceBranch       string
+	BaseBranch         string
+	SprintBranch       string // e.g. "sprint/98" if detected
+	Diff               string
+	DiffTruncated      bool
+	DiffOriginalLines  int
+	Log                string
+	WorkItemID         string
+	IsAzureDevOps      bool
+	AzureOrg           string
+	AzureProject       string
+	AzureRepo          string
 
 	runner Runner
 }
@@ -67,10 +71,18 @@ func (c *Context) Collect(ctx context.Context, sourceBranch string) error {
 	}
 	c.BaseBranch = base
 
-	// Get diff stat
-	diff, err := c.runner.Run(ctx, "git", "diff", base+"..."+c.SourceBranch, "--stat")
+	// Get full diff, truncated to 8000 lines
+	const diffMaxLines = 8000
+	rawDiff, err := c.runner.Run(ctx, "git", "diff", base+"..."+c.SourceBranch)
 	if err == nil {
-		c.Diff = diff
+		lines := strings.Split(rawDiff, "\n")
+		c.DiffOriginalLines = len(lines)
+		if len(lines) > diffMaxLines {
+			c.DiffTruncated = true
+			c.Diff = strings.Join(lines[:diffMaxLines], "\n")
+		} else {
+			c.Diff = rawDiff
+		}
 	}
 
 	// Get log
@@ -86,12 +98,60 @@ func (c *Context) Collect(ctx context.Context, sourceBranch string) error {
 }
 
 func (c *Context) detectBaseBranch(ctx context.Context) (string, error) {
-	for _, candidate := range []string{"sprint", "dev", "main", "master"} {
+	// 1. Try to find sprint/NNN branches (highest number wins)
+	sprintBranch := c.detectLatestSprintBranch(ctx)
+	if sprintBranch != "" {
+		c.SprintBranch = sprintBranch
+	}
+
+	// 2. Find integration branch: dev > main > master
+	for _, candidate := range []string{"dev", "main", "master"} {
 		if _, err := c.runner.Run(ctx, "git", "rev-parse", "--verify", "origin/"+candidate); err == nil {
 			return candidate, nil
 		}
 	}
+
+	// 3. Fallback: if only sprint found, use it
+	if sprintBranch != "" {
+		return sprintBranch, nil
+	}
+
 	return "", errors.New("could not detect base branch")
+}
+
+func (c *Context) detectLatestSprintBranch(ctx context.Context) string {
+	out, err := c.runner.Run(ctx, "git", "branch", "-r")
+	if err != nil {
+		return ""
+	}
+	// Find all origin/sprint/NNN branches
+	var latest string
+	var latestNum int
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "origin/sprint/") {
+			continue
+		}
+		suffix := strings.TrimPrefix(line, "origin/sprint/")
+		// extract leading digits
+		numStr := ""
+		for _, ch := range suffix {
+			if ch >= '0' && ch <= '9' {
+				numStr += string(ch)
+			} else {
+				break
+			}
+		}
+		if numStr == "" {
+			continue
+		}
+		n, _ := strconv.Atoi(numStr)
+		if n > latestNum {
+			latestNum = n
+			latest = "sprint/" + suffix // keep full branch name like sprint/98
+		}
+	}
+	return latest
 }
 
 func (c *Context) detectAzureRemote(ctx context.Context) {

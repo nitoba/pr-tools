@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 )
 
 type WorkItem struct {
@@ -123,4 +124,36 @@ func (wi *WorkItem) Field(key string) string {
 		}
 	}
 	return ""
+}
+
+// Sprint returns the sprint number (e.g. "98") from the iteration path,
+// or empty string if not present.
+func (wi *WorkItem) Sprint() string {
+	path := wi.Field("System.IterationPath")
+	if path == "" {
+		return ""
+	}
+	// Iteration paths look like: "Project\Sprint 98" or "Project\Sprint\98"
+	// Extract last numeric token
+	parts := strings.FieldsFunc(path, func(r rune) bool {
+		return r == '\\' || r == '/' || r == ' '
+	})
+	for i := len(parts) - 1; i >= 0; i-- {
+		if isAllDigits(parts[i]) {
+			return parts[i]
+		}
+	}
+	return ""
+}
+
+func isAllDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }

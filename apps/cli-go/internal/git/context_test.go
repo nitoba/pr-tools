@@ -33,15 +33,14 @@ func join(args []string) string {
 func TestContext_Collect_DetectsBaseBranch(t *testing.T) {
 	runner := mockRunner{
 		outputs: map[string]string{
-			"git branch --show-current":                     "feature/456-auth",
-			"git rev-parse --verify origin/dev":             "abc123",
-			"git diff dev...feature/456-auth --stat":        "1 file changed",
-			"git log dev...feature/456-auth --oneline -50":  "abc123 add auth",
-			"git remote get-url origin":                     "https://github.com/org/repo",
+			"git branch --show-current":                    "feature/456-auth",
+			"git branch -r":                               "",
+			"git rev-parse --verify origin/dev":            "abc123",
+			"git diff dev...feature/456-auth":              "1 file changed",
+			"git log dev...feature/456-auth --oneline -50": "abc123 add auth",
+			"git remote get-url origin":                    "https://github.com/org/repo",
 		},
-		err: map[string]error{
-			"git rev-parse --verify origin/sprint": fmt.Errorf("not found"),
-		},
+		err: map[string]error{},
 	}
 
 	ctx := context.Background()
@@ -73,15 +72,14 @@ func TestContext_Collect_NotGitRepo(t *testing.T) {
 func TestContext_Collect_ExtractsWorkItemID(t *testing.T) {
 	runner := mockRunner{
 		outputs: map[string]string{
-			"git branch --show-current":                     "feature/456-auth",
-			"git rev-parse --verify origin/dev":             "abc123",
-			"git diff dev...feature/456-auth --stat":        "1 file changed",
-			"git log dev...feature/456-auth --oneline -50":  "abc123 add auth",
-			"git remote get-url origin":                     "https://github.com/org/repo",
+			"git branch --show-current":                    "feature/456-auth",
+			"git branch -r":                               "",
+			"git rev-parse --verify origin/dev":            "abc123",
+			"git diff dev...feature/456-auth":              "1 file changed",
+			"git log dev...feature/456-auth --oneline -50": "abc123 add auth",
+			"git remote get-url origin":                    "https://github.com/org/repo",
 		},
-		err: map[string]error{
-			"git rev-parse --verify origin/sprint": fmt.Errorf("not found"),
-		},
+		err: map[string]error{},
 	}
 
 	ctx := context.Background()
@@ -115,15 +113,15 @@ func TestContext_DiffWithLimit_Truncates(t *testing.T) {
 func TestContext_Collect_DetectsAzureDevOpsRemote(t *testing.T) {
 	runner := mockRunner{
 		outputs: map[string]string{
-			"git branch --show-current":                  "main",
-			"git rev-parse --verify origin/main":         "abc123",
-			"git diff main...main --stat":                "",
-			"git log main...main --oneline -50":          "",
-			"git remote get-url origin":                  "https://dev.azure.com/myorg/myproject/_git/myrepo",
+			"git branch --show-current":           "main",
+			"git branch -r":                       "",
+			"git rev-parse --verify origin/main":  "abc123",
+			"git diff main...main":                "",
+			"git log main...main --oneline -50":   "",
+			"git remote get-url origin":           "https://dev.azure.com/myorg/myproject/_git/myrepo",
 		},
 		err: map[string]error{
-			"git rev-parse --verify origin/sprint": fmt.Errorf("not found"),
-			"git rev-parse --verify origin/dev":    fmt.Errorf("not found"),
+			"git rev-parse --verify origin/dev": fmt.Errorf("not found"),
 		},
 	}
 
