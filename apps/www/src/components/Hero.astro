@@ -12,7 +12,7 @@
     >
       <span class="h-1.5 w-1.5 rounded-full bg-primary"></span>
       <span class="font-mono text-xs text-muted-foreground">
-        Agora com suporte a Ollama
+        Agora como binário nativo Go
       </span>
     </div>
 
@@ -29,8 +29,8 @@
     <p
       class="mt-6 max-w-[480px] text-base leading-relaxed text-muted-foreground"
     >
-      CLI tools para gerar descrições de PR e cards de teste no Azure DevOps.
-      Suporta OpenRouter, Groq, Gemini e Ollama. Um comando. Zero burocracia.
+      Um único binário <code class="font-mono text-foreground">prt</code> para gerar descrições de PR e cards de teste no Azure DevOps.
+      Suporta OpenRouter, Groq, Gemini e Ollama. Sem dependências. Zero burocracia.
     </p>
 
     <!-- CTAs -->
@@ -67,11 +67,11 @@
       </div>
       <div class="font-mono text-xs leading-[1.8] text-muted-foreground">
         <p class="text-muted-foreground/40">~/project on <span class="text-primary">feat/streaming</span></p>
-        <p class="mt-1 text-foreground">$ create-pr-description</p>
-        <p class="mt-2 text-muted-foreground/60">&nbsp;&nbsp;<span class="text-primary">done</span> Contexto git coletado</p>
-        <p class="text-muted-foreground/60">&nbsp;&nbsp;<span class="text-primary">done</span> Descrição gerada via groq</p>
-        <p class="text-muted-foreground/60">&nbsp;&nbsp;<span class="text-primary">done</span> PR criado com reviewers</p>
-        <p class="mt-2 text-foreground/70">PR #847 criado com sucesso</p>
+        <p class="mt-1 text-foreground">$ prt desc</p>
+        <p class="mt-2 text-muted-foreground/60">&nbsp;&nbsp;<span class="text-primary">✓</span> Contexto git coletado</p>
+        <p class="text-muted-foreground/60">&nbsp;&nbsp;<span class="text-primary">✓</span> Buscando work item #1042</p>
+        <p class="text-muted-foreground/60">&nbsp;&nbsp;<span class="text-primary">✓</span> Descrição gerada (groq/qwen/qwen3-32b)</p>
+        <p class="mt-2 text-foreground/70">PR — feat/streaming | Target: sprint/42, dev</p>
         <p class="mt-2 text-primary/70">$ <span class="animate-pulse">_</span></p>
       </div>
     </div>

@@ -10,11 +10,16 @@ import (
 )
 
 type CreateTestCaseRequest struct {
-	Title       string
-	AreaPath    string
-	AssignedTo  string
-	ParentID    int
-	Description string
+	Title           string
+	DescriptionHTML string
+	StepsXML        string
+	AreaPath        string
+	ParentID        int
+	IterationPath   string
+	Priority        *int
+	Team            string
+	Program         string
+	AssignedTo      string
 }
 
 type patchOp struct {
@@ -31,14 +36,14 @@ func (c *Client) CreateTestCase(ctx context.Context, project string, req CreateT
 	ops := []patchOp{
 		{Op: "add", Path: "/fields/System.Title", Value: req.Title},
 	}
+	if req.DescriptionHTML != "" {
+		ops = append(ops, patchOp{Op: "add", Path: "/fields/System.Description", Value: req.DescriptionHTML})
+	}
+	if req.StepsXML != "" {
+		ops = append(ops, patchOp{Op: "add", Path: "/fields/Microsoft.VSTS.TCM.Steps", Value: req.StepsXML})
+	}
 	if req.AreaPath != "" {
 		ops = append(ops, patchOp{Op: "add", Path: "/fields/System.AreaPath", Value: req.AreaPath})
-	}
-	if req.AssignedTo != "" {
-		ops = append(ops, patchOp{Op: "add", Path: "/fields/System.AssignedTo", Value: req.AssignedTo})
-	}
-	if req.Description != "" {
-		ops = append(ops, patchOp{Op: "add", Path: "/fields/System.Description", Value: req.Description})
 	}
 	if req.ParentID > 0 {
 		ops = append(ops, patchOp{
@@ -49,6 +54,21 @@ func (c *Client) CreateTestCase(ctx context.Context, project string, req CreateT
 				"url": fmt.Sprintf("%s/_apis/wit/workitems/%d", c.baseURL(), req.ParentID),
 			},
 		})
+	}
+	if req.IterationPath != "" {
+		ops = append(ops, patchOp{Op: "add", Path: "/fields/System.IterationPath", Value: req.IterationPath})
+	}
+	if req.Priority != nil {
+		ops = append(ops, patchOp{Op: "add", Path: "/fields/Microsoft.VSTS.Common.Priority", Value: *req.Priority})
+	}
+	if req.Team != "" {
+		ops = append(ops, patchOp{Op: "add", Path: "/fields/Custom.Team", Value: req.Team})
+	}
+	if req.Program != "" {
+		ops = append(ops, patchOp{Op: "add", Path: "/fields/Custom.ProgramasAgrotrace", Value: req.Program})
+	}
+	if req.AssignedTo != "" {
+		ops = append(ops, patchOp{Op: "add", Path: "/fields/System.AssignedTo", Value: req.AssignedTo})
 	}
 
 	b, err := json.Marshal(ops)

@@ -1,0 +1,107 @@
+---
+title: prt test
+description: Gera cards de teste a partir de PR e Work Item do Azure DevOps
+---
+
+# prt test
+
+Gera um card de teste (Test Case) em Markdown a partir de um PR e seu work item pai no Azure DevOps, usando um LLM. Pode criar o Test Case filho automaticamente no Azure DevOps.
+
+## Uso
+
+```bash
+prt test [opções]
+```
+
+## Flags
+
+| Flag | Argumento | Descrição |
+|------|-----------|-----------|
+| `--work-item <id>` | ID numérico | ID do work item pai (obrigatório) |
+| `--pr <id>` | ID numérico | ID do PR no Azure DevOps |
+| `--org <nome>` | nome | Organization do Azure DevOps |
+| `--project <nome>` | nome | Projeto do Azure DevOps |
+| `--repo <nome>` | nome | Repositório do Azure DevOps |
+| `--area-path <path>` | caminho | AreaPath para criação do Test Case |
+| `--assigned-to <valor>` | email | Responsável pelo Test Case |
+| `--examples <n>` | 0–5 | Quantidade de exemplos no card (padrão: 2) |
+| `--no-create` | — | Gera o card em Markdown mas não cria no Azure DevOps |
+| `--dry-run` | — | Mostra o prompt sem chamar o LLM |
+| `--raw` | — | Saída somente Markdown, sem cabeçalho formatado |
+| `--debug` | — | Exibe detalhes de diagnóstico |
+
+## Exemplos
+
+```bash
+# Vinculando work item obrigatório
+prt test --work-item 11796
+
+# Work item e PR explícitos
+prt test --work-item 11796 --pr 10513
+
+# Gera o Markdown sem criar no Azure DevOps
+prt test --work-item 11796 --no-create
+
+# Ver prompt sem chamar o LLM
+prt test --work-item 11796 --dry-run
+
+# Sobrescrever AreaPath e responsável
+prt test --work-item 11796 --area-path "MEU-PROJETO\\QA" --assigned-to "qa@empresa.com"
+
+# Mais exemplos no card
+prt test --work-item 11796 --examples 4
+```
+
+## Como funciona
+
+O `prt test` resolve o contexto do Azure DevOps na seguinte ordem:
+
+1. **Resolve contexto Azure DevOps** — Extrai org, project e repo da URL do git remote ou das flags `--org`, `--project`, `--repo`.
+2. **Resolve o work item** — Usa a flag `--work-item` ou extrai do nome da branch atual.
+3. **Busca alterações do PR** — Obtém o diff e as mudanças do PR especificado ou detectado automaticamente.
+4. **Gera o card via LLM** — Envia o contexto para o provider configurado com fallback automático.
+5. **Cria no Azure DevOps** — Se `--no-create` não for passado, pergunta antes de criar o Test Case filho.
+
+## Output esperado
+
+```
+ ✦ Gerando card de teste...
+  │ ✓  Resolvendo contexto Azure DevOps
+  │ ✓  Resolvendo work item
+  │ ✓  Buscando alterações do PR
+  │ ✓  Gerando card via LLM
+  │ └
+
+Test Card - PR #10513
+Provider: groq (qwen/qwen3-32b)
+Work Item pai: #11796 - Novo tipo de pergunta: Anexo (upload de documentos)
+AreaPath Teste: AGROTRACE\Devops
+Responsável: qa@empresa.com
+
+Titulo: Testar novo tipo de pergunta 'Anexo' no CMS e formulários
+
+## Objetivo
+Validar a implementação do novo tipo de pergunta "Anexo"...
+
+## Cenario base
+1. Cadastro no CMS...
+2. Configuração da estrutura...
+
+## Checklist de testes
+- [ ] Opção Anexo aparece no CMS...
+- [ ] Campo de tamanho máximo respeita valor padrão...
+```
+
+## Fallback quando o Azure DevOps bloqueia
+
+Alguns projetos no Azure DevOps têm regras de processo que impedem a criação de Test Cases via API. Quando isso ocorre:
+
+- O `prt test` mantém o Markdown gerado visível no terminal
+- Informa que a criação automática falhou com a mensagem de erro do Azure DevOps
+- O card pode ser criado manualmente colando o conteúdo na interface web
+
+## Configuração relacionada
+
+- [Configuração completa](/docs/getting-started/configuration)
+- [Variáveis de ambiente](/docs/reference/environment-variables)
+- [Configurando o Azure DevOps](/docs/guides/azure-devops)

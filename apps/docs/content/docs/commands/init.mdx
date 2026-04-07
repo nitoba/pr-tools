@@ -1,0 +1,83 @@
+---
+title: prt init
+description: Wizard interativo de configuração do prt
+---
+
+import { Steps, Step } from 'fumadocs-ui/components/steps'
+
+# prt init
+
+Wizard interativo que configura todos os aspectos do `prt`: providers de IA, API keys, Azure DevOps PAT e reviewers padrão.
+
+## Uso
+
+```bash
+prt init
+```
+
+Não há flags — o wizard conduz a configuração passo a passo.
+
+## O que o wizard configura
+
+<Steps>
+  <Step>
+    **Providers de IA** — Selecione quais providers deseja usar: OpenRouter, Groq, Google Gemini, Ollama Cloud. A ordem de seleção define a prioridade do fallback automático.
+  </Step>
+  <Step>
+    **API keys** — Para cada provider selecionado, o wizard pede a API key e valida a conexão antes de salvar.
+  </Step>
+  <Step>
+    **Azure DevOps PAT** — Personal Access Token para buscar dados de work items e criar Test Cases. Opcional para uso básico do `prt desc`.
+  </Step>
+  <Step>
+    **Reviewers padrão** — Emails dos reviewers padrão para criação automática de PRs no Azure DevOps (um para PRs para `dev`, outro para PRs para `sprint`).
+  </Step>
+  <Step>
+    **Template de PR** — Cria `~/.config/pr-tools/pr-template.md` com o template padrão de descrição de PR, editável livremente.
+  </Step>
+</Steps>
+
+## Arquivo gerado
+
+Após o wizard, as configurações ficam em `~/.config/pr-tools/.env`:
+
+```bash
+PR_PROVIDERS="openrouter,groq,gemini"
+
+OPENROUTER_API_KEY="sk-or-..."
+GROQ_API_KEY="gsk_..."
+GEMINI_API_KEY="..."
+
+AZURE_PAT="seu-pat-token"
+
+PR_REVIEWER_DEV="dev@empresa.com"
+PR_REVIEWER_SPRINT="sprint@empresa.com"
+```
+
+<Callout type="info">
+  As API keys são salvas fora do bloco gerenciado pelo wizard. Isso significa que rodar `prt init` novamente não sobrescreve suas chaves existentes.
+</Callout>
+
+## Reexecutar o wizard
+
+Você pode rodar `prt init` a qualquer momento para adicionar ou alterar configurações. O wizard detecta o que já está configurado e permite atualizar apenas o necessário.
+
+## Configuração manual
+
+Se preferir configurar sem o wizard, edite diretamente:
+
+```bash
+vi ~/.config/pr-tools/.env
+```
+
+Veja a referência completa em [Variáveis de ambiente](/docs/reference/environment-variables).
+
+## Verificar configuração
+
+Após configurar, use `prt doctor` para verificar se tudo está funcionando:
+
+```bash
+prt doctor
+```
+
+O `prt doctor` testa a conexão com cada provider configurado e valida o Azure DevOps PAT.

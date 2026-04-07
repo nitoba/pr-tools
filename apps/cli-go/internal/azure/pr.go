@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 )
 
 type PullRequest struct {
@@ -54,6 +55,46 @@ func (c *Client) CreatePullRequest(ctx context.Context, project, repo string, re
 		return nil, err
 	}
 	return &pr, nil
+}
+
+func (c *Client) GetPullRequestWorkItemIDs(ctx context.Context, project, repo string, prID int) ([]int, error) {
+	url := fmt.Sprintf("%s/%s/_apis/git/repositories/%s/pullRequests/%d/workitems?api-version=7.1",
+		c.baseURL(), project, repo, prID)
+	data, err := c.doRequest(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var result struct {
+		Value []struct {
+			ID interface{} `json:"id"`
+		} `json:"value"`
+	}
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, err
+	}
+
+	ids := make([]int, 0, len(result.Value))
+	for _, item := range result.Value {
+		id, err := toWorkItemID(item.ID)
+		if err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+
+	return ids, nil
+}
+
+func toWorkItemID(v interface{}) (int, error) {
+	switch id := v.(type) {
+	case float64:
+		return int(id), nil
+	case string:
+		return strconv.Atoi(id)
+	default:
+		return 0, fmt.Errorf("unexpected work item id type %T", v)
+	}
 }
 
 // PRIteration is a PR iteration (version).

@@ -26,10 +26,10 @@ Todas as variáveis abaixo podem ser definidas no arquivo `~/.config/pr-tools/.e
 
 | Variável | Descrição | Padrão |
 |----------|-----------|--------|
-| `OPENROUTER_MODEL` | Modelo usado pelo OpenRouter | `meta-llama/llama-3.3-70b-instruct:free` |
-| `GROQ_MODEL` | Modelo usado pelo Groq | `llama-3.3-70b-versatile` |
+| `OPENROUTER_MODEL` | Modelo usado pelo OpenRouter | `qwen/qwen3.6-plus:free` |
+| `GROQ_MODEL` | Modelo usado pelo Groq | `qwen/qwen3-32b` |
 | `GEMINI_MODEL` | Modelo usado pelo Google Gemini | `gemini-3.1-flash-lite-preview` |
-| `OLLAMA_MODEL` | Modelo usado pelo Ollama | `qwen3.5:cloud` |
+| `OLLAMA_MODEL` | Modelo usado pelo Ollama | `llama3.2` |
 
 ## Azure DevOps
 
@@ -63,9 +63,10 @@ GEMINI_API_KEY="..."
 AZURE_PAT="seu-pat-token"
 
 # Modelos (descomente para sobrescrever o padrão)
-# OPENROUTER_MODEL="meta-llama/llama-3.3-70b-instruct:free"
-# GROQ_MODEL="llama-3.3-70b-versatile"
+# OPENROUTER_MODEL="qwen/qwen3.6-plus:free"
+# GROQ_MODEL="qwen/qwen3-32b"
 # GEMINI_MODEL="gemini-3.1-flash-lite-preview"
+# OLLAMA_MODEL="llama3.2"
 
 # Reviewers padrão
 # PR_REVIEWER_DEV="dev@empresa.com"
@@ -79,3 +80,14 @@ AZURE_PAT="seu-pat-token"
 <Callout type="info">
   Variáveis de ambiente do shell sempre sobrescrevem o `.env`. Flags CLI sobrescrevem ambos. Veja [precedência de configuração](/docs/getting-started/configuration#precedência-de-configuração) para detalhes.
 </Callout>
+
+## Alterando modelos via CLI
+
+Em vez de editar o `.env` manualmente, use as flags de `prt desc`:
+
+```bash
+prt desc --set-openrouter-model qwen/qwen3-4b:free
+prt desc --set-groq-model qwen/qwen3-32b
+prt desc --set-gemini-model gemini-2.0-flash
+prt desc --set-ollama-model llama3.2:latest
+```

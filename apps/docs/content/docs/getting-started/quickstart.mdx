@@ -14,13 +14,13 @@ Este guia mostra o caminho mínimo: instalar, configurar e gerar sua primeira de
     ### Instalar
 
     ```bash
-    curl -fsSL https://raw.githubusercontent.com/nitoba/pr-tools/main/install.sh | bash
+    curl -fsSL https://raw.githubusercontent.com/nitoba/pr-tools/main/apps/cli-go/install.sh | bash
     ```
 
     Após a instalação, verifique:
 
     ```bash
-    create-pr-description --version
+    prt --version
     ```
   </Step>
 
@@ -30,14 +30,14 @@ Este guia mostra o caminho mínimo: instalar, configurar e gerar sua primeira de
     Rode o wizard de configuração interativo:
 
     ```bash
-    create-pr-description --init
+    prt init
     ```
 
     O wizard vai pedir:
 
     1. Quais providers usar (OpenRouter, Groq, Gemini, Ollama)
     2. A API key de cada provider escolhido
-    3. Seu Azure DevOps PAT (opcional — necessário para criar PRs automaticamente)
+    3. Seu Azure DevOps PAT (opcional — necessário para buscar work items e criar Test Cases)
     4. Emails dos reviewers padrão (opcional)
 
     As configurações são salvas em `~/.config/pr-tools/.env`.
@@ -49,46 +49,38 @@ Este guia mostra o caminho mínimo: instalar, configurar e gerar sua primeira de
     Em um repositório git, na branch da sua feature:
 
     ```bash
-    create-pr-description
+    prt desc
     ```
 
     O comando vai:
 
-    1. Coletar o `git diff` e `git log` da branch atual vs base
-    2. Detectar a sprint vigente automaticamente
+    1. Coletar o `git diff` e `git log` da branch atual vs base (truncado em 8000 linhas)
+    2. Detectar a sprint vigente automaticamente (`sprint/NNN`)
     3. Extrair o work item do nome da branch (ex: `feat/1234-login` → work item `1234`)
-    4. Enviar o contexto para o LLM
-    5. Imprimir a descrição formatada no terminal
-    6. Copiar a descrição para o clipboard
-    7. Perguntar se deseja criar o PR automaticamente no Azure DevOps
+    4. Buscar dados do work item no Azure DevOps (título, sprint)
+    5. Enviar o contexto para o LLM com fallback automático entre providers
+    6. Imprimir a descrição formatada no terminal
   </Step>
 </Steps>
 
 ## Output esperado
 
 ```
-==========================================
-PR Description
-==========================================
-Provider: groq (llama-3.3-70b-versatile)
+ ✦ Gerando PR description...
+  │ ✓  Coletando contexto git
+  │    Contexto git coletado (feat/1234-login)
+  │ ✓  Buscando work item #1234
+  │    Work item: #1234
+  │    Sprint: 42
+  │    Repositório: org/projeto/repo
+  │    Tentando provider: groq (qwen/qwen3-32b)...
+  │ ✓  Descrição gerada (groq/qwen/qwen3-32b)
+  │ └
 
-# Implementar autenticação JWT
-
-## Contexto
-Esta PR implementa o sistema de autenticação JWT para...
-
-## Mudanças
-- Adicionado middleware de autenticação
-- Criado endpoint de login/refresh token
-- ...
-
-## Como testar
-1. Execute `npm test`
-2. Faça requisição para `/api/auth/login`
-...
-
-[OK] Descrição copiada para o clipboard
-==========================================
+ ✦ PR — feat/1234-login
+  │ Target: sprint/42, dev
+  │ Provider: groq (qwen/qwen3-32b)
+  │ Work Item: #1234
 ```
 
 <Callout type="info">
@@ -98,5 +90,6 @@ Esta PR implementa o sistema de autenticação JWT para...
 ## Próximos passos
 
 - [Configuração detalhada](/docs/getting-started/configuration) — todas as variáveis e opções
-- [Referência do create-pr-description](/docs/commands/create-pr-description) — todas as flags
+- [Referência do prt desc](/docs/commands/desc) — todas as flags
+- [Referência do prt test](/docs/commands/test) — geração de cards de teste
 - [Configurando o Azure DevOps](/docs/guides/azure-devops) — como criar o PAT

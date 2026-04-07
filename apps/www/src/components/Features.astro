@@ -1,13 +1,13 @@
 ---
 const features = [
   {
-    title: "PR Description",
+    title: "prt desc — PR Description",
     description:
-      "Analisa o git diff e gera descrições ricas com contexto do Azure DevOps Work Item. Cria o PR automaticamente com reviewers configurados.",
+      "Analisa o git diff (até 8000 linhas) e gera descrições ricas com contexto do Azure DevOps Work Item. Fallback automático entre providers com progresso ao vivo no terminal.",
     icon: "bolt",
   },
   {
-    title: "Test Cards",
+    title: "prt test — Test Cards",
     description:
       "Gera cards de teste no Azure DevOps a partir do PR e Work Item. Estrutura BDD com cenários, steps e critérios de aceite — prontos para QA.",
     icon: "beaker",
@@ -15,7 +15,7 @@ const features = [
   {
     title: "Multi-provider AI",
     description:
-      "OpenRouter, Groq, Gemini e Ollama. Fallback automático entre providers. Troca de modelo por variável de ambiente.",
+      "OpenRouter, Groq, Gemini e Ollama. Fallback automático entre providers. Troca de modelo com prt desc --set-groq-model ou via variável de ambiente.",
     icon: "cpu",
   },
 ];

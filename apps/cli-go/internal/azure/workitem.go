@@ -116,6 +116,47 @@ func (c *Client) UpdateWorkItemState(ctx context.Context, project string, wiID i
 	return nil
 }
 
+func (c *Client) UpdateWorkItemToTestQA(ctx context.Context, project string, wiID int, effort, realEffort *float64) error {
+	url := fmt.Sprintf("%s/%s/_apis/wit/workitems/%d?api-version=7.0", c.baseURL(), project, wiID)
+	ops := []map[string]interface{}{
+		{"op": "add", "path": "/fields/System.State", "value": "Test QA"},
+	}
+	if effort != nil {
+		ops = append(ops, map[string]interface{}{"op": "add", "path": "/fields/Microsoft.VSTS.Scheduling.Effort", "value": *effort})
+	}
+	if realEffort != nil {
+		ops = append(ops, map[string]interface{}{"op": "add", "path": "/fields/Custom.RealEffort", "value": *realEffort})
+	}
+
+	b, err := json.Marshal(ops)
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "PATCH", url, bytes.NewReader(b))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json-patch+json")
+	req.Header.Set("Authorization", c.authHeader())
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("azure update work item to test qa: status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	return nil
+}
+
 // WorkItemField returns the field value for the given key, or empty string.
 func (wi *WorkItem) Field(key string) string {
 	if v, ok := wi.Fields[key]; ok {

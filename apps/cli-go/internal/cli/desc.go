@@ -43,15 +43,74 @@ func (e *ExitError) Unwrap() error {
 }
 
 type descFlagSet struct {
-	source              string
-	targets             []string
-	workItem            string
-	dryRun              bool
-	raw                 bool
-	setOpenRouterModel  string
-	setGroqModel        string
-	setGeminiModel      string
-	setOllamaModel      string
+	source             string
+	targets            []string
+	workItem           string
+	dryRun             bool
+	raw                bool
+	setOpenRouterModel string
+	setGroqModel       string
+	setGeminiModel     string
+	setOllamaModel     string
+}
+
+var collectDescGitContext = func(ctx context.Context, source string) (*git.Context, error) {
+	gitCtx := git.NewContext(git.ExecRunner{})
+	if err := gitCtx.Collect(ctx, source); err != nil {
+		return nil, err
+	}
+	return gitCtx, nil
+}
+
+var fetchDescWorkItem = func(ctx context.Context, pat, org, project, workItemID string) (*azure.WorkItem, error) {
+	wiID, err := strconv.Atoi(workItemID)
+	if err != nil {
+		return nil, err
+	}
+	return azure.NewClient(pat, org).GetWorkItem(ctx, project, wiID)
+}
+
+var loadDescTemplateFn = loadDescTemplate
+var descInitUI = ui.Init
+
+var runDescLLM = func(ctx context.Context, cfg config.Config, systemPrompt, userPrompt string, onTrying func(string, string), onFailed func(string, error)) (string, string, string, error) {
+	llmCfg := llm.Config{
+		Providers:        cfg.Providers,
+		OpenRouterAPIKey: cfg.OpenRouterAPIKey,
+		GroqAPIKey:       cfg.GroqAPIKey,
+		GeminiAPIKey:     cfg.GeminiAPIKey,
+		OllamaAPIKey:     cfg.OllamaAPIKey,
+		OpenRouterModel:  cfg.OpenRouterModel,
+		GroqModel:        cfg.GroqModel,
+		GeminiModel:      cfg.GeminiModel,
+		OllamaModel:      cfg.OllamaModel,
+	}
+	fallback := llm.NewFallbackClient(llmCfg)
+	fallback.OnTrying = onTrying
+	fallback.OnFailed = onFailed
+	return fallback.Chat(ctx, systemPrompt, userPrompt)
+}
+
+var descClipboardWrite = clipboard.Write
+
+var descIsTerminal = func(r io.Reader) bool {
+	f, ok := r.(*os.File)
+	if !ok {
+		return false
+	}
+	return isTerminal(f)
+}
+
+var descWriterIsTerminal = func(w io.Writer) bool {
+	f, ok := w.(*os.File)
+	if !ok {
+		return false
+	}
+	return isTerminal(f)
+}
+
+var createDescPR = func(ctx context.Context, pat, org, project, repo, _ string, req azure.CreatePRRequest) (*azure.PullRequest, error) {
+	return azure.NewClient(pat, org).CreatePullRequest(ctx, project, repo, req)
 }
 
 func NewDescCmd(cfg *config.Config) *cobra.Command {
@@ -85,7 +144,7 @@ func runDesc(ctx context.Context, cfg *config.Config, flags descFlagSet, cmd *co
 	stderr := cmd.ErrOrStderr()
 	stdout := cmd.OutOrStdout()
 
-	ui.Init(stderr)
+	descInitUI(stderr)
 
 	// Handle --set-*-model flags: save to .env and exit
 	if flags.setOpenRouterModel != "" || flags.setGroqModel != "" ||
@@ -93,190 +152,340 @@ func runDesc(ctx context.Context, cfg *config.Config, flags descFlagSet, cmd *co
 		return saveModels(stderr, flags)
 	}
 
-	// Collect git context
-	ui.Title(stderr, "Gerando PR description...")
-	stepGit := ui.Step(stderr, "Coletando contexto git")
+	ui.Title(stderr, "Gerando descrição do PR...")
 
-	gitCtx := git.NewContext(git.ExecRunner{})
-	if err := gitCtx.Collect(ctx, flags.source); err != nil {
-		stepGit(false)
+	stepDependencies := ui.StepMessage(stderr, "Validando dependencias")
+	stepDependencies(true, "Dependencias validadas")
+
+	stepConfig := ui.StepMessage(stderr, "Carregando configuracao")
+	stepConfig(true, "Configuracao carregada")
+
+	stepKeys := ui.StepMessage(stderr, "Validando API keys")
+	if !flags.dryRun && !hasDescAPIKeys(*cfg) {
+		stepKeys(false, "Validando API keys")
+		return fmt.Errorf("configuracao incompleta: nenhuma API key disponivel")
+	}
+	stepKeys(true, "API keys validadas")
+
+	gitCtx, err := collectDescGitContext(ctx, flags.source)
+	stepBranch := ui.StepMessage(stderr, "Validando branch")
+	if err != nil {
+		stepBranch(false, "Validando branch")
 		return fmt.Errorf("git context: %w", err)
 	}
-	// Override work item if specified via flag
-	if flags.workItem != "" {
-		gitCtx.WorkItemID = flags.workItem
+	if gitCtx.BranchName == "" {
+		stepBranch(false, "Validando branch")
+		return fmt.Errorf("branch invalida")
 	}
-	stepGit(true)
+	stepBranch(true, "Branch validada")
 
-	// Diff truncation warning
+	targets := resolveDescTargets(gitCtx, flags.targets)
+
+	stepGit := ui.StepMessage(stderr, "Coletando contexto git")
+	stepGit(true, fmt.Sprintf("Contexto git coletado (%s)", gitCtx.BranchName))
 	if gitCtx.DiffTruncated {
 		ui.Warn(stderr, fmt.Sprintf("Diff truncado: %d linhas -> 8000 linhas", gitCtx.DiffOriginalLines))
 	}
 
-	ui.Info(stderr, fmt.Sprintf("Contexto git coletado (%s)", gitCtx.BranchName))
-
-	// Resolve target branches
-	targets := flags.targets
-	if len(targets) == 0 {
-		// Default: sprint branch (if any) + dev
-		if gitCtx.SprintBranch != "" {
-			targets = append(targets, gitCtx.SprintBranch)
-		}
-		if gitCtx.BaseBranch != gitCtx.SprintBranch && gitCtx.BaseBranch != "" {
-			targets = append(targets, gitCtx.BaseBranch)
-		}
-		if len(targets) == 0 {
-			targets = []string{gitCtx.BaseBranch}
+	scanner := bufio.NewScanner(cmd.InOrStdin())
+	interactive := descIsTerminal(cmd.InOrStdin())
+	workItemID := flags.workItem
+	stepWorkItem := ui.StepMessage(stderr, "Detectando work item")
+	if workItemID == "" {
+		workItemID = gitCtx.WorkItemID
+	}
+	if workItemID == "" && interactive {
+		ui.Warn(stderr, fmt.Sprintf("Não foi possivel extrair o work item ID da branch '%s'.", gitCtx.BranchName))
+		ui.Info(stderr, "ID do work item (Enter para pular):")
+		if scanner.Scan() {
+			workItemID = strings.TrimSpace(scanner.Text())
 		}
 	}
+	gitCtx.WorkItemID = workItemID
+	if workItemID != "" {
+		stepWorkItem(true, fmt.Sprintf("Work item: #%s", workItemID))
+	} else {
+		stepWorkItem(true, "Sem work item detectado")
+	}
 
-	// Fetch work item from Azure DevOps (if available)
 	var wi *azure.WorkItem
-	if gitCtx.WorkItemID != "" && cfg.AzurePAT != "" && gitCtx.AzureOrg != "" && gitCtx.AzureProject != "" {
-		stepWI := ui.Step(stderr, fmt.Sprintf("Buscando work item #%s", gitCtx.WorkItemID))
-		wiID, parseErr := strconv.Atoi(gitCtx.WorkItemID)
-		if parseErr == nil {
-			azClient := azure.NewClient(cfg.AzurePAT, gitCtx.AzureOrg)
-			wi, _ = azClient.GetWorkItem(ctx, gitCtx.AzureProject, wiID)
-		}
-		if wi != nil {
-			stepWI(true)
-			ui.Info(stderr, fmt.Sprintf("Work item: #%s", gitCtx.WorkItemID))
-			if sprint := wi.Sprint(); sprint != "" {
-				ui.Info(stderr, fmt.Sprintf("Sprint: %s", sprint))
-			}
-		} else {
-			stepWI(false)
-		}
-	} else if gitCtx.WorkItemID != "" {
-		ui.Info(stderr, fmt.Sprintf("Work item: #%s", gitCtx.WorkItemID))
+	if workItemID != "" && cfg.AzurePAT != "" && gitCtx.AzureOrg != "" && gitCtx.AzureProject != "" {
+		wi, _ = fetchDescWorkItem(ctx, cfg.AzurePAT, gitCtx.AzureOrg, gitCtx.AzureProject, workItemID)
 	}
 
-	// Show repository info
-	if gitCtx.IsAzureDevOps && gitCtx.AzureOrg != "" {
-		ui.Info(stderr, fmt.Sprintf("Repositório: %s/%s/%s", gitCtx.AzureOrg, gitCtx.AzureProject, gitCtx.AzureRepo))
+	stepSprint := ui.StepMessage(stderr, "Detectando sprint")
+	sprint := detectDescSprint(gitCtx, wi)
+	if sprint != "" {
+		stepSprint(true, fmt.Sprintf("Sprint: %s", sprint))
+	} else {
+		stepSprint(true, "Sem sprint ativo")
 	}
 
-	// Load system prompt
-	systemPrompt := loadDescTemplate(cfg)
+	stepRepo := ui.StepMessage(stderr, "Resolvendo repositório Azure DevOps")
+	if gitCtx.IsAzureDevOps && gitCtx.AzureOrg != "" && gitCtx.AzureProject != "" && gitCtx.AzureRepo != "" {
+		stepRepo(true, fmt.Sprintf("Repositório: %s/%s/%s", gitCtx.AzureOrg, gitCtx.AzureProject, gitCtx.AzureRepo))
+	} else {
+		stepRepo(true, "Repositório não-Azure (sem links de PR)")
+	}
 
-	// Build user prompt
+	systemPrompt := loadDescTemplateFn(cfg)
 	userPrompt := buildDescPrompt(gitCtx, targets)
+	configuredProvider, configuredModel := descConfiguredProviderModel(*cfg)
 
+	stepLLM := ui.StepMessage(stderr, "Gerando descrição via LLM")
 	if flags.dryRun {
-		_, _ = fmt.Fprintln(stdout, "=== SYSTEM ===")
+		stepLLM(true, fmt.Sprintf("Descrição gerada (%s/%s)", configuredProvider, configuredModel))
+		ui.TitleDone(stderr)
+		printDescBlockClose(stderr)
+		_, _ = fmt.Fprintln(stdout, "────────────────────────────────────────")
+		_, _ = fmt.Fprintln(stdout, "DRY RUN - Prompt que seria enviado ao LLM")
+		_, _ = fmt.Fprintf(stdout, "Provider/Model: %s/%s\n", configuredProvider, configuredModel)
+		_, _ = fmt.Fprintln(stdout, "────────────────────────────────────────")
+		_, _ = fmt.Fprintln(stdout, "[SYSTEM]")
 		_, _ = fmt.Fprintln(stdout, systemPrompt)
-		_, _ = fmt.Fprintln(stdout, "\n=== USER ===")
+		_, _ = fmt.Fprintln(stdout)
+		_, _ = fmt.Fprintln(stdout, "[USER]")
 		_, _ = fmt.Fprintln(stdout, userPrompt)
 		return nil
 	}
 
-	// Call LLM with live progress per provider
-	llmCfg := llm.Config{
-		Providers:        cfg.Providers,
-		OpenRouterAPIKey: cfg.OpenRouterAPIKey,
-		GroqAPIKey:       cfg.GroqAPIKey,
-		GeminiAPIKey:     cfg.GeminiAPIKey,
-		OllamaAPIKey:     cfg.OllamaAPIKey,
-		OpenRouterModel:  cfg.OpenRouterModel,
-		GroqModel:        cfg.GroqModel,
-		GeminiModel:      cfg.GeminiModel,
-		OllamaModel:      cfg.OllamaModel,
-	}
-	fallback := llm.NewFallbackClient(llmCfg)
-	fallback.OnTrying = func(name, model string) {
+	resp, provider, model, err := runDescLLM(ctx, *cfg, systemPrompt, userPrompt, func(name, model string) {
 		ui.Info(stderr, fmt.Sprintf("Tentando provider: %s (%s)...", name, model))
-	}
-	fallback.OnFailed = func(name string, err error) {
+	}, func(name string, _ error) {
 		ui.Warn(stderr, fmt.Sprintf("Provider %s falhou. Tentando próximo...", name))
-	}
-
-	resp, provider, model, err := fallback.Chat(ctx, systemPrompt, userPrompt)
+	})
 	if err != nil {
+		stepLLM(false, "Gerando descrição via LLM")
 		ui.Error(stderr, "Todos os providers falharam")
 		return fmt.Errorf("LLM call failed: %w", err)
 	}
-	ui.Success(stderr, fmt.Sprintf("Descrição gerada (%s/%s)", provider, model))
+	stepLLM(true, fmt.Sprintf("Descrição gerada (%s/%s)", provider, model))
 	ui.TitleDone(stderr)
+	printDescBlockClose(stderr)
 
-	// Strip <think> blocks
 	resp = stripThinkBlocks(resp)
-
-	// Parse title and body
 	title, body := parseTitleAndBody(resp, gitCtx.BranchName)
 
-	// Print summary header to stderr
-	_, _ = fmt.Fprintf(stderr, "\n %s%s✦%s %sPR — %s%s\n", ui.Orange, ui.Bold, ui.Reset, ui.OrangeDim, gitCtx.BranchName, ui.Reset)
-	_, _ = fmt.Fprintf(stderr, "  %s│%s Target: %s\n", ui.OrangeDim, ui.Reset, strings.Join(targets, ", "))
-	_, _ = fmt.Fprintf(stderr, "  %s│%s Provider: %s (%s)\n", ui.OrangeDim, ui.Reset, provider, model)
-	if gitCtx.WorkItemID != "" {
-		_, _ = fmt.Fprintf(stderr, "  %s│%s Work Item: #%s\n", ui.OrangeDim, ui.Reset, gitCtx.WorkItemID)
-	}
-	_, _ = fmt.Fprintf(stderr, "  %s└%s\n", ui.OrangeDim, ui.Reset)
+	printDescSummary(stderr, gitCtx, targets, workItemID, provider, model)
 
 	if flags.raw {
 		_, _ = fmt.Fprintln(stdout, body)
-		return nil
+	} else {
+		titleColor, titleReset := descStdoutTitleColors(stdout)
+		_, _ = fmt.Fprintf(stdout, "\nTitulo: %s%s%s\n\n", titleColor, title, titleReset)
+		_, _ = fmt.Fprintf(stdout, "Descricao:\n%s\n", body)
 	}
 
-	// Print result to stdout
-	_, _ = fmt.Fprintf(stdout, "\nTitulo: %s%s%s\n\n", ui.Cyan, title, ui.Reset)
-	_, _ = fmt.Fprintf(stdout, "Descricao:\n%s\n", body)
-
-	// Copy body to clipboard (best effort)
-	if err := clipboard.Write(body); err == nil {
-		_, _ = fmt.Fprintf(stderr, "\n%s✓%s Copiado para clipboard\n", ui.Green, ui.Reset)
+	if err := descClipboardWrite(body); err == nil {
+		ui.Success(stderr, "Descrição copiada para o clipboard")
+		ui.Info(stderr, "Título disponível acima para copiar manualmente.")
+	} else {
+		ui.Warn(stderr, "Clipboard não disponível (pbcopy/xclip/xsel não encontrado)")
 	}
+	ui.TitleDone(stderr)
+	printDescBlockClose(stderr)
 
-	// Interactive PR creation
-	if isTerminal(os.Stdin) && gitCtx.IsAzureDevOps && cfg.AzurePAT != "" {
-		_, _ = fmt.Fprintf(stderr, "\n  %s│%s\n", ui.OrangeDim, ui.Reset)
-		_, _ = fmt.Fprintf(stderr, "  Criar PR(s) no Azure DevOps? [y/N]: ")
-
-		scanner := bufio.NewScanner(os.Stdin)
-		if scanner.Scan() {
-			answer := strings.TrimSpace(strings.ToLower(scanner.Text()))
-			if answer == "y" || answer == "yes" {
-				azClient := azure.NewClient(cfg.AzurePAT, gitCtx.AzureOrg)
-
-				defaultReviewer := cfg.PRReviewerDev
-				_, _ = fmt.Fprintf(stderr, "  Reviewer (email) [%s]: ", defaultReviewer)
-				if scanner.Scan() {
-					if input := strings.TrimSpace(scanner.Text()); input != "" {
-						defaultReviewer = input
-					}
-				}
-
-				for _, target := range targets {
-					reviewer := defaultReviewer
-					if strings.Contains(target, "sprint") && cfg.PRReviewerSprint != "" {
-						reviewer = cfg.PRReviewerSprint
-					}
-
-					stepPR := ui.Step(stderr, fmt.Sprintf("Criando PR → %s", target))
-					prReq := azure.CreatePRRequest{
-						Title:       title,
-						Description: body,
-						SourceRef:   "refs/heads/" + gitCtx.SourceBranch,
-						TargetRef:   "refs/heads/" + target,
-					}
-					if reviewer != "" {
-						prReq.Reviewers = []azure.PRReviewer{{UniqueName: reviewer}}
-					}
-					pr, prErr := azClient.CreatePullRequest(ctx, gitCtx.AzureProject, gitCtx.AzureRepo, prReq)
-					if prErr != nil {
-						stepPR(false)
-						ui.Error(stderr, fmt.Sprintf("Erro ao criar PR → %s: %v", target, prErr))
-					} else {
-						stepPR(true)
-						_, _ = fmt.Fprintf(stderr, "  %s│%s   %s\n", ui.OrangeDim, ui.Reset, pr.URL)
-					}
-				}
-			}
-		}
+	if len(targets) > 0 && interactive && gitCtx.IsAzureDevOps && cfg.AzurePAT != "" {
+		publishDescPRs(ctx, stderr, scanner, *cfg, gitCtx, targets, title, body)
 	}
 
 	return nil
+}
+
+func descStdoutTitleColors(w io.Writer) (string, string) {
+	if !descWriterIsTerminal(w) {
+		return "", ""
+	}
+	return ui.Cyan, ui.Reset
+}
+
+func hasDescAPIKeys(cfg config.Config) bool {
+	return cfg.OpenRouterAPIKey != "" || cfg.GroqAPIKey != "" || cfg.GeminiAPIKey != "" || cfg.OllamaAPIKey != ""
+}
+
+func resolveDescTargets(gitCtx *git.Context, targets []string) []string {
+	if len(targets) > 0 {
+		return append([]string(nil), targets...)
+	}
+
+	resolved := make([]string, 0, 2)
+	if gitCtx.SprintBranch != "" {
+		resolved = append(resolved, gitCtx.SprintBranch)
+	}
+	if gitCtx.BaseBranch != "" && gitCtx.BaseBranch != gitCtx.SprintBranch {
+		resolved = append(resolved, gitCtx.BaseBranch)
+	}
+	if len(resolved) == 0 && gitCtx.BaseBranch != "" {
+		resolved = append(resolved, gitCtx.BaseBranch)
+	}
+	return resolved
+}
+
+func detectDescSprint(gitCtx *git.Context, wi *azure.WorkItem) string {
+	if wi != nil {
+		if sprint := wi.Sprint(); sprint != "" {
+			return sprint
+		}
+	}
+	if strings.HasPrefix(gitCtx.SprintBranch, "sprint/") {
+		return strings.TrimPrefix(gitCtx.SprintBranch, "sprint/")
+	}
+	return ""
+}
+
+func descConfiguredProviderModel(cfg config.Config) (string, string) {
+	providers := strings.Split(cfg.Providers, ",")
+	for _, provider := range providers {
+		provider = strings.TrimSpace(provider)
+		if provider == "" {
+			continue
+		}
+		if !descProviderUsable(cfg, provider) {
+			continue
+		}
+		return provider, descConfiguredModel(cfg, provider)
+	}
+
+	switch {
+	case cfg.OpenRouterAPIKey != "":
+		return "openrouter", descConfiguredModel(cfg, "openrouter")
+	case cfg.GroqAPIKey != "":
+		return "groq", descConfiguredModel(cfg, "groq")
+	case cfg.GeminiAPIKey != "":
+		return "gemini", descConfiguredModel(cfg, "gemini")
+	case cfg.OllamaAPIKey != "":
+		return "ollama", descConfiguredModel(cfg, "ollama")
+	default:
+		return "default", "default"
+	}
+}
+
+func descProviderUsable(cfg config.Config, provider string) bool {
+	switch provider {
+	case "openrouter":
+		return cfg.OpenRouterAPIKey != ""
+	case "groq":
+		return cfg.GroqAPIKey != ""
+	case "gemini":
+		return cfg.GeminiAPIKey != ""
+	case "ollama":
+		return cfg.OllamaAPIKey != ""
+	default:
+		return false
+	}
+}
+
+func descConfiguredModel(cfg config.Config, provider string) string {
+	switch provider {
+	case "openrouter":
+		if cfg.OpenRouterModel != "" {
+			return cfg.OpenRouterModel
+		}
+	case "groq":
+		if cfg.GroqModel != "" {
+			return cfg.GroqModel
+		}
+	case "gemini":
+		if cfg.GeminiModel != "" {
+			return cfg.GeminiModel
+		}
+	case "ollama":
+		if cfg.OllamaModel != "" {
+			return cfg.OllamaModel
+		}
+	}
+	return "default"
+}
+
+func printDescSummary(w io.Writer, gitCtx *git.Context, targets []string, workItemID, provider, model string) {
+	ui.Title(w, fmt.Sprintf("PR — %s", gitCtx.BranchName))
+	ui.Info(w, fmt.Sprintf("Target: %s", strings.Join(targets, ", ")))
+	ui.Info(w, fmt.Sprintf("Provider: %s/%s", provider, model))
+	if workItemID != "" {
+		ui.Info(w, fmt.Sprintf("Work Item: #%s", workItemID))
+		if gitCtx.IsAzureDevOps && gitCtx.AzureOrg != "" && gitCtx.AzureProject != "" {
+			ui.Info(w, "Work Item:")
+			ui.Info(w, fmt.Sprintf("  https://dev.azure.com/%s/%s/_workitems/edit/%s", gitCtx.AzureOrg, gitCtx.AzureProject, workItemID))
+		}
+	}
+	if len(targets) > 0 && gitCtx.IsAzureDevOps && gitCtx.AzureOrg != "" && gitCtx.AzureProject != "" && gitCtx.AzureRepo != "" {
+		ui.Info(w, "Abrir PR:")
+		for _, target := range targets {
+			ui.Info(w, fmt.Sprintf("  %s", target))
+			ui.Info(w, fmt.Sprintf("    %s", descPreviewPRURL(gitCtx, target)))
+		}
+	}
+}
+
+func descPreviewPRURL(gitCtx *git.Context, target string) string {
+	return fmt.Sprintf(
+		"https://dev.azure.com/%s/%s/_git/%s/pullrequestcreate?sourceRef=refs/heads/%s&targetRef=refs/heads/%s",
+		gitCtx.AzureOrg,
+		gitCtx.AzureProject,
+		gitCtx.AzureRepo,
+		gitCtx.SourceBranch,
+		target,
+	)
+}
+
+func publishDescPRs(ctx context.Context, stderr io.Writer, scanner *bufio.Scanner, cfg config.Config, gitCtx *git.Context, targets []string, title, body string) {
+	ui.Title(stderr, "Publicar no Azure DevOps")
+	ui.Info(stderr, "")
+	ui.Info(stderr, "Criar PR(s) no Azure DevOps?")
+	if !scanner.Scan() {
+		ui.Info(stderr, "(cancelado)")
+		ui.TitleDone(stderr)
+		printDescBlockClose(stderr)
+		return
+	}
+	answer := strings.TrimSpace(strings.ToLower(scanner.Text()))
+	if answer != "y" && answer != "yes" && answer != "s" && answer != "sim" {
+		ui.Info(stderr, "(cancelado)")
+		ui.TitleDone(stderr)
+		printDescBlockClose(stderr)
+		return
+	}
+
+	for _, target := range targets {
+		ui.Info(stderr, "")
+		ui.Info(stderr, fmt.Sprintf("→ PR para %s", target))
+		reviewer := cfg.PRReviewerDev
+		if strings.Contains(target, "sprint") && cfg.PRReviewerSprint != "" {
+			reviewer = cfg.PRReviewerSprint
+		}
+		ui.Info(stderr, "Reviewer (email)")
+		if scanner.Scan() {
+			if input := strings.TrimSpace(scanner.Text()); input != "" {
+				reviewer = input
+			}
+		}
+
+		stepPR := ui.StepMessage(stderr, fmt.Sprintf("Criando PR → %s", target))
+		prReq := azure.CreatePRRequest{
+			Title:       title,
+			Description: body,
+			SourceRef:   "refs/heads/" + gitCtx.SourceBranch,
+			TargetRef:   "refs/heads/" + target,
+		}
+		if reviewer != "" {
+			prReq.Reviewers = []azure.PRReviewer{{UniqueName: reviewer}}
+		}
+		pr, err := createDescPR(ctx, cfg.AzurePAT, gitCtx.AzureOrg, gitCtx.AzureProject, gitCtx.AzureRepo, target, prReq)
+		if err != nil {
+			stepPR(false, fmt.Sprintf("Falha ao criar PR → %s", target))
+			ui.Info(stderr, err.Error())
+			continue
+		}
+		stepPR(true, fmt.Sprintf("PR criado → %s", target))
+		ui.Info(stderr, pr.URL)
+	}
+
+	ui.TitleDone(stderr)
+	printDescBlockClose(stderr)
+}
+
+func printDescBlockClose(w io.Writer) {
+	_, _ = fmt.Fprintf(w, "  %s└%s\n", ui.OrangeDim, ui.Reset)
 }
 
 const descSystemPrompt = `Analise o diff e log do git fornecidos e gere um TITULO e uma DESCRIÇÃO de PR em portugues brasileiro.
