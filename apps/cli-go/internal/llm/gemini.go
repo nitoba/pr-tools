@@ -16,7 +16,7 @@ func init() {
 type GeminiProvider struct{}
 
 func (p *GeminiProvider) Name() string         { return "gemini" }
-func (p *GeminiProvider) DefaultModel() string { return "gemini-2.0-flash" }
+func (p *GeminiProvider) DefaultModel() string { return "gemini-3.1-flash-lite-preview" }
 
 func (p *GeminiProvider) NewClient(apiKey, model string) (LLMClient, error) {
 	if apiKey == "" {

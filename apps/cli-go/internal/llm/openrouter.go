@@ -16,7 +16,7 @@ func init() {
 type OpenRouterProvider struct{}
 
 func (p *OpenRouterProvider) Name() string         { return "openrouter" }
-func (p *OpenRouterProvider) DefaultModel() string { return "meta-llama/llama-3.3-70b-instruct:free" }
+func (p *OpenRouterProvider) DefaultModel() string { return "qwen/qwen3.6-plus:free" }
 
 func (p *OpenRouterProvider) NewClient(apiKey, model string) (LLMClient, error) {
 	if apiKey == "" {

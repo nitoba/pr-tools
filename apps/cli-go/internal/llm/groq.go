@@ -16,7 +16,7 @@ func init() {
 type GroqProvider struct{}
 
 func (p *GroqProvider) Name() string         { return "groq" }
-func (p *GroqProvider) DefaultModel() string { return "llama-3.3-70b-versatile" }
+func (p *GroqProvider) DefaultModel() string { return "qwen/qwen3-32b" }
 
 func (p *GroqProvider) NewClient(apiKey, model string) (LLMClient, error) {
 	if apiKey == "" {
