@@ -1,54 +1,63 @@
 ---
 title: Introdução
-description: O que é o pr-tools e para quem é indicado
+description: O que é o prt e para quem é indicado
 ---
 
 # Introdução
 
-**pr-tools** é um conjunto de ferramentas de linha de comando que automatiza tarefas repetitivas no fluxo de Pull Requests e Test Cases do Azure DevOps, gerando conteúdo em português brasileiro via LLM.
+**pr-tools** é uma ferramenta de linha de comando que automatiza tarefas repetitivas no fluxo de Pull Requests e Test Cases do Azure DevOps, gerando conteúdo em português brasileiro via LLM.
+
+O pr-tools é distribuído como um único binário nativo chamado `prt` — sem dependências externas, sem scripts Bash, sem instalação de `jq` ou versão específica de shell.
 
 ## O que resolve
 
-Escrever uma boa descrição de PR ou um card de teste detalhado consome tempo e requer contexto que já existe no `git diff` e no histórico de commits. O pr-tools coleta esse contexto automaticamente e envia para um modelo de linguagem, gerando o conteúdo pronto para revisão.
+Escrever uma boa descrição de PR ou um card de teste detalhado consome tempo e requer contexto que já existe no `git diff` e no histórico de commits. O `prt` coleta esse contexto automaticamente e envia para um modelo de linguagem, gerando o conteúdo pronto para revisão.
 
-## Ferramentas
+## Subcomandos
 
-### `create-pr-description`
+### `prt desc`
 
-Gera a descrição de um Pull Request a partir do `git diff` e `git log` da branch atual. Detecta automaticamente a sprint vigente, extrai o work item do nome da branch e pode criar o PR diretamente no Azure DevOps com reviewers e work items vinculados.
+Gera a descrição de um Pull Request a partir do `git diff` e `git log` da branch atual. Detecta automaticamente a sprint vigente, extrai o work item do nome da branch e exibe a descrição formatada no terminal.
 
 Use quando estiver prestes a abrir um PR e quiser uma descrição bem estruturada sem escrever do zero.
 
-### `create-test-card`
+### `prt test`
 
-Gera um card de teste (Test Case) a partir de um PR e seu work item no Azure DevOps. Detecta automaticamente o PR e o work item da branch atual e pode criar o Test Case filho diretamente no Azure DevOps.
+Gera um card de teste (Test Case) a partir de um PR e seu work item pai no Azure DevOps. Detecta automaticamente o PR e o work item da branch atual e pode criar o Test Case filho diretamente no Azure DevOps.
 
 Use após abrir um PR, quando precisar documentar os cenários de teste para QA.
 
+### `prt init`
+
+Wizard interativo que configura providers de IA, API keys, Azure DevOps PAT e reviewers padrão. Cria o arquivo `~/.config/pr-tools/pr-template.md` com o template de PR.
+
+### `prt doctor`
+
+Verifica se o ambiente está configurado corretamente — providers, API keys, acesso ao Azure DevOps e configuração geral.
+
 ## Providers de IA suportados
 
-| Provider | Plano gratuito disponível |
-|----------|--------------------------|
-| [OpenRouter](https://openrouter.ai) | Sim |
-| [Groq](https://console.groq.com) | Sim |
-| [Google Gemini](https://aistudio.google.com) | Sim |
-| Ollama | Sim (local/cloud) |
+| Provider | Plano gratuito disponível | Modelo padrão |
+|----------|--------------------------|---------------|
+| [OpenRouter](https://openrouter.ai) | Sim | `qwen/qwen3.6-plus:free` |
+| [Groq](https://console.groq.com) | Sim | `qwen/qwen3-32b` |
+| [Google Gemini](https://aistudio.google.com) | Sim | `gemini-3.1-flash-lite-preview` |
+| Ollama | Sim (local/cloud) | `llama3.2` |
 
 O fallback automático tenta o próximo provider configurado se o atual falhar ou estiver sem cota.
 
 ## Requisitos
 
-- macOS, Linux ou Windows (WSL / Git Bash)
-- Bash 4+
-- `git`, `curl`, `jq`
+- macOS, Linux ou Windows
+- Nenhuma dependência adicional — apenas o binário `prt`
 - API key de pelo menos um dos providers acima
-- (Opcional) Azure DevOps PAT para criação automática de PR e Test Case
+- (Opcional) Azure DevOps PAT para leitura de work items e criação de Test Cases
 
 <Callout type="info">
-  Não é necessário ter o Azure DevOps configurado para usar o `create-pr-description` em modo somente geração. O PAT é necessário apenas para criar PR/Test Case automaticamente ou para leitura de contexto do work item.
+  Não é necessário ter o Azure DevOps configurado para usar o `prt desc` em modo somente geração. O PAT é necessário apenas para buscar dados do work item ou criar Test Cases automaticamente.
 </Callout>
 
 ## Próximos passos
 
-- [Instalar o pr-tools](/docs/getting-started/installation)
+- [Instalar o prt](/docs/getting-started/installation)
 - [Quickstart — gere seu primeiro PR](/docs/getting-started/quickstart)

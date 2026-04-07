@@ -1,0 +1,116 @@
+---
+title: prt desc
+description: Gera descrições de PR via LLM a partir do git diff
+---
+
+import { Steps, Step } from 'fumadocs-ui/components/steps'
+
+# prt desc
+
+Gera a descrição de um Pull Request a partir do `git diff` e `git log` da branch atual contra a branch base (sprint ou dev), usando um LLM configurado.
+
+## Uso
+
+```bash
+prt desc [opções]
+```
+
+## Flags
+
+| Flag | Argumento | Descrição |
+|------|-----------|-----------|
+| `--source <branch>` | nome da branch | Branch de origem do PR (padrão: branch atual) |
+| `--target <branch>` | nome da branch | Branch alvo do PR. Pode ser repetida: `--target dev --target sprint` |
+| `--work-item <id>` | ID numérico | ID do work item do Azure DevOps |
+| `--dry-run` | — | Mostra o prompt que seria enviado ao LLM sem chamá-lo |
+| `--raw` | — | Saída sem formatação Markdown |
+| `--set-openrouter-model <modelo>` | nome do modelo | Salva o modelo do OpenRouter no `.env` |
+| `--set-groq-model <modelo>` | nome do modelo | Salva o modelo do Groq no `.env` |
+| `--set-gemini-model <modelo>` | nome do modelo | Salva o modelo do Google Gemini no `.env` |
+| `--set-ollama-model <modelo>` | nome do modelo | Salva o modelo do Ollama no `.env` |
+
+## Exemplos
+
+```bash
+# Gera PR para sprint e dev (padrão)
+prt desc
+
+# Apenas para dev
+prt desc --target dev
+
+# Múltiplos targets explícitos
+prt desc --target dev --target sprint
+
+# PR a partir de outra branch (sem precisar fazer checkout)
+prt desc --source feature/1234-login
+
+# Vincular work item manualmente
+prt desc --work-item 11763
+
+# Ver o prompt sem chamar o LLM
+prt desc --dry-run
+
+# Saída sem formatação Markdown
+prt desc --raw
+
+# Mudar modelo do Groq permanentemente
+prt desc --set-groq-model qwen/qwen3-32b
+
+# Sobrescrever modelo via variável de ambiente (sem salvar)
+OPENROUTER_MODEL="qwen/qwen3-4b:free" prt desc
+```
+
+## Como funciona
+
+<Steps>
+  <Step>
+    **Coleta de contexto** — Executa `git diff` e `git log` da branch atual contra a branch base. O diff é truncado em 8000 linhas; um aviso é exibido se truncado.
+  </Step>
+  <Step>
+    **Detecção de sprint** — Identifica a sprint vigente pelo maior número em `origin/sprint/*`. Os targets padrão são `sprint/NNN` e `dev`.
+  </Step>
+  <Step>
+    **Extração do work item** — Lê o work item do nome da branch (ex: `feat/1234-descricao` → `1234`) ou da flag `--work-item`.
+  </Step>
+  <Step>
+    **Busca no Azure DevOps** — Busca o work item para obter título e número da sprint (requer `AZURE_PAT` configurado).
+  </Step>
+  <Step>
+    **Chamada ao LLM** — Envia o contexto para o provider configurado com fallback automático. Exibe progresso ao vivo: `Tentando provider: gemini (gemini-3.1-flash-lite-preview)...`
+  </Step>
+  <Step>
+    **Extração do resultado** — Remove blocos `<think>` de modelos de raciocínio (ex: qwen3, deepseek-r1).
+  </Step>
+  <Step>
+    **Output** — Imprime a descrição formatada no terminal com cabeçalho mostrando targets e provider utilizado.
+  </Step>
+</Steps>
+
+## Output esperado
+
+```
+ ✦ Gerando PR description...
+  │ ✓  Coletando contexto git
+  │ ⚠  Diff truncado: 31948 linhas -> 8000 linhas
+  │    Contexto git coletado (feat/11494-landing-page-and-blog-with-astro)
+  │ ✓  Buscando work item #11494
+  │    Work item: #11494
+  │    Sprint: 98
+  │    Repositório: ibsbiosistemico/AGROTRACE/agrotrace-v3
+  │    Tentando provider: openrouter (qwen/qwen3.6-plus:free)...
+  │ ⚠  Provider openrouter falhou. Tentando próximo...
+  │    Tentando provider: gemini (gemini-3.1-flash-lite-preview)...
+  │ ✓  Descrição gerada (gemini/gemini-3.1-flash-lite-preview)
+  │ └
+
+ ✦ PR — feat/11494-landing-page-and-blog-with-astro
+  │ Target: sprint/98, dev
+  │ Provider: gemini (gemini-3.1-flash-lite-preview)
+  │ Work Item: #11494
+```
+
+## Configuração relacionada
+
+- [Configuração completa](/docs/getting-started/configuration)
+- [Variáveis de ambiente](/docs/reference/environment-variables)
+- [Escolhendo providers de IA](/docs/guides/ai-providers)

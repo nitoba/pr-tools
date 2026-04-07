@@ -5,16 +5,16 @@ description: Comparação entre OpenRouter, Groq, Google Gemini e Ollama
 
 # Escolhendo providers de IA
 
-O pr-tools suporta quatro providers de IA. Você pode configurar um ou mais — quando há múltiplos, o fallback automático tenta o próximo se o atual falhar ou estiver sem cota.
+O `prt` suporta quatro providers de IA. Você pode configurar um ou mais — quando há múltiplos, o fallback automático tenta o próximo se o atual falhar ou estiver sem cota.
 
 ## Comparação
 
 | Provider | Plano gratuito | Velocidade | Modelo padrão |
 |----------|----------------|------------|---------------|
-| [OpenRouter](https://openrouter.ai) | Sim (modelos `:free`) | Variável por modelo | `meta-llama/llama-3.3-70b-instruct:free` |
-| [Groq](https://console.groq.com) | Sim | Muito rápido | `llama-3.3-70b-versatile` |
+| [OpenRouter](https://openrouter.ai) | Sim (modelos `:free`) | Variável por modelo | `qwen/qwen3.6-plus:free` |
+| [Groq](https://console.groq.com) | Sim | Muito rápido | `qwen/qwen3-32b` |
 | [Google Gemini](https://aistudio.google.com) | Sim | Rápido | `gemini-3.1-flash-lite-preview` |
-| Ollama | Sim (local/cloud) | Depende do hardware | `qwen3.5:cloud` |
+| Ollama | Sim (local/cloud) | Depende do hardware | `llama3.2` |
 
 ## OpenRouter
 
@@ -24,11 +24,11 @@ Agrega centenas de modelos de diferentes provedores em uma única API. Ideal par
 # Obter API key: https://openrouter.ai
 OPENROUTER_API_KEY="sk-or-..."
 
-# Mudar modelo
-create-pr-description --set-openrouter-model qwen/qwen3-4b:free
+# Mudar modelo permanentemente
+prt desc --set-openrouter-model qwen/qwen3-4b:free
 ```
 
-Modelos gratuitos populares: `meta-llama/llama-3.3-70b-instruct:free`, `qwen/qwen3-4b:free`, `qwen/qwen3-32b:free`
+Modelos gratuitos populares: `qwen/qwen3.6-plus:free`, `qwen/qwen3-4b:free`, `qwen/qwen3-32b:free`
 
 ## Groq
 
@@ -38,11 +38,11 @@ Inferência de alta velocidade. O mais rápido para modelos de tamanho médio. P
 # Obter API key: https://console.groq.com
 GROQ_API_KEY="gsk_..."
 
-# Mudar modelo
-create-pr-description --set-groq-model qwen/qwen3-32b
+# Mudar modelo permanentemente
+prt desc --set-groq-model qwen/qwen3-32b
 ```
 
-Modelos populares: `llama-3.3-70b-versatile`, `qwen/qwen3-32b`, `llama3-8b-8192`
+Modelos populares: `qwen/qwen3-32b`, `llama-3.3-70b-versatile`, `llama3-8b-8192`
 
 ## Google Gemini
 
@@ -52,8 +52,8 @@ API do Google. Plano gratuito generoso (requisições por dia). Boa qualidade pa
 # Obter API key: https://aistudio.google.com
 GEMINI_API_KEY="..."
 
-# Mudar modelo
-create-pr-description --set-gemini-model gemini-2.0-flash
+# Mudar modelo permanentemente
+prt desc --set-gemini-model gemini-2.0-flash
 ```
 
 Modelos populares: `gemini-3.1-flash-lite-preview`, `gemini-2.0-flash`, `gemini-1.5-pro`
@@ -66,8 +66,8 @@ Executa modelos localmente ou via Ollama Cloud. Útil para uso offline ou privac
 # Obter API key para Ollama Cloud: https://ollama.com
 OLLAMA_API_KEY="oa-..."
 
-# Mudar modelo
-create-pr-description --set-ollama-model llama3.2:latest
+# Mudar modelo permanentemente
+prt desc --set-ollama-model llama3.2:latest
 ```
 
 <Callout type="info">
@@ -76,14 +76,21 @@ create-pr-description --set-ollama-model llama3.2:latest
 
 ## Fallback automático
 
-Quando há múltiplos providers em `PR_PROVIDERS`, o script tenta na ordem definida:
+Quando há múltiplos providers em `PR_PROVIDERS`, o `prt` tenta na ordem definida:
 
 ```bash
 # Tenta openrouter primeiro, depois groq, depois gemini
 PR_PROVIDERS="openrouter,groq,gemini"
 ```
 
-Se o provider atual falhar (erro de API, sem cota, timeout), o próximo é tentado automaticamente. O provider e modelo usados são exibidos no output.
+Se o provider atual falhar (erro de API, sem cota, timeout), o próximo é tentado automaticamente. O progresso é exibido ao vivo no terminal:
+
+```
+Tentando provider: openrouter (qwen/qwen3.6-plus:free)...
+⚠  Provider openrouter falhou. Tentando próximo...
+Tentando provider: gemini (gemini-3.1-flash-lite-preview)...
+✓  Descrição gerada (gemini/gemini-3.1-flash-lite-preview)
+```
 
 ## Configurar múltiplos providers
 

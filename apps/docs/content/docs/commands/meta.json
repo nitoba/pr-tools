@@ -1,4 +1,4 @@
 {
   "title": "Comandos",
-  "pages": ["create-pr-description", "create-test-card"]
+  "pages": ["desc", "test", "init"]
 }

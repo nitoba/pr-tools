@@ -7,21 +7,19 @@ description: Como configurar API keys, providers e defaults
 
 ## Wizard interativo
 
-Na primeira execução com um terminal disponível, o wizard é iniciado automaticamente. Para rodá-lo manualmente a qualquer momento:
+A forma mais simples de configurar o `prt` é rodar o wizard interativo:
 
 ```bash
-create-pr-description --init
-# ou
-create-test-card --init
+prt init
 ```
 
 O wizard guia a configuração de:
 
-- Providers de IA (OpenRouter, Groq, Gemini, Ollama)
+- Providers de IA (OpenRouter, Groq, Gemini, Ollama Cloud)
 - API keys com validação automática
 - Azure DevOps PAT
 - Reviewers padrão para criação automática de PR
-- Defaults de AreaPath e responsável para Test Cases
+- Cria `~/.config/pr-tools/pr-template.md` com o template de PR
 
 ## Arquivo de configuração
 
@@ -40,11 +38,11 @@ OLLAMA_API_KEY="oa-..."
 # Azure DevOps
 AZURE_PAT="your-pat-token"
 
-# Modelos (opcional — usa o modelo padrão gratuito se não definir)
-# OPENROUTER_MODEL="meta-llama/llama-3.3-70b-instruct:free"
-# GROQ_MODEL="llama-3.3-70b-versatile"
+# Modelos (opcional — usa o modelo padrão se não definir)
+# OPENROUTER_MODEL="qwen/qwen3.6-plus:free"
+# GROQ_MODEL="qwen/qwen3-32b"
 # GEMINI_MODEL="gemini-3.1-flash-lite-preview"
-# OLLAMA_MODEL="qwen3.5:cloud"
+# OLLAMA_MODEL="llama3.2"
 
 # Reviewers padrão para criação automática de PRs
 # PR_REVIEWER_DEV="email@exemplo.com"
@@ -54,6 +52,10 @@ AZURE_PAT="your-pat-token"
 # TEST_CARD_AREA_PATH="AGROTRACE\\Devops"
 # TEST_CARD_ASSIGNED_TO="nome@exemplo.com"
 ```
+
+<Callout type="info">
+  As API keys são salvas **fora** do bloco gerenciado pelo `prt init`, portanto nunca serão sobrescritas ao reexecutar o wizard.
+</Callout>
 
 Para editar manualmente:
 
@@ -66,39 +68,35 @@ vi ~/.config/pr-tools/.env
 Quando a mesma variável é definida em múltiplos lugares, a ordem de prioridade é:
 
 1. **Flags CLI** — `--work-item 1234`, `--target dev`
-2. **Variáveis de ambiente** — `GROQ_MODEL=qwen/qwen3-32b create-pr-description`
+2. **Variáveis de ambiente** — `GROQ_MODEL=qwen/qwen3-32b prt desc`
 3. **Arquivo `.env`** — `~/.config/pr-tools/.env`
-4. **Defaults internos** — valores padrão hardcoded nos scripts
+4. **Defaults internos** — valores padrão embutidos no binário
 
 Exemplo: sobrescrever o modelo via variável de ambiente sem alterar o `.env`:
 
 ```bash
-OPENROUTER_MODEL="qwen/qwen3-4b:free" create-pr-description
+OPENROUTER_MODEL="qwen/qwen3-4b:free" prt desc
 ```
 
 ## Salvar modelo via flag
 
-Para salvar um modelo permanentemente no `.env` sem editar o arquivo manualmente:
+Para salvar um modelo permanentemente no `.env` sem editar o arquivo manualmente, use as flags de `prt desc`:
 
 ```bash
-create-pr-description --set-openrouter-model qwen/qwen3-4b:free
-create-pr-description --set-groq-model qwen/qwen3-32b
-create-pr-description --set-gemini-model gemini-2.0-flash
-create-pr-description --set-ollama-model llama3.2:latest
+prt desc --set-openrouter-model qwen/qwen3-4b:free
+prt desc --set-groq-model qwen/qwen3-32b
+prt desc --set-gemini-model gemini-2.0-flash
+prt desc --set-ollama-model llama3.2:latest
 ```
 
 ## Reviewers padrão
 
-Os reviewers são usados na criação automática de PRs no Azure DevOps. Configure-os no wizard ou diretamente no `.env`:
+Os reviewers são usados na criação automática de PRs no Azure DevOps. Configure-os no wizard (`prt init`) ou diretamente no `.env`:
 
 ```bash
 PR_REVIEWER_DEV="dev-reviewer@empresa.com"
 PR_REVIEWER_SPRINT="sprint-reviewer@empresa.com"
 ```
-
-<Callout type="info">
-  Os reviewers são identificados pelo email. O script resolve automaticamente o ID do usuário no Azure DevOps e cacheia o resultado em `~/.config/pr-tools/.cache`.
-</Callout>
 
 ## Outros arquivos
 
@@ -106,7 +104,6 @@ PR_REVIEWER_SPRINT="sprint-reviewer@empresa.com"
 |---------|-----------|
 | `~/.config/pr-tools/.env` | API keys e configuração |
 | `~/.config/pr-tools/pr-template.md` | Template da descrição de PR (editável) |
-| `~/.config/pr-tools/.cache` | Cache de repositoryId e IDs de reviewers |
 
 ## Próximos passos
 
