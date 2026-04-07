@@ -203,7 +203,7 @@ func runTest(ctx context.Context, cfg *config.Config, flags testFlagSet, cmd *co
 		OllamaModel:      cfg.OllamaModel,
 	}
 	fallback := llm.NewFallbackClient(llmCfg)
-	resp, _, err := fallback.Chat(ctx, testSystemPrompt, userPrompt)
+	resp, _, _, err := fallback.Chat(ctx, testSystemPrompt, userPrompt)
 	if err != nil {
 		stepLLM(false)
 		return fmt.Errorf("LLM call failed: %w", err)

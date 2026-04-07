@@ -51,7 +51,9 @@ type Config struct {
 
 // FallbackClient tries providers in order, returning the first success.
 type FallbackClient struct {
-	clients []LLMClient
+	clients  []LLMClient
+	OnTrying func(name, model string)   // called before each attempt
+	OnFailed func(name string, err error) // called after each failure
 }
 
 func NewFallbackClient(cfg Config) *FallbackClient {
@@ -99,10 +101,10 @@ func NewFallbackClient(cfg Config) *FallbackClient {
 }
 
 // Chat tries each provider in order, returning the first success.
-// Returns (response, providerName, error).
-func (fc *FallbackClient) Chat(ctx context.Context, system, user string) (string, string, error) {
+// Returns (response, providerName, modelName, error).
+func (fc *FallbackClient) Chat(ctx context.Context, system, user string) (string, string, string, error) {
 	if len(fc.clients) == 0 {
-		return "", "", fmt.Errorf("nenhum provedor configurado — execute 'prt init' para configurar suas API keys")
+		return "", "", "", fmt.Errorf("nenhum provedor configurado — execute 'prt init' para configurar suas API keys")
 	}
 
 	messages := []Message{
@@ -112,11 +114,17 @@ func (fc *FallbackClient) Chat(ctx context.Context, system, user string) (string
 
 	var errs []string
 	for _, client := range fc.clients {
+		if fc.OnTrying != nil {
+			fc.OnTrying(client.Name(), client.Model())
+		}
 		resp, err := client.Chat(ctx, messages)
 		if err == nil {
-			return resp, client.Name(), nil
+			return resp, client.Name(), client.Model(), nil
+		}
+		if fc.OnFailed != nil {
+			fc.OnFailed(client.Name(), err)
 		}
 		errs = append(errs, fmt.Sprintf("%s: %v", client.Name(), err))
 	}
-	return "", "", fmt.Errorf("todos os provedores falharam:\n  %s", strings.Join(errs, "\n  "))
+	return "", "", "", fmt.Errorf("todos os provedores falharam:\n  %s", strings.Join(errs, "\n  "))
 }

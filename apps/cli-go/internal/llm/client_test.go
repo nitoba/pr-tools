@@ -39,10 +39,11 @@ func TestFallbackClient_UsesFirstProvider(t *testing.T) {
 
 	fc := newTestFallbackClient(client)
 
-	resp, provider, err := fc.Chat(context.Background(), "system prompt", "user prompt")
+	resp, provider, model, err := fc.Chat(context.Background(), "system prompt", "user prompt")
 	require.NoError(t, err)
 	assert.Equal(t, "hello from mock1", resp)
 	assert.Equal(t, "mock1", provider)
+	assert.Equal(t, "mock-model", model)
 }
 
 func TestFallbackClient_FallsBackOnError(t *testing.T) {
@@ -61,10 +62,11 @@ func TestFallbackClient_FallsBackOnError(t *testing.T) {
 
 	fc := newTestFallbackClient(failing, succeeding)
 
-	resp, provider, err := fc.Chat(context.Background(), "system prompt", "user prompt")
+	resp, provider, model, err := fc.Chat(context.Background(), "system prompt", "user prompt")
 	require.NoError(t, err)
 	assert.Equal(t, "hello from mock-success", resp)
 	assert.Equal(t, "mock-success", provider)
+	assert.Equal(t, "mock-model", model)
 }
 
 func TestFallbackClient_AllFail(t *testing.T) {
@@ -79,9 +81,10 @@ func TestFallbackClient_AllFail(t *testing.T) {
 
 	fc := newTestFallbackClient(failing1, failing2)
 
-	resp, provider, err := fc.Chat(context.Background(), "system prompt", "user prompt")
+	resp, provider, model, err := fc.Chat(context.Background(), "system prompt", "user prompt")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "todos os provedores falharam")
 	assert.Empty(t, resp)
 	assert.Empty(t, provider)
+	assert.Empty(t, model)
 }

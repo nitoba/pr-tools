@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/nitoba/pr-tools/apps/cli-go/internal/azure"
@@ -101,12 +102,59 @@ func runDesc(ctx context.Context, cfg *config.Config, flags descFlagSet, cmd *co
 		stepGit(false)
 		return fmt.Errorf("git context: %w", err)
 	}
+	// Override work item if specified via flag
+	if flags.workItem != "" {
+		gitCtx.WorkItemID = flags.workItem
+	}
 	stepGit(true)
+
+	// Diff truncation warning
+	if gitCtx.DiffTruncated {
+		ui.Warn(stderr, fmt.Sprintf("Diff truncado: %d linhas -> 8000 linhas", gitCtx.DiffOriginalLines))
+	}
+
+	ui.Info(stderr, fmt.Sprintf("Contexto git coletado (%s)", gitCtx.BranchName))
 
 	// Resolve target branches
 	targets := flags.targets
 	if len(targets) == 0 {
-		targets = []string{gitCtx.BaseBranch}
+		// Default: sprint branch (if any) + dev
+		if gitCtx.SprintBranch != "" {
+			targets = append(targets, gitCtx.SprintBranch)
+		}
+		if gitCtx.BaseBranch != gitCtx.SprintBranch && gitCtx.BaseBranch != "" {
+			targets = append(targets, gitCtx.BaseBranch)
+		}
+		if len(targets) == 0 {
+			targets = []string{gitCtx.BaseBranch}
+		}
+	}
+
+	// Fetch work item from Azure DevOps (if available)
+	var wi *azure.WorkItem
+	if gitCtx.WorkItemID != "" && cfg.AzurePAT != "" && gitCtx.AzureOrg != "" && gitCtx.AzureProject != "" {
+		stepWI := ui.Step(stderr, fmt.Sprintf("Buscando work item #%s", gitCtx.WorkItemID))
+		wiID, parseErr := strconv.Atoi(gitCtx.WorkItemID)
+		if parseErr == nil {
+			azClient := azure.NewClient(cfg.AzurePAT, gitCtx.AzureOrg)
+			wi, _ = azClient.GetWorkItem(ctx, gitCtx.AzureProject, wiID)
+		}
+		if wi != nil {
+			stepWI(true)
+			ui.Info(stderr, fmt.Sprintf("Work item: #%s", gitCtx.WorkItemID))
+			if sprint := wi.Sprint(); sprint != "" {
+				ui.Info(stderr, fmt.Sprintf("Sprint: %s", sprint))
+			}
+		} else {
+			stepWI(false)
+		}
+	} else if gitCtx.WorkItemID != "" {
+		ui.Info(stderr, fmt.Sprintf("Work item: #%s", gitCtx.WorkItemID))
+	}
+
+	// Show repository info
+	if gitCtx.IsAzureDevOps && gitCtx.AzureOrg != "" {
+		ui.Info(stderr, fmt.Sprintf("Repositório: %s/%s/%s", gitCtx.AzureOrg, gitCtx.AzureProject, gitCtx.AzureRepo))
 	}
 
 	// Load system prompt
@@ -123,8 +171,7 @@ func runDesc(ctx context.Context, cfg *config.Config, flags descFlagSet, cmd *co
 		return nil
 	}
 
-	// Call LLM with fallback
-	stepLLM := ui.Step(stderr, "Chamando LLM")
+	// Call LLM with live progress per provider
 	llmCfg := llm.Config{
 		Providers:        cfg.Providers,
 		OpenRouterAPIKey: cfg.OpenRouterAPIKey,
@@ -137,13 +184,19 @@ func runDesc(ctx context.Context, cfg *config.Config, flags descFlagSet, cmd *co
 		OllamaModel:      cfg.OllamaModel,
 	}
 	fallback := llm.NewFallbackClient(llmCfg)
-	resp, provider, err := fallback.Chat(ctx, systemPrompt, userPrompt)
+	fallback.OnTrying = func(name, model string) {
+		ui.Info(stderr, fmt.Sprintf("Tentando provider: %s (%s)...", name, model))
+	}
+	fallback.OnFailed = func(name string, err error) {
+		ui.Warn(stderr, fmt.Sprintf("Provider %s falhou. Tentando próximo...", name))
+	}
+
+	resp, provider, model, err := fallback.Chat(ctx, systemPrompt, userPrompt)
 	if err != nil {
-		stepLLM(false)
+		ui.Error(stderr, "Todos os providers falharam")
 		return fmt.Errorf("LLM call failed: %w", err)
 	}
-	stepLLM(true)
-
+	ui.Success(stderr, fmt.Sprintf("Descrição gerada (%s/%s)", provider, model))
 	ui.TitleDone(stderr)
 
 	// Strip <think> blocks
@@ -154,11 +207,17 @@ func runDesc(ctx context.Context, cfg *config.Config, flags descFlagSet, cmd *co
 
 	// Print summary header to stderr
 	_, _ = fmt.Fprintf(stderr, "\n %s%s✦%s %sPR — %s%s\n", ui.Orange, ui.Bold, ui.Reset, ui.OrangeDim, gitCtx.BranchName, ui.Reset)
-	_, _ = fmt.Fprintf(stderr, "  %s│%s Provider: %s\n", ui.OrangeDim, ui.Reset, provider)
-	if workItemID := gitCtx.WorkItemID; workItemID != "" {
-		_, _ = fmt.Fprintf(stderr, "  %s│%s Work Item: #%s\n", ui.OrangeDim, ui.Reset, workItemID)
+	_, _ = fmt.Fprintf(stderr, "  %s│%s Target: %s\n", ui.OrangeDim, ui.Reset, strings.Join(targets, ", "))
+	_, _ = fmt.Fprintf(stderr, "  %s│%s Provider: %s (%s)\n", ui.OrangeDim, ui.Reset, provider, model)
+	if gitCtx.WorkItemID != "" {
+		_, _ = fmt.Fprintf(stderr, "  %s│%s Work Item: #%s\n", ui.OrangeDim, ui.Reset, gitCtx.WorkItemID)
 	}
 	_, _ = fmt.Fprintf(stderr, "  %s└%s\n", ui.OrangeDim, ui.Reset)
+
+	if flags.raw {
+		_, _ = fmt.Fprintln(stdout, body)
+		return nil
+	}
 
 	// Print result to stdout
 	_, _ = fmt.Fprintf(stdout, "\nTitulo: %s%s%s\n\n", ui.Cyan, title, ui.Reset)
@@ -180,7 +239,6 @@ func runDesc(ctx context.Context, cfg *config.Config, flags descFlagSet, cmd *co
 			if answer == "y" || answer == "yes" {
 				azClient := azure.NewClient(cfg.AzurePAT, gitCtx.AzureOrg)
 
-				// Pick default reviewer based on target
 				defaultReviewer := cfg.PRReviewerDev
 				_, _ = fmt.Fprintf(stderr, "  Reviewer (email) [%s]: ", defaultReviewer)
 				if scanner.Scan() {
