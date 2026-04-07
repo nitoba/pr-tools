@@ -10,6 +10,8 @@ import (
 	"golang.org/x/term"
 )
 
+const animationInterval = 170 * time.Millisecond
+
 // Color codes (ANSI)
 var (
 	Bold        = "\033[1m"
@@ -265,7 +267,7 @@ func stepWithResult(w io.Writer, msg string) func(ok bool, finalMsg string) {
 
 	if animate {
 		go func() {
-			ticker := time.NewTicker(110 * time.Millisecond)
+			ticker := time.NewTicker(animationInterval)
 			defer ticker.Stop()
 
 			frame := 1
