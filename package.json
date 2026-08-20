@@ -1,0 +1,39 @@
+{
+  "name": "pr-tools-3",
+  "version": "3.0.0",
+  "module": "src/index.ts",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "pr-tools": "src/bin.ts"
+  },
+  "scripts": {
+    "dev": "bun run src/index.ts",
+    "start": "bun run src/index.ts",
+    "build": "PATH=/usr/bin:$PATH scriptc build src/bin.ts --dynamic --no-keep-c -o dist/pr-tools",
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint src/**/*.ts",
+    "format": "oxfmt src/**/*.ts",
+    "test": "bun test --parallel"
+  },
+  "devDependencies": {
+    "@oxlint/plugins": "1.78.0",
+    "@types/bun": "latest",
+    "lefthook": "^2.1.10",
+    "oxfmt": "^0.63.0",
+    "oxlint": "^1.79.0",
+    "oxlint-tsgolint": "^7.0.2001",
+    "scriptc": "0.0.33"
+  },
+  "peerDependencies": {
+    "typescript": "7.0.2"
+  },
+  "dependencies": {
+    "@ai-sdk/openai-compatible": "^3.0.32",
+    "@clack/prompts": "^1.7.0",
+    "ai": "^7.0.70",
+    "ai-sdk-provider-codex-cli": "^2.1.2",
+    "ai-sdk-provider-opencode-sdk": "^4.1.0",
+    "zod": "^4.1.8"
+  }
+}
