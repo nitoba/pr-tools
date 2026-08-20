@@ -71,7 +71,7 @@ export function parseArgs(argv: string[]): CliOptions {
     process.exit(0)
   }
   if (values.version) {
-    console.log(`pr-tools v${VERSION}`)
+    console.log(`prt v${VERSION}`)
     process.exit(0)
   }
 
@@ -115,14 +115,14 @@ export function parseArgs(argv: string[]): CliOptions {
 }
 
 function printHelp(): void {
-  console.log(`pr-tools v${VERSION}
+  console.log(`prt v${VERSION}
 
 Gera uma descrição de PR a partir do contexto Git.
 
 Uso:
-  pr-tools desc [opções]
-  pr-tools test [opções]
-  pr-tools init
+  prt desc [opções]
+  prt test [opções]
+  prt init
 
 Opções:
   --source <branch>       Branch de origem (padrão: branch atual)
@@ -191,7 +191,7 @@ export async function runDesc(options: CliOptions): Promise<void> {
   if (options.create && !config.azurePat.trim())
     throw new Error('--create requer AZURE_PAT ou AZURE_DEVOPS_PAT configurado.')
 
-  intro(`pr-tools · PR ${context.branch}`)
+  intro(`prt · PR ${context.branch}`)
   const progress = spinner()
   progress.start('Gerando descrição via IA')
   let descriptionGenerated = false

@@ -1,4 +1,4 @@
-# pr-tools
+# pr-tools (`prt`)
 
 CLI para gerar descrições de pull request e Test Cases a partir do contexto Git. Ela usa o AI SDK e pode chamar o Codex local, o OpenCode local ou qualquer endpoint compatível com a API da OpenAI.
 
@@ -7,6 +7,8 @@ O fluxo é guiado: a descrição/card é exibida antes da publicação e a cria�
 ## Instalação
 
 As releases publicam binários para Linux x64/arm64, macOS arm64 e Windows x64. O instalador baixa automaticamente a versão mais recente e adiciona o diretório do executável ao PATH do usuário.
+
+Depois da instalação, o comando disponível é `prt`.
 
 ### Linux e macOS
 
@@ -41,7 +43,7 @@ Abra um novo PowerShell para que o PATH atualizado seja carregado.
 Depois de instalar, execute:
 
 ```bash
-pr-tools init
+prt init
 ```
 
 O wizard pergunta:
@@ -69,13 +71,13 @@ Execute os comandos dentro do clone do projeto que possui o remote Azure DevOps:
 
 ```bash
 # Conferir o prompt sem chamar o provider
-pr-tools desc --dry-run
+prt desc --dry-run
 
 # Gerar a descrição para um target e Work Item específicos
-pr-tools desc --target dev --work-item 11763
+prt desc --target dev --work-item 11763
 
 # Gerar para mais de um target e iniciar o fluxo de criação
-pr-tools desc --target dev --target sprint --create
+prt desc --target dev --target sprint --create
 ```
 
 O comando mostra título, descrição, targets e Work Item, copia o body para o clipboard quando possível e pede confirmação antes de criar cada PR. Os reviewers podem ser ajustados no próprio fluxo; os emails definidos no `init` são usados como sugestão.
@@ -86,10 +88,10 @@ Opções úteis: `--source <branch>`, `--target <branch>` (repetível), `--provi
 
 ```bash
 # Gerar o card e apenas revisar o Markdown
-pr-tools test --work-item 11763 --no-create
+prt test --work-item 11763 --no-create
 
 # Gerar o card e abrir a confirmação de criação
-pr-tools test --work-item 11763 --create
+prt test --work-item 11763 --create
 ```
 
 O fluxo busca o Work Item pai, pode complementar o contexto com `--pr <id>`, mostra o card gerado e solicita confirmação antes de criar o Test Case. AreaPath, responsável, IterationPath e campos customizados também podem ser ajustados durante o fluxo.
@@ -98,7 +100,7 @@ O fluxo busca o Work Item pai, pode complementar o contexto com `--pr <id>`, mos
 
 O remote Git precisa apontar para Azure DevOps. O PAT deve ter, no mínimo, permissão de leitura/escrita de código para PRs e de leitura/escrita de Work Items para Test Cases. O `init` salva o token em `.env`; também é possível usar `AZURE_PAT` ou `AZURE_DEVOPS_PAT` no ambiente.
 
-Use `pr-tools --help` para consultar todos os argumentos e `pr-tools --version` para conferir a versão instalada.
+Use `prt --help` para consultar todos os argumentos e `prt --version` para conferir a versão instalada.
 
 ## Desenvolvimento
 

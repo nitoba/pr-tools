@@ -17,13 +17,13 @@ if [[ -n "${PR_TOOLS_BINARY:-}" ]]; then
 else
   case "$platform:$architecture" in
     Linux:x86_64|Linux:amd64)
-      asset_name='pr-tools-linux-x64'
+      asset_name='prt-linux-x64'
       ;;
     Linux:aarch64|Linux:arm64)
-      asset_name='pr-tools-linux-arm64'
+      asset_name='prt-linux-arm64'
       ;;
     Darwin:arm64)
-      asset_name='pr-tools-macos-arm64'
+      asset_name='prt-macos-arm64'
       ;;
     *)
       printf 'Plataforma não suportada pelo instalador Bash: %s/%s.\n' "$platform" "$architecture" >&2
@@ -33,7 +33,7 @@ else
 fi
 
 readonly install_dir="${PR_TOOLS_INSTALL_DIR:-${XDG_BIN_HOME:-$HOME/.local/bin}}"
-readonly target_path="$install_dir/pr-tools"
+readonly target_path="$install_dir/prt"
 temporary_dir=""
 
 if [[ -z "${PR_TOOLS_BINARY:-}" ]]; then
@@ -78,7 +78,7 @@ append_path_entry() {
   mkdir -p "$(dirname "$file")"
   if [[ ! -f "$file" ]] || ! grep -Fqx "$path_line" "$file"; then
     {
-      printf '\n# Added by pr-tools installer\n'
+      printf '\n# Added by prt installer\n'
       printf '%s\n' "$path_line"
     } >> "$file"
     printf 'PATH atualizado em %s\n' "$file"
@@ -97,7 +97,7 @@ append_fish_path_entry() {
   mkdir -p "$(dirname "$file")"
   if [[ ! -f "$file" ]] || ! grep -Fqx "$path_line" "$file"; then
     {
-      printf '\n# Added by pr-tools installer\n'
+      printf '\n# Added by prt installer\n'
       printf '%s\n' "$path_line"
     } >> "$file"
     printf 'PATH atualizado em %s\n' "$file"
@@ -114,8 +114,8 @@ if [[ ":${PATH:-}:" != *:"$install_dir":* ]]; then
   esac
 fi
 
-printf 'pr-tools instalado em %s\n' "$target_path"
+printf 'prt instalado em %s\n' "$target_path"
 case ":${PATH:-}:" in
   *:"$install_dir":*) ;;
-  *) printf 'Abra um novo terminal para usar `pr-tools` diretamente.\n' ;;
+  *) printf 'Abra um novo terminal para usar `prt` diretamente.\n' ;;
 esac

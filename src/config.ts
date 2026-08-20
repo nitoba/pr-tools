@@ -226,7 +226,7 @@ export async function initConfig(): Promise<void> {
   let testProgram = existing.testProgram ?? existingDotEnv.TEST_CARD_PROGRAM ?? 'Agrotrace'
 
   if (interactive) {
-    intro('pr-tools · configuração')
+    intro('prt · configuração')
 
     const azurePatValue = await password({
       message: 'Azure DevOps PAT (Enter para manter o atual)'
@@ -358,8 +358,8 @@ export async function initConfig(): Promise<void> {
   if (!existsSync(TEMPLATE_FILE))
     writeFileSync(TEMPLATE_FILE, `${DEFAULT_TEMPLATE}\n`, { mode: 0o600 })
   if (interactive) {
-    note(`Configuração salva em ${CONFIG_FILE}\nTemplate salvo em ${TEMPLATE_FILE}`, 'pr-tools')
-    outro('Pronto. Execute `pr-tools desc --dry-run`.')
+    note(`Configuração salva em ${CONFIG_FILE}\nTemplate salvo em ${TEMPLATE_FILE}`, 'prt')
+    outro('Pronto. Execute `prt desc --dry-run`.')
   } else {
     console.log(`Configuração salva em ${CONFIG_FILE}`)
   }

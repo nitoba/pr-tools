@@ -56,19 +56,19 @@ function build(output: string, target?: string): void {
 
 function buildNative(): void {
   if (process.platform === 'linux' && process.arch === 'x64') {
-    build('pr-tools-linux-x64')
+    build('prt-linux-x64')
     return
   }
   if (process.platform === 'linux' && process.arch === 'arm64') {
-    build('pr-tools-linux-arm64')
+    build('prt-linux-arm64')
     return
   }
   if (process.platform === 'darwin' && process.arch === 'arm64') {
-    build('pr-tools-macos-arm64')
+    build('prt-macos-arm64')
     return
   }
   if (process.platform === 'win32' && process.arch === 'x64') {
-    build('pr-tools-windows-x64.exe', 'x86_64-windows-gnu')
+    build('prt-windows-x64.exe', 'x86_64-windows-gnu')
     return
   }
   throw new Error(`Não há um alvo nativo configurado para ${process.platform}/${process.arch}.`)
@@ -83,18 +83,18 @@ function main(): void {
       buildNative()
       return
     case 'linux-x64':
-      build('pr-tools-linux-x64', 'x86_64-linux-gnu.2.36')
+      build('prt-linux-x64', 'x86_64-linux-gnu.2.36')
       return
     case 'linux-arm64':
-      build('pr-tools-linux-arm64', 'aarch64-linux-gnu.2.36')
+      build('prt-linux-arm64', 'aarch64-linux-gnu.2.36')
       return
     case 'windows-x64':
-      build('pr-tools-windows-x64.exe', 'x86_64-windows-gnu')
+      build('prt-windows-x64.exe', 'x86_64-windows-gnu')
       return
     case 'macos-arm64':
       if (process.platform !== 'darwin' || process.arch !== 'arm64')
         throw new Error('O alvo macos-arm64 requer um Mac Apple Silicon.')
-      build('pr-tools-macos-arm64')
+      build('prt-macos-arm64')
       return
     default:
       usage()

@@ -46,19 +46,19 @@ jobs:
         include:
           - os: ubuntu-24.04
             target: linux-x64
-            asset: pr-tools-linux-x64
+            asset: prt-linux-x64
             needs_zig: true
           - os: ubuntu-24.04
             target: linux-arm64
-            asset: pr-tools-linux-arm64
+            asset: prt-linux-arm64
             needs_zig: true
           - os: macos-14
             target: macos-arm64
-            asset: pr-tools-macos-arm64
+            asset: prt-macos-arm64
             needs_zig: false
           - os: windows-latest
             target: windows-x64
-            asset: pr-tools-windows-x64.exe
+            asset: prt-windows-x64.exe
             needs_zig: true
     runs-on: ${{ matrix.os }}
     steps:

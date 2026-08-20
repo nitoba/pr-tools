@@ -5,7 +5,7 @@
   "type": "module",
   "private": true,
   "bin": {
-    "pr-tools": "src/bin.ts"
+    "prt": "src/bin.ts"
   },
   "scripts": {
     "dev": "bun run src/index.ts",

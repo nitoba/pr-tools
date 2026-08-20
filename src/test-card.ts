@@ -170,7 +170,7 @@ export async function runTestCard(options: CliOptions): Promise<void> {
 
   const client = new AzureDevOpsClient({ pat: config.azurePat, organization: git.azureOrg })
   const progress = spinner()
-  intro(`pr-tools · Test Case ${git.branch}`)
+  intro(`prt · Test Case ${git.branch}`)
   progress.start('Coletando contexto Azure DevOps')
 
   let resolved: TestCardContext
