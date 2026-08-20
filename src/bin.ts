@@ -1,3 +1,5 @@
 import { main } from './cli'
 
-void main()
+void main().then((code) => {
+  process.exit(code)
+})

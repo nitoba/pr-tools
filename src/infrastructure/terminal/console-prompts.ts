@@ -1,0 +1,160 @@
+import { spawnSync } from 'node:child_process'
+import { createInterface, type Interface } from 'node:readline'
+import { color } from './terminal-style'
+import type { PromptPort } from './terminal-ports'
+
+type PromptValidator = (value: string | undefined) => string | undefined
+
+type TextOptions = {
+  message: string
+  initialValue?: string
+  defaultValue?: string
+  placeholder?: string
+  validate?: PromptValidator
+}
+
+type PasswordOptions = {
+  message: string
+  validate?: PromptValidator
+}
+
+type SelectOption<Value extends string> = {
+  value: Value
+  label: string
+  hint?: string
+  disabled?: boolean
+}
+
+type SelectOptions<Value extends string> = {
+  message: string
+  options: SelectOption<Value>[]
+  initialValue?: Value
+}
+
+type ConfirmOptions = {
+  message: string
+  initialValue?: boolean
+}
+
+export class ConsolePrompts implements PromptPort {
+  private terminalEchoDisabled = false
+  private activeReadline?: Interface
+
+  constructor() {
+    process.on('SIGINT', () => {
+      if (this.terminalEchoDisabled) this.setTerminalEcho(true)
+      if (this.activeReadline) this.activeReadline.close()
+      process.exit(130)
+    })
+  }
+
+  text(options: TextOptions): Promise<string | undefined> {
+    return this.askLine(options.message, options.initialValue ?? options.defaultValue, options)
+  }
+
+  password(options: PasswordOptions): Promise<string | undefined> {
+    if (process.platform === 'win32') return this.askWindowsPassword(options)
+    this.setTerminalEcho(false)
+    return this.askLine(options.message, undefined, options).finally(() => this.setTerminalEcho(true))
+  }
+
+  async select(options: SelectOptions<string>): Promise<string | undefined> {
+    const available = options.options.filter((option) => !option.disabled)
+    if (available.length === 0) return undefined
+    const initialIndex = Math.max(0, available.findIndex((option) => option.value === options.initialValue))
+    while (true) {
+      console.log(`${color('blue', '◆')} ${options.message}`)
+      available.forEach((option, index) => {
+        const hint = option.hint ? ` — ${option.hint}` : ''
+        console.log(`  ${index + 1}) ${option.label}${hint}`)
+      })
+      const answer = await this.askLine(`Escolha [${initialIndex + 1}]`, undefined)
+      if (answer === undefined) return undefined
+      if (!answer.trim()) {
+        const initial = available[initialIndex]
+        return initial ? initial.value : undefined
+      }
+      const selected = Number(answer.trim()) - 1
+      if (Number.isInteger(selected) && selected >= 0 && selected < available.length) {
+        const option = available[selected]
+        if (option) return option.value
+      }
+      console.log(`Escolha um número entre 1 e ${available.length}.`)
+    }
+  }
+
+  async confirm(options: ConfirmOptions): Promise<boolean | undefined> {
+    const initialValue = options.initialValue ?? true
+    while (true) {
+      const answer = await this.askLine(`${options.message} [Y/N]`, undefined)
+      if (answer === undefined) return undefined
+      if (!answer.trim()) return initialValue
+      const normalized = answer.trim().toLowerCase()
+      if (normalized === 'y') return true
+      if (normalized === 'n') return false
+      console.log('Responda Y ou N.')
+    }
+  }
+
+  private askLine(
+    message: string,
+    fallback?: string,
+    options?: { placeholder?: string; validate?: PromptValidator }
+  ): Promise<string | undefined> {
+    const suffix = fallback
+      ? ` [${fallback}]`
+      : options?.placeholder
+        ? ` (${options.placeholder})`
+        : ''
+    return new Promise((resolve) => {
+      const readline = createInterface({ input: process.stdin, output: process.stdout })
+      this.activeReadline = readline
+      let settled = false
+      const finish = (value: string | undefined): void => {
+        if (settled) return
+        settled = true
+        readline.close()
+        if (this.activeReadline === readline) this.activeReadline = undefined
+        resolve(value)
+      }
+      const ask = (): void => {
+        readline.question(`${color('cyan', '◆')} ${message}${suffix}: `, (answer) => {
+          process.stdout.write('\n')
+          const value = answer === '' && fallback !== undefined ? fallback : answer
+          const error = options?.validate?.(value)
+          if (error) {
+            console.log(error)
+            ask()
+            return
+          }
+          finish(value)
+        })
+      }
+      readline.on('close', () => finish(undefined))
+      ask()
+    })
+  }
+
+  private setTerminalEcho(enabled: boolean): void {
+    const result = spawnSync('stty', [enabled ? 'echo' : '-echo'], { stdio: 'inherit' })
+    if (result.status !== 0) throw new Error('Não foi possível configurar a entrada segura do terminal.')
+    this.terminalEchoDisabled = !enabled
+  }
+
+  private async askWindowsPassword(options: PasswordOptions): Promise<string | undefined> {
+    const escapedMessage = options.message.replace(/'/gu, "''")
+    const command = `$secure = Read-Host -Prompt '${escapedMessage}' -AsSecureString; $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure); try { [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr) } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }`
+    for (const executable of ['powershell.exe', 'pwsh']) {
+      const result = spawnSync(executable, ['-NoProfile', '-Command', command], {
+        encoding: 'utf8',
+        stdio: ['inherit', 'pipe', 'inherit']
+      })
+      if (result.status !== 0 || result.error) continue
+      const value = (result.stdout ?? '').replace(/\r?\n$/u, '')
+      const error = options.validate?.(value)
+      if (!error) return value
+      console.log(error)
+    }
+    throw new Error('Não foi possível ler a senha com segurança neste Windows. Use uma variável de ambiente.')
+  }
+}

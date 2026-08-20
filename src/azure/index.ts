@@ -1,5 +1,4 @@
 export * from './client'
-export * from './publish'
 export * from './pull-requests'
 export * from './types'
 export * from './work-items'

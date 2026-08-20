@@ -1,9 +1,9 @@
 import { describe, expect, test } from 'bun:test'
 import { Buffer } from 'node:buffer'
 import { AzureDevOpsClient } from './client'
-import { publishPullRequests } from './publish'
-import { createTestCase, updateWorkItemToTestQA } from './work-items'
-import type { GitContext } from '../types'
+import { AzureWorkItemClient } from './work-items'
+import { AzurePullRequestPublisher } from '../infrastructure/azure/azure-pull-request-publisher'
+import type { GitContext } from '../infrastructure/git/git-context.models'
 
 const context: GitContext = {
   branch: 'feature/123-login',
@@ -42,8 +42,11 @@ describe('Azure DevOps REST client', () => {
       }
     })
 
-    const published = await publishPullRequests(
-      client,
+    const published = await new AzurePullRequestPublisher({
+      create: () => client,
+      createForOrganization: () => client
+    }).publish(
+      {} as never,
       context,
       ['dev'],
       { title: 'A title', description: 'A body', workItemRefs: [{ id: '123' }] },
@@ -107,7 +110,7 @@ describe('Azure DevOps REST client', () => {
       }
     })
 
-    const created = await createTestCase(client, 'My Project', {
+    const created = await new AzureWorkItemClient(client).createTestCase('My Project', {
       title: 'Teste login',
       descriptionHtml: '<p>Validar login.</p>',
       areaPath: 'Project\\QA',
@@ -166,7 +169,7 @@ describe('Azure DevOps REST client', () => {
       }
     })
 
-    await updateWorkItemToTestQA(client, 'My Project', 42, 0.5, 1)
+    await new AzureWorkItemClient(client).updateToTestQA('My Project', 42, 0.5, 1)
 
     expect(requestMethod).toBe('PATCH')
     expect(requestUrl).toBe(
