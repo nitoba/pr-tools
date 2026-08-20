@@ -23,17 +23,14 @@
     "oxfmt": "^0.63.0",
     "oxlint": "^1.79.0",
     "oxlint-tsgolint": "^7.0.2001",
-    "scriptc": "0.0.33"
+    "scriptc": "0.0.34"
   },
   "peerDependencies": {
     "typescript": "7.0.2"
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^3.0.32",
-    "@clack/prompts": "^1.7.0",
     "ai": "^7.0.70",
-    "ai-sdk-provider-codex-cli": "^2.1.2",
-    "ai-sdk-provider-opencode-sdk": "^4.1.0",
     "zod": "^4.1.8"
   }
 }

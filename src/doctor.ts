@@ -1,10 +1,10 @@
 import { spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { intro, log, outro } from '@clack/prompts'
 import { AzureDevOpsClient, getRepository, pathSegment, withApiVersion } from './azure'
 import { CONFIG_FILE, ENV_FILE, TEMPLATE_FILE, loadConfig } from './config'
 import { collectGitContext, parseAzureRemote } from './git'
 import { optionalEmailPromptSchema } from './validation'
+import { intro, log, outro } from './ui'
 import type { CliOptions, Config, GitContext } from './types'
 
 type DoctorStatus = 'ok' | 'warn' | 'fail'

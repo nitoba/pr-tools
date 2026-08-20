@@ -1,11 +1,7 @@
 import { spawnSync } from 'node:child_process'
 import { createInterface } from 'node:readline'
-import {
-  confirm as clackConfirm,
-  password as clackPassword,
-  text as clackText
-} from '@clack/prompts'
 import type { PromptValidator } from './validation'
+import { color } from './ui'
 
 type TextOptions = {
   message: string
@@ -36,53 +32,25 @@ type SelectOptions<Value extends string> = {
 type ConfirmOptions = {
   message: string
   initialValue?: boolean
-  active?: string
-  inactive?: string
 }
 
-const nativeBinary = !process.execPath.endsWith('/bun') && !process.execPath.endsWith('\\bun.exe')
 let terminalEchoDisabled = false
 
-if (nativeBinary) {
-  process.on('SIGINT', () => {
-    if (terminalEchoDisabled) setTerminalEcho(true)
-    process.exit(130)
-  })
-}
+process.on('SIGINT', () => {
+  if (terminalEchoDisabled) setTerminalEcho(true)
+  process.exit(130)
+})
 
 export async function text(options: TextOptions): Promise<string | undefined> {
-  if (!nativeBinary) {
-    while (true) {
-      const value = await clackText({
-        message: options.message,
-        initialValue: options.initialValue,
-        defaultValue: options.defaultValue,
-        placeholder: options.placeholder
-      })
-      if (typeof value !== 'string') return undefined
-      const error = options.validate?.(value)
-      if (!error) return value
-      console.log(error)
-    }
-  }
   return askLine(options.message, options.initialValue ?? options.defaultValue, options)
 }
 
 export async function password(options: PasswordOptions): Promise<string | undefined> {
-  if (!nativeBinary) {
-    while (true) {
-      const value = await clackPassword({ message: options.message })
-      if (typeof value !== 'string') return undefined
-      const error = options.validate?.(value)
-      if (!error) return value
-      console.log(error)
-    }
-  }
   if (process.platform === 'win32') return askWindowsPassword(options)
 
   setTerminalEcho(false)
   try {
-    return await askLine(options.message, undefined, options, true)
+    return await askLine(options.message, undefined, options)
   } finally {
     setTerminalEcho(true)
   }
@@ -99,7 +67,7 @@ export async function select<Value extends string>(
   )
 
   while (true) {
-    console.log(`◆ ${options.message}`)
+    console.log(`${color('blue', '◆')} ${options.message}`)
     available.forEach((option, index) => {
       const hint = option.hint ? ` — ${option.hint}` : ''
       console.log(`  ${index + 1}) ${option.label ?? option.value}${hint}`)
@@ -117,37 +85,22 @@ export async function select<Value extends string>(
 }
 
 export async function confirm(options: ConfirmOptions): Promise<boolean | undefined> {
-  if (!nativeBinary) {
-    const value = await clackConfirm({
-      message: options.message,
-      initialValue: options.initialValue,
-      active: options.active,
-      inactive: options.inactive
-    })
-    return typeof value === 'boolean' ? value : undefined
-  }
-
   const initialValue = options.initialValue ?? true
-  const active = options.active ?? 'Sim'
-  const inactive = options.inactive ?? 'Não'
   while (true) {
-    const answer = await askLine(`◆ ${options.message} [${active}/${inactive}]`, undefined)
+    const answer = await askLine(`${options.message} [Y/N]`, undefined)
     if (answer === undefined) return undefined
     if (!answer.trim()) return initialValue
     const normalized = answer.trim().toLowerCase()
-    if (normalized === 's' || normalized === 'sim' || normalized === 'y' || normalized === 'yes')
-      return true
-    if (normalized === 'n' || normalized === 'não' || normalized === 'nao' || normalized === 'no')
-      return false
-    console.log(`Responda ${active.toLowerCase()} ou ${inactive.toLowerCase()}.`)
+    if (normalized === 'y') return true
+    if (normalized === 'n') return false
+    console.log('Responda Y ou N.')
   }
 }
 
 function askLine(
   message: string,
   fallback?: string,
-  options?: { placeholder?: string; validate?: PromptValidator },
-  secret = false
+  options?: { placeholder?: string; validate?: PromptValidator }
 ): Promise<string | undefined> {
   const suffix = fallback
     ? ` [${fallback}]`
@@ -166,8 +119,8 @@ function askLine(
     }
 
     const ask = (): void => {
-      readline.question(`◆ ${message}${suffix}: `, (answer) => {
-        if (secret) process.stdout.write('\n')
+      readline.question(`${color('cyan', '◆')} ${message}${suffix}: `, (answer) => {
+        process.stdout.write('\n')
         const value = answer === '' && fallback !== undefined ? fallback : answer
         const error = options?.validate?.(value)
         if (error) {

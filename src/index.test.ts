@@ -159,4 +159,17 @@ describe('pr-tools core parsing', () => {
       body: '## Descrição\nCorrige fluxo.'
     })
   })
+
+  test('normalizes JSON returned by local CLI providers', () => {
+    expect(
+      normalizeDescription(
+        undefined,
+        '{"title":"Adiciona filtro","body":"## Descrição\\nInclui CPF."}',
+        'feature/1-filtro'
+      )
+    ).toEqual({
+      title: 'Adiciona filtro',
+      body: '## Descrição\nInclui CPF.'
+    })
+  })
 })

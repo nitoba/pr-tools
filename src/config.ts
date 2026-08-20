@@ -1,4 +1,3 @@
-import { cancel, intro, isCancel, note, outro } from '@clack/prompts'
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -14,6 +13,7 @@ import {
 } from './prompt'
 import { parseReasoningLevel, providerSchema, validateOptionalEmail } from './validation'
 import { password, select, text } from './prompts'
+import { cancel, intro, note, outro } from './ui'
 import type { CliOptions, Config, ProviderName, ReasoningLevel } from './types'
 
 export const CONFIG_DIR = join(
@@ -227,8 +227,8 @@ export async function initConfig(): Promise<void> {
     const azurePatValue = await password({
       message: 'Azure DevOps PAT (Enter para manter o atual)'
     })
-    if (isCancel(azurePatValue)) return cancelled()
-    if (typeof azurePatValue === 'string' && azurePatValue.trim()) azurePat = azurePatValue.trim()
+    if (typeof azurePatValue !== 'string') return cancelled()
+    if (azurePatValue.trim()) azurePat = azurePatValue.trim()
 
     reviewerSprint = await promptEmail(
       'Email de review da sprint',
@@ -353,7 +353,13 @@ export async function initConfig(): Promise<void> {
   if (!existsSync(TEMPLATE_FILE))
     writeFileSync(TEMPLATE_FILE, `${DEFAULT_TEMPLATE}\n`, { mode: 0o600 })
   if (interactive) {
-    note(`Configuração salva em ${CONFIG_FILE}\nTemplate salvo em ${TEMPLATE_FILE}`, 'prt')
+    const patStatus = azurePat
+      ? `PAT Azure salvo em ${ENV_FILE} (AZURE_PAT)`
+      : 'PAT Azure não configurado'
+    note(
+      `Configuração salva em ${CONFIG_FILE}\n${patStatus}\nTemplate salvo em ${TEMPLATE_FILE}`,
+      'prt'
+    )
     outro('Pronto. Execute `prt desc --dry-run`.')
   } else {
     console.log(`Configuração salva em ${CONFIG_FILE}`)
@@ -387,7 +393,7 @@ async function promptReasoning(
 }
 
 function promptString(value: unknown): string {
-  if (isCancel(value) || typeof value !== 'string') {
+  if (typeof value !== 'string') {
     cancelled()
     return ''
   }

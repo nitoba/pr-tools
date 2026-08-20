@@ -1,6 +1,6 @@
 # pr-tools (`prt`)
 
-CLI para gerar descrições de pull request e Test Cases a partir do contexto Git. Ela usa o AI SDK e pode chamar o Codex local, o OpenCode local ou qualquer endpoint compatível com a API da OpenAI.
+CLI para gerar descrições de pull request e Test Cases a partir do contexto Git. Ela chama diretamente o Codex e o OpenCode instalados na máquina, ou usa o AI SDK para endpoints compatíveis com a API da OpenAI.
 
 O fluxo é guiado: a descrição/card é exibida antes da publicação e a criação sempre exige confirmação. O acesso ao Azure DevOps é feito pela API REST, sem depender do `az` CLI.
 

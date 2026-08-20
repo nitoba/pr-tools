@@ -1,4 +1,3 @@
-import { intro, log, outro, spinner } from '@clack/prompts'
 import {
   AzureDevOpsClient,
   createTestCase,
@@ -25,6 +24,7 @@ import {
 } from './validation'
 import { confirm, text } from './prompts'
 import type { PromptValidator } from './validation'
+import { intro, log, outro, spinner } from './ui'
 import type {
   AzurePullRequest,
   AzurePullRequestChange,

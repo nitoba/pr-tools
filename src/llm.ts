@@ -1,8 +1,8 @@
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
 import { generateText, Output } from 'ai'
-import { codexCli } from 'ai-sdk-provider-codex-cli'
-import { createOpencode } from 'ai-sdk-provider-opencode-sdk'
 import { z } from 'zod'
+import { generateCodex } from './providers/codex'
+import { generateOpenCode } from './providers/opencode'
 import type { Config, PrDescription, ProviderName } from './types'
 
 export const DESCRIPTION_SCHEMA = z.object({
@@ -47,87 +47,6 @@ async function generateOpenAICompatible(
     })
     if (!result.text.trim()) throw structuredError
     return normalizeDescription(undefined, result.text, branch)
-  }
-}
-
-async function generateCodex(
-  config: Config,
-  system: string,
-  prompt: string,
-  branch: string
-): Promise<PrDescription> {
-  const reasoningEffort =
-    config.codexReasoning === 'provider-default' ? undefined : config.codexReasoning
-  const result = await generateText({
-    model: codexCli(config.codexModel, {
-      codexPath: 'codex',
-      cwd: process.cwd(),
-      approvalMode: 'never',
-      sandboxMode: 'read-only',
-      reasoningEffort,
-      skipGitRepoCheck: true,
-      color: 'never',
-      logger: false
-    }),
-    instructions: system,
-    prompt,
-    output: Output.object({ schema: DESCRIPTION_SCHEMA }),
-    maxRetries: 1
-  })
-  return normalizeDescription(result.output, result.text, branch)
-}
-
-async function generateOpenCode(
-  config: Config,
-  system: string,
-  prompt: string,
-  branch: string
-): Promise<PrDescription> {
-  const provider = createOpencode({
-    defaultSettings: {
-      agent: 'general',
-      directory: process.cwd(),
-      outputFormatRetryCount: 1,
-      questionPolicy: 'reject',
-      permission: [
-        { permission: 'edit', pattern: '*', action: 'deny' },
-        { permission: 'bash', pattern: '*', action: 'deny' }
-      ],
-      logger: false
-    }
-  })
-  try {
-    try {
-      const result = await generateText({
-        model: provider(
-          config.opencodeModel,
-          config.opencodeReasoning === 'provider-default'
-            ? undefined
-            : { variant: config.opencodeReasoning }
-        ),
-        instructions: system,
-        prompt,
-        output: Output.object({ schema: DESCRIPTION_SCHEMA }),
-        maxRetries: 1
-      })
-      return normalizeDescription(result.output, result.text, branch)
-    } catch (structuredError) {
-      const result = await generateText({
-        model: provider(
-          config.opencodeModel,
-          config.opencodeReasoning === 'provider-default'
-            ? undefined
-            : { variant: config.opencodeReasoning }
-        ),
-        instructions: `${system}\n\nResponda com JSON contendo title e body.`,
-        prompt,
-        maxRetries: 1
-      })
-      if (!result.text.trim()) throw structuredError
-      return normalizeDescription(undefined, result.text, branch)
-    }
-  } finally {
-    await provider.dispose()
   }
 }
 
@@ -191,9 +110,9 @@ export async function generateDescription(
     try {
       const description =
         provider === 'codex'
-          ? await generateCodex(config, system, prompt, branch)
+          ? normalizeDescription(undefined, generateCodex(config, system, prompt), branch)
           : provider === 'opencode'
-            ? await generateOpenCode(config, system, prompt, branch)
+            ? normalizeDescription(undefined, generateOpenCode(config, system, prompt), branch)
             : await generateOpenAICompatible(config, system, prompt, branch)
       return { description, provider, model }
     } catch (error) {

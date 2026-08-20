@@ -1,4 +1,3 @@
-import { intro, log, outro, spinner } from '@clack/prompts'
 import { parseArgs as parseNodeArgs } from 'node:util'
 import { AzureDevOpsClient, publishPullRequests } from './azure'
 import { initConfig, loadConfig, parseProvider } from './config'
@@ -10,6 +9,7 @@ import { runDoctor } from './doctor'
 import { runTestCard } from './test-card'
 import { parseWorkItemId } from './validation'
 import { confirm, text } from './prompts'
+import { color, intro, log, outro, spinner } from './ui'
 import type { CliOptions } from './types'
 
 type ParsedValues = {
@@ -214,13 +214,17 @@ export async function runDesc(options: CliOptions): Promise<void> {
     const { title, body } = generated.description
     if (options.raw) console.log(body)
     else {
-      console.log(`\nTítulo: ${title}\n\nDescrição:\n${body}`)
-      console.log(`\nBranch: ${context.branch}`)
-      console.log(`Targets: ${targets.join(', ')}`)
-      if (workItemId) console.log(`Work Item: #${workItemId}`)
+      console.log(
+        `\n${color(['bold', 'cyan'], 'Título')}: ${title}\n\n${color(['bold', 'cyan'], 'Descrição')}:\n${body}`
+      )
+      console.log(`\n${color('blue', 'Branch')}: ${context.branch}`)
+      console.log(`${color('blue', 'Targets')}: ${targets.join(', ')}`)
+      if (workItemId) console.log(`${color('blue', 'Work Item')}: #${workItemId}`)
       if (context.isAzureDevOps) {
-        if (workItemId) console.log(`Work Item URL: ${azureWorkItemUrl(context, workItemId)}`)
-        for (const target of targets) console.log(`PR ${target}: ${azurePrUrl(context, target)}`)
+        if (workItemId)
+          console.log(`${color('blue', 'Work Item URL')}: ${azureWorkItemUrl(context, workItemId)}`)
+        for (const target of targets)
+          console.log(`${color('blue', `PR ${target}`)}: ${azurePrUrl(context, target)}`)
       }
     }
     if (options.copy && copyToClipboard(body)) log.success('Descrição copiada para o clipboard.')
