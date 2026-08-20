@@ -40,14 +40,19 @@ Opções principais: `--source`, `--target` (repetível), `--work-item`, `--prov
 
 ## Configuração
 
-`pr-tools init` cria `~/.config/pr-tools/config.json` e `pr-template.md`. Variáveis de ambiente sobrescrevem o arquivo:
+`pr-tools init` abre um wizard Clack para configurar o Azure PAT, os emails de review da sprint/dev e do card de teste, além do provider padrão. Para o provider escolhido, ele pergunta o modelo e o thinking level; no modo OpenAI-compatible também pergunta a Base URL e a API key. Os níveis disponíveis são `provider-default`, `none`, `minimal`, `low`, `medium`, `high` e `xhigh`.
+
+O email do card de teste é salvo como `TEST_CARD_ASSIGNED_TO`, o campo `System.AssignedTo` usado pela API do Azure DevOps. Variáveis de ambiente sobrescrevem o arquivo:
 
 ```bash
 PR_AI_PROVIDERS=codex,opencode,openai-compatible
 PR_CODEX_MODEL=gpt-5.6-luna
+PR_CODEX_REASONING=high
 PR_OPENCODE_MODEL=openai/gpt-5.5
+PR_OPENCODE_REASONING=provider-default
 PR_AI_BASE_URL=https://api.openai.com/v1
 PR_AI_MODEL=gpt-4o-mini
+PR_AI_REASONING=provider-default
 PR_AI_API_KEY=...
 AZURE_PAT=...
 PR_REVIEWER_DEV=reviewer@example.com
@@ -72,7 +77,7 @@ Para autenticar providers no OpenCode, use:
 opencode auth login
 ```
 
-O modelo do OpenCode usa o formato `provider/model`, por exemplo `openai/gpt-5.5`. A lista padrão tenta `codex`, depois `opencode` e por fim `openai-compatible`; altere `PR_AI_PROVIDERS` para escolher a ordem.
+O modelo do OpenCode usa o formato `provider/model`, por exemplo `openai/gpt-5.5`. O nível escolhido é enviado como `variant`; os valores disponíveis dependem do modelo configurado no OpenCode. A lista padrão tenta `codex`, depois `opencode` e por fim `openai-compatible`; altere `PR_AI_PROVIDERS` para escolher a ordem.
 
 ## Azure DevOps
 

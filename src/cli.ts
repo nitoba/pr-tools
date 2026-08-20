@@ -170,7 +170,7 @@ export async function runDesc(options: CliOptions): Promise<void> {
     const models = config.providers
       .map(
         (provider) =>
-          `${provider}/${provider === 'codex' ? config.codexModel : provider === 'opencode' ? config.opencodeModel : config.compatibleModel}`
+          `${provider}/${provider === 'codex' ? config.codexModel : provider === 'opencode' ? config.opencodeModel : config.compatibleModel} (thinking ${provider === 'codex' ? config.codexReasoning : provider === 'opencode' ? config.opencodeReasoning : config.compatibleReasoning})`
       )
       .join(', ')
     console.log(`Provider/model: ${models}`)

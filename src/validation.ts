@@ -1,6 +1,26 @@
 import { z } from 'zod'
+import type { ReasoningLevel } from './types'
 
 export const providerSchema = z.enum(['codex', 'opencode', 'openai-compatible'])
+export const reasoningLevelSchema = z.enum([
+  'provider-default',
+  'none',
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh'
+])
+export const reasoningLevelPromptSchema = reasoningLevelSchema
+
+const emailSchema = z.string().trim().email('Informe um email válido.')
+export const optionalEmailPromptSchema = z
+  .string()
+  .trim()
+  .refine(
+    (value) => value === '' || emailSchema.safeParse(value).success,
+    'Informe um email válido ou deixe vazio.'
+  )
 
 export const workItemIdSchema = z
   .string()
@@ -40,6 +60,17 @@ export const examplesCountSchema = z
   )
 
 export const apiKeyPromptSchema = z.string().optional()
+
+export function parseReasoningLevel(value: unknown, fallback: ReasoningLevel): ReasoningLevel {
+  if (value === undefined || value === null || String(value).trim() === '') return fallback
+  const parsed = reasoningLevelSchema.safeParse(value)
+  if (!parsed.success) {
+    throw new Error(
+      `Nível de thinking inválido: ${String(value)}. Use provider-default, none, minimal, low, medium, high ou xhigh.`
+    )
+  }
+  return parsed.data
+}
 
 export function parseWorkItemId(value: string | undefined, label: string): number | undefined {
   if (!value?.trim()) return undefined

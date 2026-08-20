@@ -1,5 +1,14 @@
 export type ProviderName = 'codex' | 'opencode' | 'openai-compatible'
 
+export type ReasoningLevel =
+  | 'provider-default'
+  | 'none'
+  | 'minimal'
+  | 'low'
+  | 'medium'
+  | 'high'
+  | 'xhigh'
+
 export type PrDescription = {
   title: string
   body: string
@@ -24,8 +33,11 @@ export type Config = {
   providers: ProviderName[]
   baseUrl: string
   compatibleModel: string
+  compatibleReasoning: ReasoningLevel
   codexModel: string
+  codexReasoning: ReasoningLevel
   opencodeModel: string
+  opencodeReasoning: ReasoningLevel
   azurePat: string
   reviewerDev: string
   reviewerSprint: string

@@ -3,7 +3,6 @@ import { generateText, Output } from 'ai'
 import { codexCli } from 'ai-sdk-provider-codex-cli'
 import { createOpencode } from 'ai-sdk-provider-opencode-sdk'
 import { z } from 'zod'
-import { CODEX_REASONING_EFFORT } from './prompt'
 import type { Config, PrDescription, ProviderName } from './types'
 
 export const DESCRIPTION_SCHEMA = z.object({
@@ -34,6 +33,7 @@ async function generateOpenAICompatible(
       instructions: system,
       prompt,
       output: Output.object({ schema: DESCRIPTION_SCHEMA }),
+      reasoning: config.compatibleReasoning,
       maxRetries: 1
     })
     return normalizeDescription(result.output, result.text, branch)
@@ -42,6 +42,7 @@ async function generateOpenAICompatible(
       model: provider(config.compatibleModel),
       instructions: `${system}\n\nResponda com JSON contendo title e body.`,
       prompt,
+      reasoning: config.compatibleReasoning,
       maxRetries: 1
     })
     if (!result.text.trim()) throw structuredError
@@ -55,13 +56,15 @@ async function generateCodex(
   prompt: string,
   branch: string
 ): Promise<PrDescription> {
+  const reasoningEffort =
+    config.codexReasoning === 'provider-default' ? undefined : config.codexReasoning
   const result = await generateText({
     model: codexCli(config.codexModel, {
       codexPath: 'codex',
       cwd: process.cwd(),
       approvalMode: 'never',
       sandboxMode: 'read-only',
-      reasoningEffort: CODEX_REASONING_EFFORT,
+      reasoningEffort,
       skipGitRepoCheck: true,
       color: 'never',
       logger: false
@@ -96,7 +99,12 @@ async function generateOpenCode(
   try {
     try {
       const result = await generateText({
-        model: provider(config.opencodeModel),
+        model: provider(
+          config.opencodeModel,
+          config.opencodeReasoning === 'provider-default'
+            ? undefined
+            : { variant: config.opencodeReasoning }
+        ),
         instructions: system,
         prompt,
         output: Output.object({ schema: DESCRIPTION_SCHEMA }),
@@ -105,7 +113,12 @@ async function generateOpenCode(
       return normalizeDescription(result.output, result.text, branch)
     } catch (structuredError) {
       const result = await generateText({
-        model: provider(config.opencodeModel),
+        model: provider(
+          config.opencodeModel,
+          config.opencodeReasoning === 'provider-default'
+            ? undefined
+            : { variant: config.opencodeReasoning }
+        ),
         instructions: `${system}\n\nResponda com JSON contendo title e body.`,
         prompt,
         maxRetries: 1

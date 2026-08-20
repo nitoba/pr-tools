@@ -3,7 +3,13 @@ import { parseArgs } from './cli'
 import { parseAzureRemote } from './git'
 import { normalizeDescription } from './llm'
 import { buildCreateTestCaseInput, selectParentWorkItem } from './test-card'
-import { parseExamplesCount, parsePositiveDecimal, parseWorkItemId } from './validation'
+import {
+  optionalEmailPromptSchema,
+  parseExamplesCount,
+  parsePositiveDecimal,
+  parseReasoningLevel,
+  parseWorkItemId
+} from './validation'
 import type { AzureWorkItem } from './azure'
 
 describe('pr-tools core parsing', () => {
@@ -91,6 +97,15 @@ describe('pr-tools core parsing', () => {
     expect(parsePositiveDecimal('1,5', 2, '--priority')).toBe(1.5)
     expect(() => parseExamplesCount('6')).toThrow()
     expect(() => parsePositiveDecimal('0', 2, '--priority')).toThrow()
+  })
+
+  test('validates provider thinking levels and review emails', () => {
+    expect(parseReasoningLevel('high', 'medium')).toBe('high')
+    expect(parseReasoningLevel(undefined, 'provider-default')).toBe('provider-default')
+    expect(optionalEmailPromptSchema.safeParse('reviewer@example.com').success).toBe(true)
+    expect(optionalEmailPromptSchema.safeParse('').success).toBe(true)
+    expect(optionalEmailPromptSchema.safeParse('not-an-email').success).toBe(false)
+    expect(() => parseReasoningLevel('turbo', 'medium')).toThrow()
   })
 
   test('extracts modern Azure DevOps remotes', () => {
