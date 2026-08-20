@@ -40,7 +40,7 @@ type ConfirmOptions = {
   inactive?: string
 }
 
-const nativeBinary = process.versions.bun === undefined
+const nativeBinary = !process.execPath.endsWith('/bun') && !process.execPath.endsWith('\\bun.exe')
 let terminalEchoDisabled = false
 
 if (nativeBinary) {
