@@ -62,11 +62,12 @@ export const examplesCountSchema = z
 export const apiKeyPromptSchema = z.string().optional()
 
 export function parseReasoningLevel(value: unknown, fallback: ReasoningLevel): ReasoningLevel {
-  if (value === undefined || value === null || String(value).trim() === '') return fallback
+  if (value === undefined || value === null) return fallback
+  if (typeof value === 'string' && value.trim() === '') return fallback
   const parsed = reasoningLevelSchema.safeParse(value)
   if (!parsed.success) {
     throw new Error(
-      `Nível de thinking inválido: ${String(value)}. Use provider-default, none, minimal, low, medium, high ou xhigh.`
+      `Nível de thinking inválido (${typeof value}). Use provider-default, none, minimal, low, medium, high ou xhigh.`
     )
   }
   return parsed.data

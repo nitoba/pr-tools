@@ -12,7 +12,7 @@
     "start": "bun run src/index.ts",
     "build": "bun run scripts/build.ts",
     "typecheck": "tsc --noEmit",
-    "lint": "oxlint src scripts",
+    "lint": "oxlint --type-aware src scripts",
     "format": "oxfmt src scripts",
     "test": "bun test --parallel"
   },
