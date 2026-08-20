@@ -2,33 +2,10 @@
 
 set -euo pipefail
 
-if [[ -n "${BASH_SOURCE[0]:-}" && "${BASH_SOURCE[0]}" != '/dev/stdin' ]]; then
-  readonly project_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-else
-  readonly project_dir="$PWD"
-fi
 platform="$(uname -s)"
 architecture="$(uname -m)"
 version="${PR_TOOLS_VERSION:-latest}"
-
-normalize_repository() {
-  local value="$1"
-  value="${value#https://github.com/}"
-  value="${value#http://github.com/}"
-  value="${value#git@github.com:}"
-  value="${value#ssh://git@github.com/}"
-  value="${value%.git}"
-  value="${value%/}"
-  printf '%s' "$value"
-}
-
-repository="${PR_TOOLS_REPOSITORY:-${GITHUB_REPOSITORY:-}}"
-if [[ -z "$repository" ]]; then
-  remote_url="$(git -C "$project_dir" config --get remote.origin.url 2>/dev/null || true)"
-  if [[ -n "$remote_url" ]]; then repository="$(normalize_repository "$remote_url")"; fi
-else
-  repository="$(normalize_repository "$repository")"
-fi
+repository="${PR_TOOLS_REPOSITORY:-nitoba/pr-tools}"
 
 if [[ -z "${PR_TOOLS_BINARY:-}" && ( -z "$repository" || ! "$repository" =~ ^[^/]+/[^/]+$ ) ]]; then
   printf 'Não foi possível determinar o repositório GitHub. Use PR_TOOLS_REPOSITORY=owner/repo.\n' >&2

@@ -1,22 +1,7 @@
 $ErrorActionPreference = 'Stop'
 
-$scriptPath = $MyInvocation.MyCommand.Path
-$projectDir = if ($scriptPath) {
-  Split-Path -Parent (Split-Path -Parent $scriptPath)
-} else {
-  (Get-Location).Path
-}
 $version = if ($env:PR_TOOLS_VERSION) { $env:PR_TOOLS_VERSION } else { 'latest' }
-$repository = $env:PR_TOOLS_REPOSITORY
-
-if (-not $repository) {
-  try {
-    $remote = (& git -C $projectDir config --get remote.origin.url 2>$null).Trim()
-    if ($remote) { $repository = $remote }
-  } catch {
-    $repository = $null
-  }
-}
+$repository = if ($env:PR_TOOLS_REPOSITORY) { $env:PR_TOOLS_REPOSITORY } else { 'nitoba/pr-tools' }
 
 if ($repository) {
   $repository = $repository -replace '^https?://github\.com/', ''
