@@ -1,4 +1,4 @@
-import { confirm, intro, log, outro, spinner, text } from '@clack/prompts'
+import { intro, log, outro, spinner } from '@clack/prompts'
 import {
   AzureDevOpsClient,
   createTestCase,
@@ -16,13 +16,15 @@ import { collectGitContext } from './git'
 import { generateDescription } from './llm'
 import { azureWorkItemUrl } from './output'
 import {
-  nonNegativeDecimalPromptSchema,
   parseExamplesCount,
   parsePositiveDecimal,
   parseWorkItemId,
-  positiveDecimalPromptSchema,
-  workItemIdPromptSchema
+  validateNonNegativeDecimal,
+  validatePositiveDecimal,
+  validateWorkItemId
 } from './validation'
+import { confirm, text } from './prompts'
+import type { PromptValidator } from './validation'
 import type {
   AzurePullRequest,
   AzurePullRequestChange,
@@ -275,7 +277,7 @@ async function resolveTestCardContext(
   if (!workItemId && interactive) {
     const value = await text({
       message: 'ID do Work Item pai',
-      validate: workItemIdPromptSchema
+      validate: validateWorkItemId
     })
     if (typeof value !== 'string') throw new Error('Operação cancelada.')
     workItemId = parseWorkItemId(value, 'Work Item')
@@ -370,7 +372,7 @@ async function promptTestCardSettings(
   settings.priority = await promptNumber(
     'Prioridade do Test Case',
     settings.priority,
-    positiveDecimalPromptSchema
+    validatePositiveDecimal
   )
   settings.team = await promptOptional('Custom.Team', settings.team)
   settings.program = await promptOptional('Custom.ProgramasAgrotrace', settings.program)
@@ -392,14 +394,14 @@ async function maybeUpdateParent(
   const realEffort = workItemNumber(parent, 'Custom.RealEffort')
   const nextEffort =
     effort === undefined
-      ? await promptNumber('Effort (horas decimais)', 0.5, nonNegativeDecimalPromptSchema)
+      ? await promptNumber('Effort (horas decimais)', 0.5, validateNonNegativeDecimal)
       : undefined
   const nextRealEffort =
     realEffort === undefined
       ? await promptNumber(
           'Real Effort (horas decimais)',
           nextEffort ?? effort ?? 0.5,
-          nonNegativeDecimalPromptSchema
+          validateNonNegativeDecimal
         )
       : undefined
   await updateWorkItemToTestQA(client, git.azureProject, parent.id, nextEffort, nextRealEffort)
@@ -415,7 +417,7 @@ async function promptOptional(message: string, initialValue: string): Promise<st
 async function promptNumber(
   message: string,
   initialValue: number,
-  validate: NonNullable<Parameters<typeof text>[0]['validate']>
+  validate: PromptValidator
 ): Promise<number> {
   const value = await text({
     message,

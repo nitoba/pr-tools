@@ -1,4 +1,4 @@
-import { confirm, intro, log, outro, spinner, text } from '@clack/prompts'
+import { intro, log, outro, spinner } from '@clack/prompts'
 import { parseArgs as parseNodeArgs } from 'node:util'
 import { AzureDevOpsClient, publishPullRequests } from './azure'
 import { initConfig, loadConfig, parseProvider } from './config'
@@ -9,6 +9,7 @@ import { azurePrUrl, azurePullRequestUrl, azureWorkItemUrl, copyToClipboard } fr
 import { runDoctor } from './doctor'
 import { runTestCard } from './test-card'
 import { parseWorkItemId } from './validation'
+import { confirm, text } from './prompts'
 import type { CliOptions } from './types'
 
 type ParsedValues = {

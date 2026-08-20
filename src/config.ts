@@ -1,4 +1,4 @@
-import { cancel, intro, isCancel, note, outro, password, select, text } from '@clack/prompts'
+import { cancel, intro, isCancel, note, outro } from '@clack/prompts'
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -12,12 +12,8 @@ import {
   OPENCODE_MODEL,
   OPENCODE_REASONING_EFFORT
 } from './prompt'
-import {
-  apiKeyPromptSchema,
-  optionalEmailPromptSchema,
-  parseReasoningLevel,
-  providerSchema
-} from './validation'
+import { parseReasoningLevel, providerSchema, validateOptionalEmail } from './validation'
+import { password, select, text } from './prompts'
 import type { CliOptions, Config, ProviderName, ReasoningLevel } from './types'
 
 export const CONFIG_DIR = join(
@@ -295,8 +291,7 @@ export async function initConfig(): Promise<void> {
         compatibleReasoning
       )
       const apiKeyValue = await password({
-        message: 'API key (Enter para manter a atual ou deixar vazia)',
-        validate: apiKeyPromptSchema
+        message: 'API key (Enter para manter a atual ou deixar vazia)'
       })
       const apiKeyInput = promptString(apiKeyValue)
       if (apiKeyInput.trim()) apiKey = apiKeyInput.trim()
@@ -369,7 +364,7 @@ async function promptEmail(message: string, initialValue: string, hint: string):
   const value = await text({
     message: `${message} (${hint})`,
     initialValue,
-    validate: optionalEmailPromptSchema
+    validate: validateOptionalEmail
   })
   return promptString(value).trim()
 }

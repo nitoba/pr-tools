@@ -1,6 +1,8 @@
 import { z } from 'zod'
 import type { ReasoningLevel } from './types'
 
+export type PromptValidator = (value: string | undefined) => string | undefined
+
 export const providerSchema = z.enum(['codex', 'opencode', 'openai-compatible'])
 export const reasoningLevelSchema = z.enum([
   'provider-default',
@@ -60,6 +62,32 @@ export const examplesCountSchema = z
   )
 
 export const apiKeyPromptSchema = z.string().optional()
+
+export const validateOptionalEmail: PromptValidator = (value) => {
+  const parsed = optionalEmailPromptSchema.safeParse(value ?? '')
+  return parsed.success
+    ? undefined
+    : (parsed.error.issues[0]?.message ?? 'Informe um email válido.')
+}
+
+export const validateWorkItemId: PromptValidator = (value) => {
+  const parsed = workItemIdPromptSchema.safeParse(value ?? '')
+  return parsed.success ? undefined : (parsed.error.issues[0]?.message ?? 'Use um ID numérico.')
+}
+
+export const validatePositiveDecimal: PromptValidator = (value) => {
+  const parsed = positiveDecimalPromptSchema.safeParse(value ?? '')
+  return parsed.success
+    ? undefined
+    : (parsed.error.issues[0]?.message ?? 'Informe um número positivo.')
+}
+
+export const validateNonNegativeDecimal: PromptValidator = (value) => {
+  const parsed = nonNegativeDecimalPromptSchema.safeParse(value ?? '')
+  return parsed.success
+    ? undefined
+    : (parsed.error.issues[0]?.message ?? 'Informe um número válido.')
+}
 
 export function parseReasoningLevel(value: unknown, fallback: ReasoningLevel): ReasoningLevel {
   if (value === undefined || value === null) return fallback

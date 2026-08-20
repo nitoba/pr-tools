@@ -8,7 +8,9 @@ import {
   parseExamplesCount,
   parsePositiveDecimal,
   parseReasoningLevel,
-  parseWorkItemId
+  parseWorkItemId,
+  validateOptionalEmail,
+  validatePositiveDecimal
 } from './validation'
 import type { AzureWorkItem } from './azure'
 
@@ -110,6 +112,12 @@ describe('pr-tools core parsing', () => {
     expect(optionalEmailPromptSchema.safeParse('').success).toBe(true)
     expect(optionalEmailPromptSchema.safeParse('not-an-email').success).toBe(false)
     expect(() => parseReasoningLevel('turbo', 'medium')).toThrow()
+  })
+
+  test('keeps native prompt validation messages', () => {
+    expect(validateOptionalEmail('invalid')).toBe('Informe um email válido ou deixe vazio.')
+    expect(validateOptionalEmail('')).toBeUndefined()
+    expect(validatePositiveDecimal('0')).toBe('Informe um número positivo.')
   })
 
   test('extracts modern Azure DevOps remotes', () => {
