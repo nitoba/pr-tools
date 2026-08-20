@@ -97,6 +97,7 @@ Quando o `origin` é um remote Azure DevOps, a CLI usa diretamente a API REST co
 | `src/output.ts` | clipboard e URLs Azure DevOps |
 | `src/prompt.ts` | template e montagem do prompt |
 | `src/types.ts` | contratos compartilhados |
+| `scripts/` | build por plataforma e instaladores |
 
 ## Verificação
 
@@ -107,10 +108,71 @@ bun test
 
 ## Build do binário
 
-O binário nativo é gerado pelo `scriptc`; `--dynamic` incorpora as dependências npm usadas pela CLI. O comando requer Node 24+ e clang, e grava o executável em `dist/pr-tools`:
+O binário nativo é gerado pelo `scriptc`; `--dynamic` incorpora as dependências npm usadas pela CLI. O comando requer Node 24+ e clang:
 
 ```bash
 bun run build
 ```
 
 O binário não embute os executáveis externos `codex` e `opencode`; eles continuam sendo resolvidos na máquina, junto das credenciais locais dos providers.
+
+### Artefatos por plataforma
+
+O scriptc usa o clang nativo no macOS arm64. Linux e Windows usam Zig para cross-compilação:
+
+```bash
+bun run build -- linux-x64
+bun run build -- linux-arm64
+bun run build -- windows-x64
+```
+
+No Mac Apple Silicon:
+
+```bash
+bun run build -- macos-arm64
+```
+
+Os artefatos são gravados em `dist/` como `pr-tools-linux-x64`, `pr-tools-linux-arm64`, `pr-tools-windows-x64.exe` e `pr-tools-macos-arm64`. Instale o artefato correspondente com `./scripts/install.sh` no Linux/macOS ou `PowerShell -ExecutionPolicy Bypass -File .\scripts\install.ps1` no Windows.
+
+Para os alvos Linux/Windows, instale o Zig e mantenha `zig` disponível no `PATH`.
+
+## Instalação
+
+Os instaladores baixam automaticamente o artefato da GitHub Release mais recente. Em um clone do repositório, o nome remoto é detectado automaticamente:
+
+```bash
+./scripts/install.sh
+```
+
+Para executar fora de um clone, informe o repositório. Para instalar uma versão específica, use `PR_TOOLS_VERSION`:
+
+```bash
+PR_TOOLS_REPOSITORY=owner/repo PR_TOOLS_VERSION=v3.0.0 ./scripts/install.sh
+```
+
+Também é possível executar o instalador diretamente do GitHub:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/owner/repo/main/scripts/install.sh \
+  | PR_TOOLS_REPOSITORY=owner/repo bash
+```
+
+No Windows:
+
+```powershell
+$env:PR_TOOLS_REPOSITORY = 'owner/repo'
+PowerShell -ExecutionPolicy Bypass -File .\scripts\install.ps1
+```
+
+Por padrão, o executável é copiado para `~/.local/bin` no Linux/macOS e `%LOCALAPPDATA%\pr-tools\bin` no Windows. Os instaladores também persistem esse diretório no PATH do usuário (`.profile`/`.bashrc`, `.zprofile` ou o `config.fish` de `XDG_CONFIG_HOME` com `fish_add_path`); abra um novo terminal após a instalação. `PR_TOOLS_INSTALL_DIR` altera o destino.
+
+## Releases
+
+O CI roda em pull requests e na branch `main`. Para publicar os quatro artefatos, crie e envie uma tag semântica:
+
+```bash
+git tag v3.0.0
+git push origin v3.0.0
+```
+
+O workflow de release valida o código, gera os binários para Linux x64/arm64, macOS arm64 e Windows x64 e publica todos na GitHub Release da tag.

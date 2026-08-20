@@ -10,10 +10,10 @@
   "scripts": {
     "dev": "bun run src/index.ts",
     "start": "bun run src/index.ts",
-    "build": "PATH=/usr/bin:$PATH scriptc build src/bin.ts --dynamic --no-keep-c -o dist/pr-tools",
+    "build": "bun run scripts/build.ts",
     "typecheck": "tsc --noEmit",
-    "lint": "oxlint src/**/*.ts",
-    "format": "oxfmt src/**/*.ts",
+    "lint": "oxlint src scripts",
+    "format": "oxfmt src scripts",
     "test": "bun test --parallel"
   },
   "devDependencies": {
