@@ -1,10 +1,7 @@
 import { parseWorkItemId } from '../../shared/validation/work-item'
-import type {
-  DescriptionGenerator,
-  GitContextReader,
-  TestCardRepository,
-  TestCardRepositoryFactory
-} from '../../app/ports'
+import type { DescriptionGenerator } from '../../infrastructure/ai/description-generator'
+import type { TestCardRepository, TestCardRepositoryFactory } from '../../infrastructure/azure/test-card-repository'
+import type { GitContextReader } from '../../infrastructure/git/git-context-reader'
 import type { ConfigService } from '../../infrastructure/config/config-service'
 import type { CliOptions } from '../../app/cli.models'
 import type { ProviderName } from '../../infrastructure/ai/ai.models'

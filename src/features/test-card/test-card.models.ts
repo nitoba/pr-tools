@@ -7,6 +7,7 @@ import type {
 } from '../../azure'
 import type { Config } from '../../infrastructure/config/config.models'
 import type { GitContext } from '../../infrastructure/git/git-context.models'
+import type { TestCardRepository } from '../../infrastructure/azure/test-card-repository'
 
 export const TEST_CARD_SYSTEM_PROMPT = `Você é um analista de QA técnico.
 
@@ -48,7 +49,7 @@ export type TestCardPreparation = {
   config: Config
   context: TestCardContext
   prompt: string
-  repository: import('../../app/ports').TestCardRepository
+  repository: TestCardRepository
 }
 
 export function selectParentWorkItem(workItems: AzureWorkItem[]): number | undefined {

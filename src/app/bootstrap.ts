@@ -15,17 +15,17 @@ import { TestCardCommand, TestCardPresenter, TestCardService } from '../features
 import { DoctorCommand, DoctorPresenter, DoctorService } from '../features/doctor'
 import { InitCommand } from '../features/init'
 import { Application } from './application'
+import type { Clipboard } from '../infrastructure/clipboard/clipboard'
+import type { DescriptionGenerator } from '../infrastructure/ai/description-generator'
+import type { PullRequestPublisher } from '../infrastructure/azure/pull-request-publisher'
+import type { TestCardRepositoryFactory } from '../infrastructure/azure/test-card-repository'
+import type { GitContextReader } from '../infrastructure/git/git-context-reader'
+import type { HttpFetcher } from '../infrastructure/http/http-fetcher'
 import type {
-  Clipboard,
-  DescriptionGenerator,
-  GitContextReader,
-  HttpFetcher,
-  PullRequestPublisher,
   ProgressReporter,
   PromptPort,
-  TerminalOutput,
-  TestCardRepositoryFactory
-} from './ports'
+  TerminalOutput
+} from '../infrastructure/terminal/terminal-ports'
 import type { GitClient } from '../infrastructure/git/git-client'
 import type { ProcessRunner } from '../infrastructure/process/process-runner'
 

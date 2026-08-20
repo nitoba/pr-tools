@@ -1,7 +1,7 @@
 import { parseArgs as parseNodeArgs } from 'node:util'
-import { parseProvider } from '../infrastructure/config/config-validation'
 import { VERSION } from './version'
 import { CliExit } from './exit'
+import { validateCliSyntax } from './cli-validation'
 import type { CliOptions } from './cli.models'
 
 type ParsedValues = {
@@ -63,31 +63,24 @@ export function parseArgs(argv: string[]): CliOptions {
   if (values.help) throw new CliExit(0, helpText())
   if (values.version) throw new CliExit(0, `prt v${VERSION}`)
 
-  const command = parsed.positionals.at(0) ?? 'desc'
-  if (parsed.positionals.length > 1)
-    throw new Error(`Argumentos posicionais inesperados: ${parsed.positionals.slice(1).join(' ')}`)
-  if (command !== 'desc' && command !== 'test' && command !== 'init' && command !== 'doctor')
-    throw new Error(`Comando desconhecido: ${command}`)
-  const provider = values.provider ? parseProvider(values.provider) : undefined
-  if (values.create && values['no-create'])
-    throw new Error('--create e --no-create não podem ser usados juntos.')
-  const targets = values.target ?? []
-  for (const target of targets) {
-    if (target !== 'dev' && target !== 'sprint' && !target.startsWith('sprint/')) {
-      throw new Error(`Target inválido: ${target}. Use dev, sprint ou sprint/<número>.`)
-    }
-  }
+  const syntax = validateCliSyntax({
+    positionals: parsed.positionals,
+    provider: values.provider,
+    target: values.target,
+    create: values.create,
+    noCreate: values['no-create']
+  })
   return {
-    command,
+    command: syntax.command,
     source: values.source,
-    targets,
+    targets: syntax.targets,
     workItem: values['work-item'],
-    provider,
+    provider: syntax.provider,
     model: values.model,
     baseUrl: values['base-url'],
     apiKey: values['api-key'],
-    create: values.create ?? false,
-    noCreate: values['no-create'] ?? false,
+    create: syntax.create,
+    noCreate: syntax.noCreate,
     pr: values.pr,
     areaPath: values['area-path'],
     assignedTo: values['assigned-to'],

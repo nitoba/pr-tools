@@ -1,6 +1,6 @@
 import type { GitContext } from './git-context.models'
 import type { GitClient } from './git-client'
-import type { GitContextReader } from '../../app/ports'
+import type { GitContextReader } from './git-context-reader'
 
 const MAX_DIFF_LINES = 8000
 

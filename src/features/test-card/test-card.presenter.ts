@@ -1,5 +1,5 @@
 import { color } from '../../infrastructure/terminal/terminal-style'
-import type { TerminalOutput } from '../../app/ports'
+import type { TerminalOutput } from '../../infrastructure/terminal/terminal-ports'
 import type { Config } from '../../infrastructure/config/config.models'
 import {
   TEST_CARD_SYSTEM_PROMPT,

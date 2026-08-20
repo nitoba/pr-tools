@@ -1,8 +1,5 @@
-import type {
-  Clipboard,
-  ProgressReporter,
-  PromptPort
-} from '../../app/ports'
+import type { Clipboard } from '../../infrastructure/clipboard/clipboard'
+import type { ProgressReporter, PromptPort } from '../../infrastructure/terminal/terminal-ports'
 import type { CliOptions } from '../../app/cli.models'
 import { DescribePresenter } from './describe.presenter'
 import { DescribeService } from './describe.service'

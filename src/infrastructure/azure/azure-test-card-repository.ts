@@ -1,5 +1,5 @@
 import { AzurePullRequestClient, AzureWorkItemClient } from '../../azure'
-import type { TestCardRepository, TestCardRepositoryFactory } from '../../app/ports'
+import type { TestCardRepository, TestCardRepositoryFactory } from './test-card-repository'
 import type { AzureClientFactory } from './azure-client-factory'
 import type { Config } from '../config/config.models'
 import type { GitContext } from '../git/git-context.models'

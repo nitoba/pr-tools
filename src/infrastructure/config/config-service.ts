@@ -12,7 +12,7 @@ import {
   OPENCODE_REASONING_EFFORT
 } from './config-defaults'
 import { parseReasoningLevel, validateOptionalEmail, parseProvider } from './config-validation'
-import type { PromptPort } from '../../app/ports'
+import type { PromptPort } from '../terminal/terminal-ports'
 import type { CliOptions } from '../../app/cli.models'
 import type { Config } from './config.models'
 import type { ProviderName, ReasoningLevel } from '../ai/ai.models'

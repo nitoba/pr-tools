@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import type { Clipboard } from '../../app/ports'
+import type { Clipboard } from './clipboard'
 
 export class NodeClipboard implements Clipboard {
   copy(value: string): boolean {

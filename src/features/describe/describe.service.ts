@@ -1,11 +1,9 @@
 import { buildPrompt } from './describe.prompt'
 import { resolveTargets } from '../../infrastructure/git/git-context-service'
 import { parseWorkItemId } from '../../shared/validation/work-item'
-import type {
-  DescriptionGenerator,
-  GitContextReader,
-  PullRequestPublisher
-} from '../../app/ports'
+import type { DescriptionGenerator } from '../../infrastructure/ai/description-generator'
+import type { PullRequestPublisher } from '../../infrastructure/azure/pull-request-publisher'
+import type { GitContextReader } from '../../infrastructure/git/git-context-reader'
 import type { ConfigService } from '../../infrastructure/config/config-service'
 import type { CliOptions } from '../../app/cli.models'
 import type { PrDescription, ProviderName } from '../../infrastructure/ai/ai.models'

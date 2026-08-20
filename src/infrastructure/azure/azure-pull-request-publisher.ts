@@ -1,7 +1,7 @@
 import { AzurePullRequestClient } from '../../azure'
 import type { AzureDevOpsClient } from '../../azure'
 import type { CreatePullRequestInput } from '../../azure'
-import type { PullRequestPublisher } from '../../app/ports'
+import type { PullRequestPublisher } from './pull-request-publisher'
 import type { AzureClientFactory } from './azure-client-factory'
 
 export class AzurePullRequestPublisher implements PullRequestPublisher {

@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process'
 import { createInterface, type Interface } from 'node:readline'
 import { color } from './terminal-style'
-import type { PromptPort } from '../../app/ports'
+import type { PromptPort } from './terminal-ports'
 
 type PromptValidator = (value: string | undefined) => string | undefined
 

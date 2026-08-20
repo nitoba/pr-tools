@@ -1,5 +1,5 @@
 import { color } from './terminal-style'
-import type { ProgressReporter } from '../../app/ports'
+import type { ProgressReporter } from './terminal-ports'
 
 export class ConsoleProgress implements ProgressReporter {
   private active = false

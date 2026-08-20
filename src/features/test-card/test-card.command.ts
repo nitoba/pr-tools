@@ -5,7 +5,7 @@ import {
   validatePositiveDecimal
 } from './test-card.validation'
 import { validateWorkItemId } from '../../shared/validation/work-item'
-import type { ProgressReporter, PromptPort } from '../../app/ports'
+import type { ProgressReporter, PromptPort } from '../../infrastructure/terminal/terminal-ports'
 import type { CliOptions } from '../../app/cli.models'
 import {
   buildCreateTestCaseInput,

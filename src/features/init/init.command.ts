@@ -1,6 +1,6 @@
 import type { CliOptions } from '../../app/cli.models'
 import type { ConfigService } from '../../infrastructure/config/config-service'
-import type { TerminalOutput } from '../../app/ports'
+import type { TerminalOutput } from '../../infrastructure/terminal/terminal-ports'
 import { color } from '../../infrastructure/terminal/terminal-style'
 
 export class InitCommand {

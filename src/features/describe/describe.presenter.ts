@@ -1,6 +1,6 @@
 import { azurePrUrl, azurePullRequestUrl, azureWorkItemUrl } from '../../shared/azure/azure-urls'
 import { color } from '../../infrastructure/terminal/terminal-style'
-import type { TerminalOutput } from '../../app/ports'
+import type { TerminalOutput } from '../../infrastructure/terminal/terminal-ports'
 import type { CliOptions } from '../../app/cli.models'
 import type { DescribePreparation, GeneratedDescription } from './describe.models'
 
