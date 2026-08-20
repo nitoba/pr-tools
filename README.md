@@ -65,6 +65,16 @@ opencode auth login
 
 O Codex usa por padrão `gpt-5.6-luna` com thinking `high`. Para OpenCode, informe o modelo no formato `provider/model`, como `openai/gpt-5.5`.
 
+## Diagnóstico
+
+Antes de gerar conteúdo, execute:
+
+```bash
+prt doctor
+```
+
+O diagnóstico verifica Git, remote Azure DevOps, PAT e acesso às APIs, configuração, autenticação dos providers e endpoint OpenAI-compatible. Cada componente informa o problema e como corrigi-lo; falhas críticas fazem o comando retornar código diferente de zero.
+
 ## Gerar e criar PRs
 
 Execute os comandos dentro do clone do projeto que possui o remote Azure DevOps:

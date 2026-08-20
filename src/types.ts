@@ -50,7 +50,7 @@ export type Config = {
 }
 
 export type CliOptions = {
-  command: 'desc' | 'test' | 'init'
+  command: 'desc' | 'test' | 'init' | 'doctor'
   source?: string
   targets: string[]
   workItem?: string

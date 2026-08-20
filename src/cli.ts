@@ -6,6 +6,7 @@ import { collectGitContext, resolveTargets } from './git'
 import { generateDescription } from './llm'
 import { buildPrompt, VERSION } from './prompt'
 import { azurePrUrl, azurePullRequestUrl, azureWorkItemUrl, copyToClipboard } from './output'
+import { runDoctor } from './doctor'
 import { runTestCard } from './test-card'
 import { parseWorkItemId } from './validation'
 import type { CliOptions } from './types'
@@ -78,7 +79,7 @@ export function parseArgs(argv: string[]): CliOptions {
   const command = parsed.positionals[0] ?? 'desc'
   if (parsed.positionals.length > 1)
     throw new Error(`Argumentos posicionais inesperados: ${parsed.positionals.slice(1).join(' ')}`)
-  if (command !== 'desc' && command !== 'test' && command !== 'init')
+  if (command !== 'desc' && command !== 'test' && command !== 'init' && command !== 'doctor')
     throw new Error(`Comando desconhecido: ${command}`)
   const provider = values.provider ? parseProvider(values.provider) : undefined
   if (values.create && values['no-create'])
@@ -123,6 +124,7 @@ Uso:
   prt desc [opções]
   prt test [opções]
   prt init
+  prt doctor
 
 Opções:
   --source <branch>       Branch de origem (padrão: branch atual)
@@ -275,7 +277,9 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     const options = parseArgs(argv)
     if (options.command === 'init') await initConfig()
     else if (options.command === 'test') await runTestCard(options)
-    else await runDesc(options)
+    else if (options.command === 'doctor') {
+      if (!(await runDoctor(options))) process.exit(1)
+    } else await runDesc(options)
   } catch (error) {
     log.error(error instanceof Error ? error.message : String(error))
     process.exit(1)

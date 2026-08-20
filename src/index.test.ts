@@ -48,6 +48,10 @@ describe('pr-tools core parsing', () => {
     })
   })
 
+  test('accepts the doctor command', () => {
+    expect(parseArgs(['doctor'])).toMatchObject({ command: 'doctor' })
+  })
+
   test('selects a non-Test Case parent before linked Test Cases', () => {
     const items: AzureWorkItem[] = [
       { id: 300, fields: { 'System.WorkItemType': 'Test Case' } },

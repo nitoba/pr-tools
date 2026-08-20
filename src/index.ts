@@ -1,6 +1,7 @@
 export * from './cli'
 export * from './azure'
 export * from './config'
+export * from './doctor'
 export * from './git'
 export * from './llm'
 export * from './output'
