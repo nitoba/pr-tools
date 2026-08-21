@@ -25,24 +25,22 @@ final class DescriptionGeneratorLive implements DescriptionGenerator {
     for (final provider in config.providers) {
       final model = _modelFor(config, provider);
       report?.call(provider, model);
-      final attempt = await use
-          .unwrap<ResultDart<GeneratedDescription, AppFailure>, Never>(
-            _attempt(
-              provider: provider,
-              config: config,
-              system: system,
-              prompt: prompt,
-              branch: branch,
-            ).either(),
-          );
-      GeneratedDescription? generated;
-      AppFailure? failure;
-      attempt.fold<void>(
-        (value) => generated = value,
-        (error) => failure = error,
+      final attempt = await use.unwrap(
+        _attempt(
+          provider: provider,
+          config: config,
+          system: system,
+          prompt: prompt,
+          branch: branch,
+        ).either(),
       );
-      if (generated != null) return generated!;
-      errors.add('$provider: ${failure?.message ?? 'falha desconhecida'}');
+      final generated = attempt.fold<GeneratedDescription?>((value) => value, (
+        failure,
+      ) {
+        errors.add('$provider: ${failure.message}');
+        return null;
+      });
+      if (generated != null) return generated;
     }
     use.fail(
       AiFailure(

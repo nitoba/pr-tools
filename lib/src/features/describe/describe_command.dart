@@ -40,10 +40,7 @@ final class DescribeCommandLive implements DescribeCommand {
               progress.message('Tentando $provider ($model)');
             },
           )
-          .catchAll((failure) {
-            progress.error('Falha ao gerar descrição');
-            return Effect.fail(failure);
-          }),
+          .tapError((_) => progress.error('Falha ao gerar descrição')),
     );
     progress.stop(
       'Descrição gerada (${generated.provider}/${generated.model})',

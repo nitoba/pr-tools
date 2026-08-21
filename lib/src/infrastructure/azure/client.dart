@@ -44,7 +44,7 @@ final class AzureHttpResponse {
   final Object? data;
 }
 
-base class AzureFailure extends AppFailure {
+sealed class AzureFailure extends AppFailure {
   const AzureFailure(String message) : super(message, 1);
 }
 

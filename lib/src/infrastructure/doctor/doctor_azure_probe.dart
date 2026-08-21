@@ -22,27 +22,27 @@ final class DoctorAzureProbeLive implements DoctorAzureProbe {
           'Basic ${base64Encode(utf8.encode(':${config.azurePat}'))}',
     };
     final http = use<DoctorHttpClient>();
-    final repository = await use.unwrap(
-      http
-          .get(
-            _azureUrl(
-              remote,
-              '/${_pathSegment(remote.project)}/_apis/git/repositories/${_pathSegment(remote.repository)}',
-            ),
-            headers: headers,
-          )
-          .either(),
-    );
-    final workItems = await use.unwrap(
-      http
-          .get(
-            _azureUrl(
-              remote,
-              '/${_pathSegment(remote.project)}/_apis/wit/workitemtypes',
-            ),
-            headers: headers,
-          )
-          .either(),
+    final (repository, workItems) = await use.unwrap(
+      Effect.parZip(
+        http
+            .get(
+              _azureUrl(
+                remote,
+                '/${_pathSegment(remote.project)}/_apis/git/repositories/${_pathSegment(remote.repository)}',
+              ),
+              headers: headers,
+            )
+            .either(),
+        http
+            .get(
+              _azureUrl(
+                remote,
+                '/${_pathSegment(remote.project)}/_apis/wit/workitemtypes',
+              ),
+              headers: headers,
+            )
+            .either(),
+      ),
     );
     return DoctorAzureReport(
       repository: _probe(repository),

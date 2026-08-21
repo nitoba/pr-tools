@@ -43,10 +43,7 @@ final class TestCardCommandLive implements TestCardCommand {
               progress.message('Tentando $provider ($model)');
             },
           )
-          .catchAll((failure) {
-            progress.error('Falha ao gerar card');
-            return Effect.fail(failure);
-          }),
+          .tapError((_) => progress.error('Falha ao gerar card')),
     );
     progress.stop('Card gerado (${generated.provider}/${generated.model})');
     if (options.raw) {

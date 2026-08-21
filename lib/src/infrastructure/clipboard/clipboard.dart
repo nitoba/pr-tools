@@ -12,8 +12,13 @@ final class NativeClipboard implements Clipboard {
   @override
   AppEffect<bool> copy(String value) => Effect.result((use) async {
     for (final command in _commands) {
-      final copied = await use.unwrap(_copy(command, value).either());
-      if (copied.getOrNull() == true) return true;
+      final copied = await use.unwrap(
+        _copy(
+          command,
+          value,
+        ).catchAll((_) => Effect<bool, AppFailure>.succeed(false)),
+      );
+      if (copied) return true;
     }
     return false;
   });

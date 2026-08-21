@@ -1,4 +1,4 @@
-base class AppFailure implements Exception {
+abstract base class AppFailure implements Exception {
   const AppFailure(this.message, this.exitCode);
 
   final String message;

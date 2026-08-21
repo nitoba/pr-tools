@@ -15,7 +15,7 @@ Future<void> main(List<String> arguments) async {
         await _runWithAzureScope(runtime, options, arguments),
       ParsedOptions(:final options) when options.command == Command.doctor =>
         await runtime.runWith(doctorExecutionModule(), runCli(arguments)),
-      _ => await runtime.run(runCli([...arguments, '--help'])),
+      _ => await runtime.run(runCli(arguments)),
     };
     exitCode = await result.fold((code) async => code, (failure) async {
       await runtime.run(

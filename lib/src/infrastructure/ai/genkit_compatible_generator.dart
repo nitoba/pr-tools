@@ -28,25 +28,21 @@ final class GenkitCompatibleDescriptionGenerator
     String prompt,
     String branch,
   ) => .result((use) async {
-    final structured = await use.unwrap(
-      _generateOnce(
-        config: config,
-        system: system,
-        prompt: prompt,
-        branch: branch,
-        structured: true,
-      ).either(),
-    );
-    PrDescription? description;
-    structured.fold<void>((value) => description = value, (_) {});
-    if (description != null) return description!;
     return use.unwrap(
       _generateOnce(
         config: config,
         system: system,
         prompt: prompt,
         branch: branch,
-        structured: false,
+        structured: true,
+      ).catchAll(
+        (_) => _generateOnce(
+          config: config,
+          system: system,
+          prompt: prompt,
+          branch: branch,
+          structured: false,
+        ),
       ),
     );
   });
