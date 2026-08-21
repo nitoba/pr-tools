@@ -37,10 +37,11 @@ final class DescribePresenterLive implements DescribePresenter {
   AppEffect<Unit> showDryRun(DescribePreparation preparation) =>
       Effect.result((use) async {
         final output = use<TerminalOutput>();
-        output.write('Provider/model: ${_models(preparation)}');
-        output.write('\n[SYSTEM]\n');
+        output.heading('PR · dry run', detail: preparation.context.branch);
+        output.info('Provider/model: ${_models(preparation)}');
+        output.detail('Prompt de sistema');
         output.write(preparation.system);
-        output.write('\n[USER]\n');
+        output.detail('Prompt de usuário');
         output.write(preparation.prompt);
         return unit;
       });
@@ -58,22 +59,23 @@ final class DescribePresenterLive implements DescribePresenter {
       output.write(body);
       return unit;
     }
-    output.write('\nTítulo: $title\n\nDescrição:\n$body');
-    output.write('Branch: ${preparation.context.branch}');
-    output.write('Targets: ${preparation.targets.join(', ')}');
+    output.heading('Pull Request', detail: preparation.context.branch);
+    output.info('Título: $title');
+    output.detail('Targets: ${preparation.targets.join(', ')}');
     if (preparation.workItemId case final workItemId?) {
-      output.write('Work Item: #$workItemId');
+      output.detail('Work Item: #$workItemId');
       if (preparation.context.remote != null) {
-        output.write(
+        output.detail(
           'Work Item URL: ${_workItemUrl(preparation, int.parse(workItemId))}',
         );
       }
     }
     if (preparation.context.remote != null) {
       for (final target in preparation.targets) {
-        output.write('PR $target: ${_pullRequestUrl(preparation, target)}');
+        output.detail('PR $target: ${_pullRequestUrl(preparation, target)}');
       }
     }
+    output.write('\n$body');
     return unit;
   });
 
@@ -89,25 +91,31 @@ final class DescribePresenterLive implements DescribePresenter {
           (item.id > 0
               ? _pullRequestUrlById(preparation, item.id)
               : _pullRequestUrl(preparation, item.target));
-      output.write('✓ PR ${item.target} criado: $url');
+      output.success('PR ${item.target} criado: $url');
     }
     return unit;
   });
 
   @override
-  AppEffect<Unit> intro(String branch) => _write('┌ prt · PR $branch\n│');
+  AppEffect<Unit> intro(String branch) => Effect.result((use) {
+    use<TerminalOutput>().heading('Pull Request', detail: branch);
+    return unit;
+  });
 
   @override
-  AppEffect<Unit> outro(String message) => _write('└ $message');
+  AppEffect<Unit> outro(String message) => _success(message);
 
   @override
-  AppEffect<Unit> success(String message) => _write('✓ $message');
+  AppEffect<Unit> success(String message) => _success(message);
 
   @override
-  AppEffect<Unit> info(String message) => _write('• $message');
+  AppEffect<Unit> info(String message) => Effect.result((use) {
+    use<TerminalOutput>().info(message);
+    return unit;
+  });
 
-  AppEffect<Unit> _write(String value) => Effect.result((use) {
-    use<TerminalOutput>().write(value);
+  AppEffect<Unit> _success(String message) => Effect.result((use) {
+    use<TerminalOutput>().success(message);
     return unit;
   });
 }

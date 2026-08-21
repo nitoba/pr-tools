@@ -1,4 +1,5 @@
 import 'package:better_effect/better_effect.dart';
+import 'package:terminice/terminice.dart' show Terminice;
 
 import '../application/ai/description_generator.dart';
 import '../application/clipboard/clipboard.dart';
@@ -30,6 +31,7 @@ import 'application.dart';
 import 'cli_options.dart';
 
 final appModule = Module.complete([
+  .instance<Terminice>(prtTerminice),
   .provide<PromptPort>(PromptPortLive.new),
   .provide<TerminalOutput>(TerminalOutputLive.new),
   .provide<ProgressReporter>(TerminiceProgress.new),

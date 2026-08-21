@@ -14,27 +14,31 @@ final class DoctorPresenterLive implements DoctorPresenter {
   @override
   AppEffect<Unit> show(DoctorReport report) => Effect.result((use) {
     final output = use<TerminalOutput>();
-    output.write('┌ prt · doctor\n│');
+    output.heading('Doctor');
     for (final item in report.checks) {
-      final prefix = switch (item.status) {
-        doctorOk => '✓ OK',
-        doctorWarning => '⚠ AVISO',
-        _ => '✗ FALHA',
-      };
-      final message = '$prefix · ${item.component}: ${item.detail}';
-      if (item.status == doctorFailure) {
-        output.writeError(message);
-      } else {
-        output.write(message);
+      final message = '${item.component}: ${item.detail}';
+      switch (item.status) {
+        case doctorOk:
+          output.success(message);
+        case doctorWarning:
+          output.warning(message);
+        case doctorFailure:
+          output.writeError(message);
       }
-      if (item.fix != null) output.write('•   Como resolver: ${item.fix}');
+      if (item.fix != null) output.detail('Como resolver: ${item.fix}');
     }
     final summary = report.failures > 0
         ? 'Doctor encontrou ${report.failures} falha(s) e ${report.warnings} aviso(s).'
         : report.warnings > 0
         ? 'Doctor concluído com ${report.warnings} aviso(s).'
         : 'Doctor concluído: todos os componentes estão prontos.';
-    output.write('└ $summary');
+    if (report.failures > 0) {
+      output.writeError(summary);
+    } else if (report.warnings > 0) {
+      output.warning(summary);
+    } else {
+      output.success(summary);
+    }
     return unit;
   });
 }

@@ -1,0 +1,30 @@
+import 'package:pr_tools/src/infrastructure/terminal/terminal_live.dart';
+import 'package:terminice/testing.dart';
+import 'package:test/test.dart';
+
+void main() {
+  test('renders terminal states through Terminice fallback', () async {
+    final tester = TerminiceTester.nonInteractive();
+
+    await tester.runAsync((_) async {
+      final output = TerminalOutputLive(tester.terminice);
+      output.heading('Doctor');
+      output.info('Verificando configuração');
+      output.success('Configuração pronta');
+      output.warning('Token expira em breve');
+      output.writeError('Remote indisponível');
+
+      final progress = TerminiceProgress(tester.terminice);
+      progress.start('Gerando descrição');
+      progress.stop('Descrição gerada');
+    });
+
+    final output = tester.output.plainText;
+    expect(output, contains('prt · Doctor'));
+    expect(output, contains('Verificando configuração'));
+    expect(output, contains('Configuração pronta'));
+    expect(output, contains('Token expira em breve'));
+    expect(output, contains('Remote indisponível'));
+    expect(output, contains('Descrição gerada'));
+  });
+}

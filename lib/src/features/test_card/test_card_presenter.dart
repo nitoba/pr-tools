@@ -33,20 +33,23 @@ final class TestCardPresenterLive implements TestCardPresenter {
   const TestCardPresenterLive();
 
   @override
-  AppEffect<Unit> intro(String branch) =>
-      _write('┌ prt · Test Case $branch\n│');
+  AppEffect<Unit> intro(String branch) => Effect.result((use) {
+    use<TerminalOutput>().heading('Test Case', detail: branch);
+    return unit;
+  });
 
   @override
-  AppEffect<Unit> outro(String message) => _write('└ $message');
+  AppEffect<Unit> outro(String message) => _success(message);
 
   @override
   AppEffect<Unit> showDryRun(Config config, String prompt) =>
       Effect.result((use) {
         final output = use<TerminalOutput>();
-        output.write('Provider/model: ${_models(config)}');
-        output.write('\n[SYSTEM]\n');
+        output.heading('Test Case · dry run');
+        output.info('Provider/model: ${_models(config)}');
+        output.detail('Prompt de sistema');
         output.write(testCardSystemPromptValue);
-        output.write('\n[USER]\n');
+        output.detail('Prompt de usuário');
         output.write(prompt);
         return unit;
       });
@@ -62,19 +65,20 @@ final class TestCardPresenterLive implements TestCardPresenter {
   ) => Effect.result((use) {
     final output = use<TerminalOutput>();
     final context = preparation.context;
-    output.write(
+    output.heading(
       'Test Card${context.pullRequest == null ? '' : ' · PR #${context.pullRequest!.id}'}',
     );
-    output.write('Provider: $provider/$model');
-    output.write(
+    output.info('Título: $title');
+    output.detail('Provider: $provider/$model');
+    output.detail(
       'Work Item: #${context.workItem.id} — ${workItemText(context.workItem, 'System.Title')}',
     );
-    output.write(
+    output.detail(
       'AreaPath: ${(options.areaPath ?? preparation.config.testAreaPath).isEmpty ? '(não configurado)' : options.areaPath ?? preparation.config.testAreaPath}',
     );
     final assigned = options.assignedTo ?? preparation.config.testAssignedTo;
-    if (assigned.isNotEmpty) output.write('Responsável: $assigned');
-    output.write('\nTítulo: $title\n\n$body');
+    if (assigned.isNotEmpty) output.detail('Responsável: $assigned');
+    output.write('\n$body');
     return unit;
   });
 
@@ -82,10 +86,18 @@ final class TestCardPresenterLive implements TestCardPresenter {
   AppEffect<Unit> raw(String body) => _write(body);
 
   @override
-  AppEffect<Unit> success(String message) => _write('✓ $message');
+  AppEffect<Unit> success(String message) => _success(message);
 
   @override
-  AppEffect<Unit> info(String message) => _write('• $message');
+  AppEffect<Unit> info(String message) => Effect.result((use) {
+    use<TerminalOutput>().info(message);
+    return unit;
+  });
+
+  AppEffect<Unit> _success(String message) => Effect.result((use) {
+    use<TerminalOutput>().success(message);
+    return unit;
+  });
 
   AppEffect<Unit> _write(String value) => Effect.result((use) {
     use<TerminalOutput>().write(value);

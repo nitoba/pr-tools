@@ -26,9 +26,19 @@ abstract interface class PromptPort {
 }
 
 abstract interface class TerminalOutput {
+  void heading(String title, {String? detail});
+
   void write(String message);
 
   void writeError(String message);
+
+  void info(String message);
+
+  void success(String message);
+
+  void warning(String message);
+
+  void detail(String message);
 }
 
 abstract interface class ProgressReporter {

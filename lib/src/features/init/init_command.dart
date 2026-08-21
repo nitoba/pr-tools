@@ -15,26 +15,23 @@ final class InitCommandLive implements InitCommand {
     final output = use<TerminalOutput>();
     final config = use<ConfigService>();
     final runtime = use<ConfigRuntime>();
-    if (runtime.interactive) output.write('┌ prt · configuração\n│');
+    if (runtime.interactive) output.heading('Configuração');
 
     final result = await use.unwrap(config.initialize());
     if (result.cancelled) {
-      output.write('✗ Operação cancelada.');
+      output.warning('Operação cancelada.');
       return 0;
     }
     if (result.interactive) {
       final patStatus = result.azurePatConfigured
           ? 'PAT Azure salvo em ${result.paths.envFile} (AZURE_PAT)'
           : 'PAT Azure não configurado';
-      output.write(
-        '◆ prt\n'
-        'Configuração salva em ${result.paths.configFile}\n'
-        '$patStatus\n'
-        'Template salvo em ${result.paths.templateFile}',
-      );
-      output.write('└ Pronto. Execute `prt desc --dry-run`.');
+      output.success('Configuração salva em ${result.paths.configFile}');
+      output.detail(patStatus);
+      output.detail('Template salvo em ${result.paths.templateFile}');
+      output.success('Pronto. Execute `prt desc --dry-run`.');
     } else {
-      output.write('Configuração salva em ${result.paths.configFile}');
+      output.success('Configuração salva em ${result.paths.configFile}');
     }
     return 0;
   });

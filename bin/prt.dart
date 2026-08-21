@@ -2,7 +2,7 @@ import 'dart:io';
 
 import 'package:better_effect/better_effect.dart';
 import 'package:pr_tools/pr_tools.dart';
-import 'package:terminice/terminice.dart';
+import 'package:pr_tools/src/application/terminal/terminal_ports.dart';
 
 Future<void> main(List<String> arguments) async {
   final runtime = await appModule.start();
@@ -15,12 +15,17 @@ Future<void> main(List<String> arguments) async {
         await _runWithAzureScope(runtime, options, arguments),
       ParsedOptions(:final options) when options.command == Command.doctor =>
         await runtime.runWith(doctorExecutionModule(), runCli(arguments)),
-      _ => await runtime.run(runCli(arguments)),
+      _ => await runtime.run(runCli([...arguments, '--help'])),
     };
-    exitCode = result.fold((code) => code, (failure) {
-      final ui = terminice.autoFallback;
-      ui.error(failure.message);
-      ui.detail('Use `prt --help` para ver as opções.');
+    exitCode = await result.fold((code) async => code, (failure) async {
+      await runtime.run(
+        Effect<Unit, AppFailure>.result((use) {
+          final output = use<TerminalOutput>();
+          output.writeError(failure.message);
+          output.detail('Use `prt --help` para ver as opções.');
+          return unit;
+        }),
+      );
       return failure.exitCode;
     });
   } finally {

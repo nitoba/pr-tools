@@ -44,9 +44,12 @@ void main() {
       ),
       0,
     );
-    expect(output.messages.first, '┌ prt · configuração\n│');
+    expect(output.messages.first, 'heading:Configuração');
     expect(output.messages.join('\n'), contains('PAT Azure salvo'));
-    expect(output.messages.last, '└ Pronto. Execute `prt desc --dry-run`.');
+    expect(
+      output.messages.last,
+      'success:Pronto. Execute `prt desc --dry-run`.',
+    );
   });
 
   test('reports cancellation without failing the command', () async {
@@ -80,7 +83,7 @@ void main() {
       ),
       0,
     );
-    expect(output.messages.last, '✗ Operação cancelada.');
+    expect(output.messages.last, 'warning:Operação cancelada.');
   });
 }
 
@@ -125,8 +128,24 @@ final class _Output implements TerminalOutput {
   final List<String> messages = [];
 
   @override
+  void heading(String title, {String? detail}) =>
+      messages.add('heading:$title${detail == null ? '' : ':$detail'}');
+
+  @override
   void write(String message) => messages.add(message);
 
   @override
   void writeError(String message) => messages.add(message);
+
+  @override
+  void info(String message) => messages.add('info:$message');
+
+  @override
+  void success(String message) => messages.add('success:$message');
+
+  @override
+  void warning(String message) => messages.add('warning:$message');
+
+  @override
+  void detail(String message) => messages.add('detail:$message');
 }
