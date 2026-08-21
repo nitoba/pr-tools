@@ -50,7 +50,7 @@ String _nativeTarget() {
 }
 
 Never _usage() {
-  stderr.writeln('Uso: dart run tool/build.dart [alvo]');
+  stderr.writeln('Uso: dart run scripts/build.dart [alvo]');
   stderr.writeln('Alvos: linux-x64, linux-arm64, macos-arm64, windows-x64');
   exit(2);
 }
