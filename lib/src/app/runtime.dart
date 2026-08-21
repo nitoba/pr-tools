@@ -61,6 +61,7 @@ final appModule = Module.complete([
 Module doctorExecutionModule() => doctorRequestModule();
 
 AppEffect<int> runCli(List<String> arguments) => .result((use) {
+  use.cancellation.throwIfCancelled();
   final application = use<CliApplication>();
   return use.unwrap(application.run(arguments));
 });
@@ -71,5 +72,6 @@ AppEffect<Module> azureExecutionModule(CliOptions options) =>
       final context = await use.unwrap(
         use<ChangeContextReader>().collect(options.source),
       );
+      use.cancellation.throwIfCancelled();
       return azureRequestModule(config, context);
     });

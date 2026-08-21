@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:better_effect/better_effect.dart';
@@ -6,41 +7,82 @@ import 'package:pr_tools/src/application/terminal/terminal_ports.dart';
 
 Future<void> main(List<String> arguments) async {
   final runtime = await appModule.start();
+  Future<void>? closing;
+
+  void requestShutdown(ProcessSignal _) {
+    closing ??= runtime.close(interruptAfterGracePeriod: true);
+  }
+
+  final signals = <StreamSubscription<ProcessSignal>>[
+    ProcessSignal.sigint.watch().listen(requestShutdown),
+    if (!Platform.isWindows)
+      ProcessSignal.sigterm.watch().listen(requestShutdown),
+  ];
   try {
     final parsed = parseCli(arguments);
-    final result = switch (parsed) {
+    final exit = await switch (parsed) {
       ParsedOptions(:final options)
           when options.command == Command.desc ||
               options.command == Command.test =>
-        await _runWithAzureScope(runtime, options, arguments),
+        _runWithAzureScope(runtime, options, arguments),
       ParsedOptions(:final options) when options.command == Command.doctor =>
-        await runtime.runWith(doctorExecutionModule(), runCli(arguments)),
-      _ => await runtime.run(runCli(arguments)),
+        runtime.runExitWith(
+          doctorExecutionModule(),
+          runCli(arguments),
+          executionLabel: 'cli.doctor',
+        ),
+      _ => runtime.runExit(runCli(arguments), executionLabel: 'cli'),
     };
-    exitCode = await result.fold((code) async => code, (failure) async {
+    exitCode = await _exitCode(runtime, exit);
+  } finally {
+    for (final signal in signals) {
+      await signal.cancel();
+    }
+    await (closing ?? runtime.close());
+  }
+}
+
+Future<int> _exitCode(Runtime runtime, Exit<int, AppFailure> exit) async {
+  switch (exit) {
+    case ExitSuccess(:final value):
+      return value;
+    case ExitFailure(:final error):
       await runtime.run(
         Effect<Unit, AppFailure>.result((use) {
           final output = use<TerminalOutput>();
-          output.writeError(failure.message);
+          output.writeError(error.message);
           output.detail('Use `prt --help` para ver as opções.');
           return unit;
         }),
       );
-      return failure.exitCode;
-    });
-  } finally {
-    await runtime.close();
+      return error.exitCode;
+    case ExitInterrupted():
+      return 130;
+    case ExitDefect(:final defect, :final stackTrace):
+      Error.throwWithStackTrace(defect, stackTrace);
   }
 }
 
-Future<ResultDart<int, AppFailure>> _runWithAzureScope(
+Future<Exit<int, AppFailure>> _runWithAzureScope(
   Runtime runtime,
   CliOptions options,
   List<String> arguments,
 ) async {
-  final scope = await runtime.run(azureExecutionModule(options));
-  return scope.fold(
-    (module) => runtime.runWith(module, runCli(arguments)),
-    (failure) async => Failure<int, AppFailure>(failure),
+  final scope = await runtime.runExit(
+    azureExecutionModule(options),
+    executionLabel: 'cli.azure.setup',
   );
+  return switch (scope) {
+    ExitSuccess(:final value) => runtime.runExitWith(
+      value,
+      runCli(arguments),
+      executionLabel: 'cli.${options.command.name}',
+    ),
+    ExitFailure(:final error) => ExitFailure<int, AppFailure>(error),
+    ExitInterrupted() => const ExitInterrupted<int, AppFailure>(),
+    ExitDefect(:final defect, :final stackTrace) => Error.throwWithStackTrace(
+      defect,
+      stackTrace,
+    ),
+  };
 }
