@@ -115,11 +115,13 @@ Use `prt --help` para consultar todos os argumentos e `prt --version` para confe
 ## Desenvolvimento
 
 ```bash
-bun install
-bun run src/index.ts init
-bun run lint
-bun test
-bun run build
+dart pub get
+dart analyze
+dart test
+dart run tool/build.dart
 ```
 
-`bun run build` gera o binário nativo com `scriptc`. Os executáveis externos `codex` e `opencode` continuam sendo instalados e autenticados separadamente na máquina do usuário.
+`dart run tool/build.dart` gera `dist/prt-<plataforma>` para o host atual. A
+release compila cada binário no runner nativo correspondente. Os executáveis
+externos `codex` e `opencode` continuam sendo instalados e autenticados
+separadamente na máquina do usuário.

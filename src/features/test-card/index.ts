@@ -1,5 +1,0 @@
-export * from './test-card.command'
-export * from './test-card.models'
-export * from './test-card.presenter'
-export * from './test-card.service'
-export * from './test-card.validation'

@@ -1,5 +1,0 @@
-export * from './describe.command'
-export * from './describe.models'
-export * from './describe.presenter'
-export * from './describe.prompt'
-export * from './describe.service'
