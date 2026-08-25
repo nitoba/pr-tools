@@ -16,28 +16,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v7
+      - name: Setup Dart
+        uses: dart-lang/setup-dart@v1
         with:
-          node-version: 24
-          package-manager-cache: false
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.4.0
+          sdk: 3.13.1
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: dart pub get
 
-      - name: Typecheck
-        run: bun run typecheck
+      - name: Format
+        run: dart format --output=none --set-exit-if-changed bin lib test scripts
 
-      - name: Lint
-        run: bunx --no-install oxlint --type-aware src scripts
+      - name: Analyze
+        run: dart analyze
 
       - name: Test
-        run: bun test
+        run: dart test
 
       - name: Build native artifact
-        run: bun run build
+        run: dart run scripts/build.dart linux-x64

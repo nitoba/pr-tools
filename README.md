@@ -1,6 +1,6 @@
 # pr-tools (`prt`)
 
-CLI para gerar descrições de pull request e Test Cases a partir do contexto Git. Ela chama diretamente o Codex e o OpenCode instalados na máquina, ou usa o AI SDK para endpoints compatíveis com a API da OpenAI.
+CLI para gerar descrições de pull request e Test Cases a partir do contexto Git. Ela chama diretamente o Codex e o OpenCode instalados na máquina, ou usa Genkit com endpoints compatíveis com a API da OpenAI.
 
 O fluxo é guiado: a descrição/card é exibida antes da publicação e a criação sempre exige confirmação. O acesso ao Azure DevOps é feito pela API REST, sem depender do `az` CLI.
 
@@ -23,7 +23,7 @@ Para instalar uma versão específica:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/nitoba/pr-tools/main/scripts/install.sh \
-  | PR_TOOLS_VERSION=v3.0.0 bash
+  | PR_TOOLS_VERSION=v4.0.0 bash
 ```
 
 Abra um novo terminal após a instalação. O instalador configura `.profile`/`.bashrc`, `.zprofile` ou `config.fish`, conforme o shell usado.
@@ -115,11 +115,15 @@ Use `prt --help` para consultar todos os argumentos e `prt --version` para confe
 ## Desenvolvimento
 
 ```bash
-bun install
-bun run src/index.ts init
-bun run lint
-bun test
-bun run build
+dart pub get
+dart analyze
+dart test
+dart run scripts/build.dart
 ```
 
-`bun run build` gera o binário nativo com `scriptc`. Os executáveis externos `codex` e `opencode` continuam sendo instalados e autenticados separadamente na máquina do usuário.
+`dart run scripts/build.dart` gera `dist/prt-<plataforma>` para o host atual.
+A plataforma também pode ser informada explicitamente, desde que corresponda
+ao host, por exemplo `dart run scripts/build.dart linux-x64`. A
+release compila cada binário no runner nativo correspondente. Os executáveis
+externos `codex` e `opencode` continuam sendo instalados e autenticados
+separadamente na máquina do usuário.
