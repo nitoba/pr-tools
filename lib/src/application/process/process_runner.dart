@@ -21,5 +21,6 @@ abstract interface class ProcessRunner {
     String command,
     List<String> arguments, {
     Duration? timeout,
+    String? input,
   });
 }

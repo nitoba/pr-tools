@@ -98,8 +98,13 @@ final class DescriptionGeneratorLive implements DescriptionGenerator {
     if (config.codexReasoning != 'provider-default') {
       args.addAll(['-c', 'model_reasoning_effort=${config.codexReasoning}']);
     }
-    args.add('$system\n\n$prompt');
-    final result = await _runProcess(use, 'codex', args);
+    args.add('-');
+    final result = await _runProcess(
+      use,
+      'codex',
+      args,
+      input: '$system\n\n$prompt',
+    );
     _validateProcess(result, 'codex', use);
     return use.unwrap(normalizeDescription(null, result.stdout, branch));
   });
@@ -143,12 +148,13 @@ final class DescriptionGeneratorLive implements DescriptionGenerator {
   Future<ProcessResult> _runProcess(
     EffectContext<AppFailure> use,
     String provider,
-    List<String> args,
-  ) async {
+    List<String> args, {
+    String? input,
+  }) async {
     final processes = use<ProcessRunner>();
     return await use.unwrap(
       processes
-          .run(provider, args)
+          .run(provider, args, input: input)
           .mapError((error) => AiFailure('$provider falhou: ${error.message}')),
     );
   }

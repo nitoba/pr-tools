@@ -91,6 +91,7 @@ final class _ProcessRunnerFake implements ProcessRunner {
     String command,
     List<String> arguments, {
     Duration? timeout,
+    String? input,
   }) => Effect.succeed(
     _outputs[arguments.join(' ')] ??
         const ProcessResult(

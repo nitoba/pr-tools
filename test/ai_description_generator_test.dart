@@ -79,6 +79,8 @@ void main() {
         'codex',
         'opencode',
       ]);
+      expect(processes.commands.first.arguments.last, '-');
+      expect(processes.inputs, ['system\n\nprompt', isNull]);
     },
   );
 
@@ -134,14 +136,17 @@ final class FakeProcessRunner implements ProcessRunner {
 
   final List<ProcessResult> results;
   final commands = <({String command, List<String> arguments})>[];
+  final inputs = <String?>[];
 
   @override
   AppEffect<ProcessResult> run(
     String command,
     List<String> arguments, {
     Duration? timeout,
+    String? input,
   }) {
     commands.add((command: command, arguments: List.unmodifiable(arguments)));
+    inputs.add(input);
     return Effect.succeed(results.removeAt(0));
   }
 }

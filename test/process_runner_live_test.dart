@@ -32,6 +32,26 @@ void main() {
     harness.assertNoActiveExecutions();
   });
 
+  test('forwards optional input through stdin', () async {
+    final harness = await TestRuntime.start(
+      Module([]),
+      registerCleanup: (cleanup) => addTearDown(cleanup),
+    );
+    final execution = harness.execute(
+      ProcessRunnerLive().run(Platform.resolvedExecutable, [
+        'run',
+        'test/fixtures/read_stdin.dart',
+      ], input: 'prompt too large for argv'),
+      label: 'process.input',
+    );
+
+    final result = expectExitSuccess<ProcessResult, AppFailure>(
+      await execution.exit,
+    );
+    expect(result.stdout, 'prompt too large for argv');
+    await harness.close();
+  });
+
   test('stops a running subprocess when its effect is interrupted', () async {
     final harness = await TestRuntime.start(
       Module([]),
