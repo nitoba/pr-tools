@@ -64,8 +64,8 @@ void main() {
         );
         expect(pullRequests.created[0].request.targetRefName, 'refs/heads/dev');
         expect(
-          pullRequests.created[0].request.reviewers!.single.uniqueName,
-          'qa@example.com',
+          pullRequests.created[0].request.reviewers!.single.id,
+          'reviewer-id',
         );
         expect(pullRequests.created[0].request.workItemRefs?.single.id, '42');
         expect(pullRequests.created[1].request.reviewers, isNull);
@@ -226,10 +226,12 @@ Module _scope(
   Config config,
   ChangeContext context,
   AzurePullRequestClient pullRequests,
-  AzureWorkItemClient workItems,
-) => azureRequestModule(config, context).overrideWith([
+  AzureWorkItemClient workItems, {
+  AzureIdentityClient? identities,
+}) => azureRequestModule(config, context).overrideWith([
   .instance<AzurePullRequestClient>(pullRequests),
   .instance<AzureWorkItemClient>(workItems),
+  .instance<AzureIdentityClient>(identities ?? _FakeIdentityClient()),
 ]);
 
 Config _config() => const Config(
@@ -358,6 +360,12 @@ final class _FakePullRequests implements AzurePullRequestClient {
     String repository,
     int pullRequestId,
   ) => Effect.result((_) => const [42]);
+}
+
+final class _FakeIdentityClient implements AzureIdentityClient {
+  @override
+  AppEffect<AzureIdentity> resolve(String value) =>
+      Effect.succeed(const AzureIdentity(id: 'reviewer-id'));
 }
 
 final class _FakeWorkItems implements AzureWorkItemClient {

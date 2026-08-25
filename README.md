@@ -90,7 +90,7 @@ prt desc --target dev --work-item 11763
 prt desc --target dev --target sprint --create
 ```
 
-O comando mostra título, descrição, targets e Work Item, copia o body para o clipboard quando possível e pede confirmação antes de criar cada PR. Os reviewers podem ser ajustados no próprio fluxo; os emails definidos no `init` são usados como sugestão. Ao reutilizar uma branch após um PR mesclado, o histórico do último PR concluído é usado como baseline para incluir apenas as novas alterações.
+O comando mostra título, descrição, targets e Work Item, copia o body para o clipboard quando possível e pede confirmação da criação e dos reviewers antes de publicar. Os reviewers podem ser ajustados no próprio fluxo; os emails definidos no `init` são usados como sugestão. Ao reutilizar uma branch após um PR mesclado, o histórico do último PR concluído é usado como baseline para incluir apenas as novas alterações.
 
 Opções úteis: `--source <branch>`, `--target <branch>` (repetível), `--provider <nome>`, `--model <nome>`, `--raw` e `--no-copy`.
 

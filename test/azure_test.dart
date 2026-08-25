@@ -129,7 +129,7 @@ void main() {
               description: 'A body',
               sourceRefName: 'refs/heads/feature/1',
               targetRefName: 'refs/heads/dev',
-              reviewers: [AzureIdentity(uniqueName: 'qa@example.com')],
+              reviewers: [AzureIdentity(id: 'identity-id')],
               workItemRefs: [AzureResourceRef(id: '123')],
             ),
           ),
@@ -162,7 +162,7 @@ void main() {
       'sourceRefName': 'refs/heads/feature/1',
       'targetRefName': 'refs/heads/dev',
       'reviewers': [
-        {'uniqueName': 'qa@example.com'},
+        {'id': 'identity-id'},
       ],
       'workItemRefs': [
         {'id': '123'},
@@ -215,6 +215,36 @@ void main() {
         contains('searchCriteria.sourceRefName=refs%2Fheads%2Ffeature%2F1'),
         contains('searchCriteria.targetRefName=refs%2Fheads%2Fdev'),
         contains('%24top=100'),
+        endsWith('api-version=7.1'),
+      ),
+    );
+  });
+
+  test('resolves reviewer emails to Azure identity IDs', () async {
+    final http = _RecordingHttp(
+      (_) => {
+        'value': [
+          {'id': 'identity-id'},
+        ],
+      },
+    );
+    final identity = await _run(
+      _apiModule(http),
+      Effect.result((use) async {
+        return use.unwrap(
+          use<AzureIdentityClient>().resolve('qa+reviewer@example.com'),
+        );
+      }),
+    );
+
+    expect(identity.id, 'identity-id');
+    expect(http.requests.single.baseUrl, 'https://vssps.dev.azure.com/acme');
+    expect(
+      http.requests.single.path,
+      allOf(
+        contains('searchFilter=General'),
+        contains('filterValue=qa%2Breviewer%40example.com'),
+        contains('queryMembership=None'),
         endsWith('api-version=7.1'),
       ),
     );
@@ -353,6 +383,7 @@ Module _apiModule(_RecordingHttp http) => Module([
   .instance<AzureHttp>(http),
   .provide<AzureDevOpsClient>(AzureDevOpsClientLive.new),
   .provide<AzurePullRequestClient>(AzurePullRequestClientLive.new),
+  .provide<AzureIdentityClient>(AzureIdentityClientLive.new),
   .provide<AzureWorkItemClient>(AzureWorkItemClientLive.new),
 ]);
 

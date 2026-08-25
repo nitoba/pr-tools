@@ -157,7 +157,7 @@ final class AzurePullRequestClientLive implements AzurePullRequestClient {
     String targetRefName,
   ) => Effect.result((use) async {
     final client = use<AzureDevOpsClient>();
-    final query = _query({
+    final query = azureQuery({
       'searchCriteria.status': 'completed',
       'searchCriteria.sourceRefName': sourceRefName,
       'searchCriteria.targetRefName': targetRefName,
@@ -289,13 +289,6 @@ final class AzurePullRequestClientLive implements AzurePullRequestClient {
     return ids;
   });
 }
-
-String _query(Map<String, String> parameters) => parameters.entries
-    .map(
-      (entry) =>
-          '${Uri.encodeQueryComponent(entry.key)}=${Uri.encodeQueryComponent(entry.value)}',
-    )
-    .join('&');
 
 AppEffect<T> _decode<T extends Object>(T Function() decode) => Effect.tryAsync(
   decode,

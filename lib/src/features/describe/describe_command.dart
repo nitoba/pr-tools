@@ -77,8 +77,23 @@ final class DescribeCommandLive implements DescribeCommand {
             initialValue: defaultReviewer,
           );
           if (reviewer == null) return 0;
-          reviewers[target] = reviewer.trim();
+          final selectedReviewer = reviewer.trim();
+          reviewers[target] = selectedReviewer.isEmpty
+              ? defaultReviewer.trim()
+              : selectedReviewer;
         }
+        final reviewerSummary = preparation.targets
+            .map(
+              (target) =>
+                  '$target: ${reviewers[target]!.isEmpty ? 'nenhum' : reviewers[target]}',
+            )
+            .join('; ');
+        final confirmedReviewers = await _confirm(
+          use,
+          'Criar PR(s) com estes reviewers? $reviewerSummary',
+          initialValue: true,
+        );
+        if (!confirmedReviewers) return 0;
         final published = await use.unwrap(
           use<PullRequestPublisher>().publish(
             preparation.targets,

@@ -24,12 +24,14 @@ final class AzureRequest {
     this.method = 'GET',
     this.body,
     this.contentType = 'application/json',
+    this.baseUrl,
   });
 
   final String path;
   final String method;
   final Object? body;
   final String contentType;
+  final String? baseUrl;
 }
 
 final class AzureHttpResponse {
@@ -104,7 +106,7 @@ final class AzureHttpLive implements AzureHttp {
       Effect.tryAsync(
         () async {
           final response = await dio.request<String>(
-            azureUrl(config, request.path),
+            azureUrl(config, request.path, baseUrl: request.baseUrl),
             data: request.body == null ? null : jsonEncode(request.body),
             options: Options(
               method: request.method,
@@ -162,15 +164,22 @@ String withApiVersion(String path, [String version = '7.1']) {
   return '$path${separator}api-version=${Uri.encodeComponent(version)}';
 }
 
-String azureUrl(AzureClientOptions options, String path) {
+String azureUrl(AzureClientOptions options, String path, {String? baseUrl}) {
   final defaultBase =
       'https://dev.azure.com/${Uri.encodeComponent(options.organization)}';
-  final base = (options.baseUrl ?? defaultBase).replaceFirst(
+  final base = (baseUrl ?? options.baseUrl ?? defaultBase).replaceFirst(
     RegExp(r'\/$'),
     '',
   );
   return '$base/${path.replaceFirst(RegExp(r'^/+'), '')}';
 }
+
+String azureQuery(Map<String, String> parameters) => parameters.entries
+    .map(
+      (entry) =>
+          '${Uri.encodeQueryComponent(entry.key)}=${Uri.encodeQueryComponent(entry.value)}',
+    )
+    .join('&');
 
 final class _AzureJsonNull {
   const _AzureJsonNull();
