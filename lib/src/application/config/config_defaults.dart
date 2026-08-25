@@ -31,4 +31,6 @@ Liste componentes ou arquivos relevantes e descreva a mudança funcional.
 - [ ] Breaking change
 - [ ] Refactoring
 
-Não invente alterações que não estejam no diff.''';
+Não invente alterações que não estejam no diff.
+
+Responda somente com o objeto JSON. Não inclua o prompt, o contexto Git, o log, o diff ou qualquer texto adicional fora desse objeto.''';

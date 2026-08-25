@@ -60,7 +60,7 @@ void main() {
       ]);
       const options = CliOptions(
         command: Command.desc,
-        targets: ['dev'],
+        targets: [],
         create: false,
         noCreate: false,
         dryRun: false,
@@ -83,6 +83,7 @@ void main() {
       AppFailure? failure;
       result.fold<void>((value) => success = value, (error) => failure = error);
       expect(failure, isNull);
+      expect(success?.$1.targets, ['sprint/98', 'dev']);
       expect(success?.$1.prompt, contains('**Work Item:** #42'));
       expect(success?.$1.system, 'system template');
       expect(success?.$2.description.title, 'Generated');

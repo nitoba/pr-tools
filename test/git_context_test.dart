@@ -11,7 +11,7 @@ void main() {
     const context = ChangeContext(
       branch: 'feature/11763-description',
       sourceRef: 'feature/11763-description',
-      baseBranch: 'origin/dev',
+      baseBranch: 'sprint/42',
       sprintBranch: 'sprint/42',
       diff: '',
       diffOriginalLines: 0,
@@ -25,6 +25,7 @@ void main() {
     );
 
     expect(resolveTargets(context, ['sprint', 'dev']), ['sprint/42', 'dev']);
+    expect(resolveTargets(context, []), ['sprint/42', 'dev']);
     expect(workItemFromBranch(context.branch), '11763');
   });
 

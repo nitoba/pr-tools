@@ -23,7 +23,7 @@ Para instalar uma versão específica:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/nitoba/pr-tools/main/scripts/install.sh \
-  | PR_TOOLS_VERSION=v4.0.0 bash
+  | PR_TOOLS_VERSION=v4.0.1 bash
 ```
 
 Abra um novo terminal após a instalação. O instalador configura `.profile`/`.bashrc`, `.zprofile` ou `config.fish`, conforme o shell usado.
@@ -77,7 +77,7 @@ O diagnóstico verifica Git, remote Azure DevOps, PAT e acesso às APIs, configu
 
 ## Gerar e criar PRs
 
-Execute os comandos dentro do clone do projeto que possui o remote Azure DevOps:
+Execute os comandos dentro do clone do projeto que possui o remote Azure DevOps. Sem `--target`, o comando gera/publica PRs para a sprint mais recente e `dev`. Ao informar um ou mais `--target`, somente os destinos informados são usados.
 
 ```bash
 # Conferir o prompt sem chamar o provider

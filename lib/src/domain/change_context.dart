@@ -45,8 +45,8 @@ List<String> resolveTargets(ChangeContext context, List<String> requested) {
         .where((target) => target.isNotEmpty)
         .toList();
   }
-  return {
+  return [
     context.sprintBranch,
-    context.baseBranch.replaceFirst(RegExp(r'^origin/'), ''),
-  }.where((target) => target.isNotEmpty).toList();
+    'dev',
+  ].where((target) => target.isNotEmpty).toList();
 }

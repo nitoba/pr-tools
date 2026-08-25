@@ -41,7 +41,9 @@ final class DescribeServiceLive implements DescribeService {
     final context = await use.unwrap(
       use<ChangeContextReader>().collect(options.source),
     );
-    if (options.targets.contains('sprint') && context.sprintBranch.isEmpty) {
+    final usesDefaultTargets = options.targets.isEmpty;
+    if ((usesDefaultTargets || options.targets.contains('sprint')) &&
+        context.sprintBranch.isEmpty) {
       use.fail(
         const DescribeFailure(
           'Target sprint solicitado, mas nenhuma branch sprint/<número> foi encontrada.',

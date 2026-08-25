@@ -28,6 +28,38 @@ void main() {
     expect(result.body, '## Descrição\nInclui CPF.');
   });
 
+  test('extracts JSON before trailing provider context', () async {
+    final result = await _normalize(null, '''Resposta final:
+{"title":"Ajusta login","body":"## Descrição\\nCorrige fluxo."}
+
+## Contexto Git
+**Branch:** feature/1-login
+### Git Diff
+diff --git a/file b/file
+''', 'feature/1-login');
+
+    expect(
+      result,
+      const PrDescription(
+        title: 'Ajusta login',
+        body: '## Descrição\nCorrige fluxo.',
+      ),
+    );
+  });
+
+  test('removes echoed git context from the body', () async {
+    final result = await _normalize(
+      {
+        'title': 'Ajusta login',
+        'body': '## Descrição\nCorrige fluxo.\n\n## Contexto Git\n**Branch:** feature/1',
+      },
+      'ignored',
+      'feature/1-login',
+    );
+
+    expect(result.body, '## Descrição\nCorrige fluxo.');
+  });
+
   test('keeps the legacy title marker out of the body', () async {
     final result = await _normalize(
       null,
