@@ -2,10 +2,12 @@ import 'package:better_effect/better_effect.dart';
 import 'package:dio/dio.dart';
 
 import '../../application/config/config_models.dart';
+import '../../application/change_context/merged_pull_request_lookup.dart';
 import '../../features/describe/pull_request_publisher.dart';
 import '../../features/test_card/test_card_repository.dart';
 import '../../domain/change_context.dart';
 import 'client.dart';
+import 'merged_pull_request_lookup.dart';
 import 'pull_request_publisher.dart';
 import 'pull_requests.dart';
 import 'test_card_repository.dart';
@@ -32,6 +34,7 @@ Module azureRequestModule(Config config, ChangeContext context) => Module([
   .provide<AzureHttp>(AzureHttpLive.new),
   .provide<AzureDevOpsClient>(AzureDevOpsClientLive.new),
   .provide<AzurePullRequestClient>(AzurePullRequestClientLive.new),
+  .provide<MergedPullRequestLookup>(AzureMergedPullRequestLookup.new),
   .provide<AzureWorkItemClient>(AzureWorkItemClientLive.new),
   .provide<PullRequestPublisher>(AzurePullRequestPublisherLive.new),
   .provide<TestCardRepository>(AzureTestCardRepositoryLive.new),

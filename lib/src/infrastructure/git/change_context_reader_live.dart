@@ -12,9 +12,10 @@ final class ChangeContextReaderLive implements ChangeContextReader {
   const ChangeContextReaderLive();
 
   @override
-  AppEffect<ChangeContext> collect([String? sourceBranch]) => .result((
-    use,
-  ) async {
+  AppEffect<ChangeContext> collect([
+    String? sourceBranch,
+    String? baselineCommit,
+  ]) => .result((use) async {
     final currentBranch = _requireSuccess(
       await _run(use, ['branch', '--show-current']),
       'Não é um repositório git',
@@ -40,7 +41,10 @@ final class ChangeContextReaderLive implements ChangeContextReader {
 
     final sprintBranch = await use.unwrap(_latestSprintBranch());
     final baseBranch = await use.unwrap(_detectBaseBranch(sprintBranch));
-    final diff = await use.unwrap(_collectDiff(baseBranch, sourceRef));
+    final comparison = baselineCommit == null
+        ? await _resolveComparison(use, baseBranch, sourceRef)
+        : await _resolveBaseline(use, baselineCommit, sourceRef);
+    final diff = await _collectDiff(use, comparison);
     if (diff.isEmpty) {
       use.fail(
         GitFailure('Nenhuma alteração encontrada em relação a $baseBranch.'),
@@ -52,7 +56,7 @@ final class ChangeContextReaderLive implements ChangeContextReader {
         : diff;
     final log = await _run(use, [
       'log',
-      '$baseBranch...$sourceRef',
+      comparison.logRange,
       '--oneline',
       '--max-count=50',
     ]);
@@ -110,18 +114,98 @@ final class ChangeContextReaderLive implements ChangeContextReader {
     return '';
   });
 
-  AppEffect<String> _collectDiff(String baseBranch, String sourceRef) =>
-      .result((use) async {
-        for (final arguments in [
-          ['diff', '$baseBranch...$sourceRef'],
-          ['diff', '$baseBranch..$sourceRef'],
-          ['diff', baseBranch, sourceRef],
-        ]) {
-          final result = await _run(use, arguments);
-          if (result.ok && result.stdout.isNotEmpty) return result.stdout;
-        }
-        return '';
-      });
+  Future<_GitComparison> _resolveComparison(
+    EffectContext<AppFailure> use,
+    String baseBranch,
+    String sourceRef,
+  ) async {
+    final cherry = await _run(use, ['cherry', baseBranch, sourceRef]);
+    if (!cherry.ok) {
+      return _GitComparison.mergeBase(baseBranch, sourceRef);
+    }
+    final lines = cherry.stdout
+        .split('\n')
+        .map((line) => line.trim())
+        .where((line) => line.isNotEmpty)
+        .toList();
+    if (!lines.any((line) => line.startsWith('- '))) {
+      return _GitComparison.mergeBase(baseBranch, sourceRef);
+    }
+    final firstUnmerged = lines
+        .map(_cherryCommit)
+        .whereType<String>()
+        .firstOrNull;
+    if (firstUnmerged == null) {
+      return _GitComparison.tree(sourceRef, sourceRef);
+    }
+    return _GitComparison.tree('$firstUnmerged^', sourceRef);
+  }
+
+  Future<_GitComparison> _resolveBaseline(
+    EffectContext<AppFailure> use,
+    String baselineCommit,
+    String sourceRef,
+  ) async {
+    final resolved = await _run(use, [
+      'rev-parse',
+      '--verify',
+      '$baselineCommit^{commit}',
+    ]);
+    if (!resolved.ok || resolved.stdout.trim().isEmpty) {
+      use.fail(
+        GitFailure(
+          'O commit do PR anterior ($baselineCommit) não está disponível localmente.',
+        ),
+      );
+    }
+    final commit = resolved.stdout.trim();
+    final ancestor = await _run(use, [
+      'merge-base',
+      '--is-ancestor',
+      commit,
+      sourceRef,
+    ]);
+    if (!ancestor.ok) {
+      use.fail(
+        GitFailure(
+          'O commit do PR anterior ($commit) não pertence ao histórico da branch $sourceRef. Faça fetch ou verifique se a branch foi recriada.',
+        ),
+      );
+    }
+    return _GitComparison.tree(commit, sourceRef);
+  }
+
+  Future<String> _collectDiff(
+    EffectContext<AppFailure> use,
+    _GitComparison comparison,
+  ) async {
+    final result = await _run(use, comparison.diffArguments);
+    return result.ok ? result.stdout : '';
+  }
+}
+
+final class _GitComparison {
+  const _GitComparison.mergeBase(this.baseBranch, this.sourceRef)
+    : _treeComparison = false;
+
+  const _GitComparison.tree(this.baseBranch, this.sourceRef)
+    : _treeComparison = true;
+
+  final String baseBranch;
+  final String sourceRef;
+  final bool _treeComparison;
+
+  List<String> get diffArguments => _treeComparison
+      ? ['diff', baseBranch, sourceRef]
+      : ['diff', '$baseBranch...$sourceRef'];
+
+  String get logRange =>
+      _treeComparison ? '$baseBranch..$sourceRef' : '$baseBranch...$sourceRef';
+}
+
+String? _cherryCommit(String line) {
+  if (!line.startsWith('+ ')) return null;
+  return line.substring(2).trim().split(RegExp(r'\s+')).firstOrNull;
 }
 
 Future<ProcessResult> _run(

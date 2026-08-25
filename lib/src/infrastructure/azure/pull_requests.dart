@@ -39,6 +39,13 @@ abstract interface class AzurePullRequestClient {
     int pullRequestId,
   );
 
+  AppEffect<List<AzurePullRequest>> completed(
+    String project,
+    String repository,
+    String sourceRefName,
+    String targetRefName,
+  );
+
   AppEffect<AzureRepository> getRepository(String project, String repository);
 
   AppEffect<List<AzurePullRequestIteration>> iterations(
@@ -143,6 +150,50 @@ final class AzurePullRequestClientLive implements AzurePullRequestClient {
   });
 
   @override
+  AppEffect<List<AzurePullRequest>> completed(
+    String project,
+    String repository,
+    String sourceRefName,
+    String targetRefName,
+  ) => Effect.result((use) async {
+    final client = use<AzureDevOpsClient>();
+    final query = _query({
+      'searchCriteria.status': 'completed',
+      'searchCriteria.sourceRefName': sourceRefName,
+      'searchCriteria.targetRefName': targetRefName,
+      r'$top': '100',
+    });
+    final response = await use.unwrap(
+      client.request(
+        AzureRequest(
+          withApiVersion(
+            '/${pathSegment(project)}/_apis/git/repositories/${pathSegment(repository)}/pullrequests?$query',
+            '7.1',
+          ),
+        ),
+      ),
+    );
+    final data = objectMap(response.data);
+    final rawItems = data?['value'];
+    if (rawItems is! List) {
+      use.fail(
+        const AzurePayloadError(
+          'Azure não retornou a lista de PRs concluídos.',
+        ),
+      );
+    }
+    return use.unwrap(
+      _decode(
+        () => rawItems
+            .map(objectMap)
+            .whereType<Map<String, Object?>>()
+            .map(AzurePullRequest.fromJson)
+            .toList(growable: false),
+      ),
+    );
+  });
+
+  @override
   AppEffect<AzureRepository> getRepository(
     String project,
     String repository,
@@ -238,6 +289,13 @@ final class AzurePullRequestClientLive implements AzurePullRequestClient {
     return ids;
   });
 }
+
+String _query(Map<String, String> parameters) => parameters.entries
+    .map(
+      (entry) =>
+          '${Uri.encodeQueryComponent(entry.key)}=${Uri.encodeQueryComponent(entry.value)}',
+    )
+    .join('&');
 
 AppEffect<T> _decode<T extends Object>(T Function() decode) => Effect.tryAsync(
   decode,

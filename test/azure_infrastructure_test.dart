@@ -2,6 +2,7 @@ import 'package:better_effect/better_effect.dart';
 import 'package:dio/dio.dart';
 import 'package:pr_tools/src/app/app_effect.dart';
 import 'package:pr_tools/src/app/app_failure.dart';
+import 'package:pr_tools/src/application/change_context/merged_pull_request_lookup.dart';
 import 'package:pr_tools/src/application/config/config_models.dart';
 import 'package:pr_tools/src/domain/change_context.dart';
 import 'package:pr_tools/src/features/describe/pull_request_publisher.dart';
@@ -126,6 +127,62 @@ void main() {
     }
   });
 
+  test('selects the most recent merged PR across targets', () async {
+    final pullRequests = _FakePullRequests(
+      repository: const AzureRepository(id: 'repository-id'),
+      completedByTarget: {
+        'refs/heads/dev': [
+          AzurePullRequest(
+            pullRequestId: 7,
+            title: 'Old',
+            description: '',
+            sourceRefName: 'refs/heads/feature/1',
+            targetRefName: 'refs/heads/dev',
+            closedDate: DateTime.utc(2026, 1, 1),
+            lastMergeSourceCommit: const AzureCommitRef(commitId: 'oldsha'),
+          ),
+        ],
+        'refs/heads/sprint/98': [
+          AzurePullRequest(
+            pullRequestId: 8,
+            title: 'New',
+            description: '',
+            sourceRefName: 'refs/heads/feature/1',
+            targetRefName: 'refs/heads/sprint/98',
+            closedDate: DateTime.utc(2026, 1, 2),
+            lastMergeSourceCommit: const AzureCommitRef(commitId: 'newsha'),
+          ),
+        ],
+      },
+    );
+    final runtime = await _runtime();
+
+    try {
+      final result = await runtime.runWith(
+        _scope(_config(), _context(), pullRequests, _FakeWorkItems()),
+        Effect.result((use) async {
+          return use.unwrap(
+            use<MergedPullRequestLookup>().findLatest(
+              remote: _context().remote,
+              sourceBranch: 'feature/1',
+              targetBranches: const ['dev', 'sprint/98'],
+            ),
+          );
+        }),
+      );
+      final lookup = result.fold(
+        (value) => value,
+        (failure) => fail((failure as AppFailure).message),
+      );
+
+      expect(lookup.value?.id, 8);
+      expect(lookup.value?.targetBranch, 'sprint/98');
+      expect(lookup.value?.sourceCommit, 'newsha');
+    } finally {
+      await runtime.close();
+    }
+  });
+
   test(
     'publisher maps an empty repository ID to a typed Azure failure',
     () async {
@@ -215,10 +272,12 @@ final class _FakePullRequests implements AzurePullRequestClient {
   _FakePullRequests({
     required this.repository,
     List<AzurePullRequestIteration> iterations = const [],
+    this.completedByTarget = const {},
   }) : _iterationValues = iterations;
 
   final AzureRepository repository;
   final List<AzurePullRequestIteration> _iterationValues;
+  final Map<String, List<AzurePullRequest>> completedByTarget;
   final repositoryRequests = <(String, String)>[];
   final created =
       <({String project, String repository, CreatePullRequestInput request})>[];
@@ -271,6 +330,14 @@ final class _FakePullRequests implements AzurePullRequestClient {
       targetRefName: 'refs/heads/dev',
     ),
   );
+
+  @override
+  AppEffect<List<AzurePullRequest>> completed(
+    String project,
+    String repository,
+    String sourceRefName,
+    String targetRefName,
+  ) => Effect.succeed(completedByTarget[targetRefName] ?? const []);
 
   @override
   AppEffect<AzureRepository> getRepository(String project, String repository) {

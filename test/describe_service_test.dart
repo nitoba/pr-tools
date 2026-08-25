@@ -4,6 +4,7 @@ import 'package:pr_tools/src/application/ai/description_models.dart';
 import 'package:pr_tools/src/application/config/config_models.dart';
 import 'package:pr_tools/src/application/config/config_service.dart';
 import 'package:pr_tools/src/application/change_context/change_context_reader.dart';
+import 'package:pr_tools/src/application/change_context/merged_pull_request_lookup.dart';
 import 'package:pr_tools/src/app/app_effect.dart';
 import 'package:pr_tools/src/app/app_failure.dart';
 import 'package:pr_tools/src/app/cli_options.dart';
@@ -55,6 +56,7 @@ void main() {
       final module = Module([
         .instance<ConfigService>(FakeConfigService()),
         .instance<ChangeContextReader>(FakeChangeContextReader()),
+        .instance<MergedPullRequestLookup>(const NoopMergedPullRequestLookup()),
         .instance<DescriptionGenerator>(FakeDescriptionGenerator()),
         .provide<DescribeService>(DescribeServiceLive.new),
       ]);
@@ -90,12 +92,53 @@ void main() {
     },
   );
 
+  test('recollects context from the latest merged PR source commit', () async {
+    final reader = FakeChangeContextReader();
+    final module = Module([
+      .instance<ConfigService>(FakeConfigService()),
+      .instance<ChangeContextReader>(reader),
+      .instance<MergedPullRequestLookup>(
+        _MergedLookup(
+          const MergedPullRequest(
+            id: 17,
+            targetBranch: 'dev',
+            sourceCommit: 'abc123',
+          ),
+        ),
+      ),
+      .provide<DescribeService>(DescribeServiceLive.new),
+    ]);
+
+    final result = await module.run(
+      Effect.result((use) async {
+        return use.unwrap(
+          use<DescribeService>().prepare(
+            const CliOptions(
+              command: Command.desc,
+              targets: ['dev'],
+              create: false,
+              noCreate: false,
+              dryRun: false,
+              raw: false,
+              copy: false,
+            ),
+            true,
+          ),
+        );
+      }),
+    );
+
+    expect(result.getOrNull(), isNotNull);
+    expect(reader.baselines, [null, 'abc123']);
+  });
+
   test(
     'rejects requested creation outside an interactive Azure context',
     () async {
       final module = Module([
         .instance<ConfigService>(FakeConfigService()),
         .instance<ChangeContextReader>(FakeChangeContextReader()),
+        .instance<MergedPullRequestLookup>(const NoopMergedPullRequestLookup()),
         .provide<DescribeService>(DescribeServiceLive.new),
       ]);
       const options = CliOptions(
@@ -144,9 +187,29 @@ final class FakeConfigService implements ConfigService {
 }
 
 final class FakeChangeContextReader implements ChangeContextReader {
+  final baselines = <String?>[];
+
   @override
-  AppEffect<ChangeContext> collect([String? sourceBranch]) =>
-      Effect.succeed(context);
+  AppEffect<ChangeContext> collect([
+    String? sourceBranch,
+    String? baselineCommit,
+  ]) {
+    baselines.add(baselineCommit);
+    return Effect.succeed(context);
+  }
+}
+
+final class _MergedLookup implements MergedPullRequestLookup {
+  _MergedLookup(this.value);
+
+  final MergedPullRequest value;
+
+  @override
+  AppEffect<MergedPullRequestLookupResult> findLatest({
+    required RepositoryRemote? remote,
+    required String sourceBranch,
+    required List<String> targetBranches,
+  }) => Effect.succeed(MergedPullRequestLookupResult(value: value));
 }
 
 final class FakeDescriptionGenerator implements DescriptionGenerator {

@@ -174,6 +174,52 @@ void main() {
     );
   });
 
+  test('lists completed PRs with their merge source commits', () async {
+    final http = _RecordingHttp(
+      (_) => {
+        'value': [
+          {
+            'pullRequestId': 17,
+            'title': 'A title',
+            'description': 'A body',
+            'sourceRefName': 'refs/heads/feature/1',
+            'targetRefName': 'refs/heads/dev',
+            'status': 'completed',
+            'closedDate': '2026-01-02T03:04:05Z',
+            'lastMergeSourceCommit': {'commitId': 'abc123'},
+          },
+        ],
+      },
+    );
+    final pullRequests = await _run(
+      _apiModule(http),
+      Effect.result((use) async {
+        return use.unwrap(
+          use<AzurePullRequestClient>().completed(
+            'My Project',
+            'repo',
+            'refs/heads/feature/1',
+            'refs/heads/dev',
+          ),
+        );
+      }),
+    );
+
+    expect(pullRequests.single.pullRequestId, 17);
+    expect(pullRequests.single.lastMergeSourceCommit?.commitId, 'abc123');
+    expect(pullRequests.single.closedDate, DateTime.utc(2026, 1, 2, 3, 4, 5));
+    expect(
+      http.requests.single.path,
+      allOf(
+        contains('searchCriteria.status=completed'),
+        contains('searchCriteria.sourceRefName=refs%2Fheads%2Ffeature%2F1'),
+        contains('searchCriteria.targetRefName=refs%2Fheads%2Fdev'),
+        contains('%24top=100'),
+        endsWith('api-version=7.1'),
+      ),
+    );
+  });
+
   test('maps malformed Azure DTOs to AzurePayloadError', () async {
     final module = _apiModule(
       _RecordingHttp(

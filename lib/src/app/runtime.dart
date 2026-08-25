@@ -5,6 +5,7 @@ import '../application/ai/description_generator.dart';
 import '../application/clipboard/clipboard.dart';
 import '../application/config/config_service.dart';
 import '../application/change_context/change_context_reader.dart';
+import '../application/change_context/merged_pull_request_lookup.dart';
 import '../application/process/process_runner.dart';
 import '../application/terminal/terminal_ports.dart';
 import '../features/describe/describe_service.dart';
@@ -42,6 +43,7 @@ final appModule = Module.complete([
   .provide<ConfigFileSystem>(ConfigFileSystemLive.new),
   .provide<ConfigService>(ConfigServiceLive.new),
   .provide<ChangeContextReader>(ChangeContextReaderLive.new),
+  .provide<MergedPullRequestLookup>(NoopMergedPullRequestLookup.new),
   .provide<CompatibleDescriptionGenerator>(
     GenkitCompatibleDescriptionGenerator.new,
   ),

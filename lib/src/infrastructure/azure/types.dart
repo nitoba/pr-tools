@@ -59,6 +59,15 @@ final class AzureResourceRef {
   Map<String, Object?> toJson() => {'id': id, if (url != null) 'url': url};
 }
 
+final class AzureCommitRef {
+  const AzureCommitRef({required this.commitId});
+
+  factory AzureCommitRef.fromJson(Map<String, Object?> json) =>
+      AzureCommitRef(commitId: _string(json, 'commitId'));
+
+  final String commitId;
+}
+
 final class AzurePullRequest {
   const AzurePullRequest({
     required this.pullRequestId,
@@ -66,6 +75,9 @@ final class AzurePullRequest {
     required this.description,
     required this.sourceRefName,
     required this.targetRefName,
+    this.status,
+    this.closedDate,
+    this.lastMergeSourceCommit,
     this.url,
     this.webUrl,
     this.repository,
@@ -80,6 +92,11 @@ final class AzurePullRequest {
       description: _string(json, 'description'),
       sourceRefName: _string(json, 'sourceRefName'),
       targetRefName: _string(json, 'targetRefName'),
+      status: _nullableString(json, 'status'),
+      closedDate: _dateTime(json['closedDate']),
+      lastMergeSourceCommit: objectMap(json['lastMergeSourceCommit']) == null
+          ? null
+          : AzureCommitRef.fromJson(objectMap(json['lastMergeSourceCommit'])!),
       url: _nullableString(json, 'url'),
       webUrl: _nullableString(json, 'webUrl'),
       repository: objectMap(json['repository']) == null
@@ -99,6 +116,9 @@ final class AzurePullRequest {
   final String description;
   final String sourceRefName;
   final String targetRefName;
+  final String? status;
+  final DateTime? closedDate;
+  final AzureCommitRef? lastMergeSourceCommit;
   final String? url;
   final String? webUrl;
   final AzureRepository? repository;
@@ -234,6 +254,18 @@ String? _nullableString(Map<String, Object?> json, String key) {
   final value = json[key];
   if (value == null || value is String) return value as String?;
   throw FormatException('Campo Azure `$key` deveria ser texto.');
+}
+
+DateTime? _dateTime(Object? value) {
+  if (value == null) return null;
+  if (value is! String) {
+    throw const FormatException('Campo Azure `closedDate` deveria ser texto.');
+  }
+  final parsed = DateTime.tryParse(value);
+  if (parsed == null) {
+    throw FormatException('Data Azure inválida: $value.');
+  }
+  return parsed;
 }
 
 int _integer(Object? value) {
