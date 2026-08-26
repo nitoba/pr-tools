@@ -1,6 +1,6 @@
 name: pr_tools
 description: CLI for Azure DevOps pull requests and test cards.
-version: 4.0.3
+version: 4.0.4
 publish_to: none
 
 environment:

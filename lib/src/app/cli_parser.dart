@@ -1,6 +1,6 @@
 import 'cli_options.dart';
 
-const version = '4.0.3';
+const version = '4.0.4';
 
 const helpText = '''prt v$version
 
