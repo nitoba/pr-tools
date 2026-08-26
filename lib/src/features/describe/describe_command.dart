@@ -94,19 +94,23 @@ final class DescribeCommandLive implements DescribeCommand {
           initialValue: true,
         );
         if (!confirmedReviewers) return 0;
+        progress.start('Criando PR(s) no Azure DevOps');
         final published = await use.unwrap(
-          use<PullRequestPublisher>().publish(
-            preparation.targets,
-            PullRequestDraft(
-              title: generated.description.title,
-              description: generated.description.body,
-              workItemIds: preparation.workItemId == null
-                  ? const []
-                  : [preparation.workItemId!],
-            ),
-            reviewerForTarget: (target) => reviewers[target] ?? '',
-          ),
+          use<PullRequestPublisher>()
+              .publish(
+                preparation.targets,
+                PullRequestDraft(
+                  title: generated.description.title,
+                  description: generated.description.body,
+                  workItemIds: preparation.workItemId == null
+                      ? const []
+                      : [preparation.workItemId!],
+                ),
+                reviewerForTarget: (target) => reviewers[target] ?? '',
+              )
+              .tapError((_) => progress.error('Falha ao criar PR(s)')),
         );
+        progress.stop('PR(s) criado(s) (${published.length})');
         await use.unwrap(presenter.showPublished(preparation, published));
       }
     }

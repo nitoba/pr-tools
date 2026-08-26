@@ -132,6 +132,10 @@ final class _Output implements TerminalOutput {
       messages.add('heading:$title${detail == null ? '' : ':$detail'}');
 
   @override
+  void card(String title, String content) =>
+      messages.add('card:$title:$content');
+
+  @override
   void write(String message) => messages.add(message);
 
   @override

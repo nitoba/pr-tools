@@ -28,6 +28,8 @@ abstract interface class PromptPort {
 abstract interface class TerminalOutput {
   void heading(String title, {String? detail});
 
+  void card(String title, String content);
+
   void write(String message);
 
   void writeError(String message);

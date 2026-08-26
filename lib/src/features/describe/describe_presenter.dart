@@ -75,7 +75,7 @@ final class DescribePresenterLive implements DescribePresenter {
         output.detail('PR $target: ${_pullRequestUrl(preparation, target)}');
       }
     }
-    output.write('\n$body');
+    output.card('Descrição do PR', body);
     return unit;
   });
 

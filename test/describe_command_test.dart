@@ -41,6 +41,7 @@ void main() {
       texts: ['', ' qa@example.com '],
     );
     final publisher = _Publisher();
+    final progress = _Progress();
     final result =
         await Module([
           .instance<ConfigRuntime>(_InteractiveRuntime()),
@@ -48,7 +49,7 @@ void main() {
           .instance<DescribePresenter>(_DescribePresenter()),
           .instance<PromptPort>(prompts),
           .instance<PullRequestPublisher>(publisher),
-          .instance<ProgressReporter>(_Progress()),
+          .instance<ProgressReporter>(progress),
           .provide<DescribeCommand>(DescribeCommandLive.new),
         ]).run(
           Effect<int, AppFailure>.result(
@@ -69,6 +70,12 @@ void main() {
       'dev': 'dev@example.com',
       'sprint/98': 'qa@example.com',
     });
+    expect(progress.events, [
+      'start:Gerando descrição via IA',
+      'stop:Descrição gerada (codex/model)',
+      'start:Criando PR(s) no Azure DevOps',
+      'stop:PR(s) criado(s) (2)',
+    ]);
   });
 
   test('copies generated content through the contextual clipboard', () async {
@@ -307,17 +314,19 @@ final class _Clipboard implements Clipboard {
 }
 
 final class _Progress implements ProgressReporter {
-  @override
-  void error(String message) {}
+  final events = <String>[];
 
   @override
-  void message(String message) {}
+  void error(String message) => events.add('error:$message');
 
   @override
-  void start(String message) {}
+  void message(String message) => events.add('message:$message');
 
   @override
-  void stop(String message) {}
+  void start(String message) => events.add('start:$message');
+
+  @override
+  void stop(String message) => events.add('stop:$message');
 }
 
 const _config = Config(

@@ -4,6 +4,11 @@ import 'package:terminice/terminice.dart' as terminice_ui;
 
 import '../../application/terminal/terminal_ports.dart';
 
+const _plainCardTheme = terminice_ui.PromptTheme(
+  colors: terminice_ui.TerminalColors.none,
+  glyphs: terminice_ui.TerminalGlyphs.ascii,
+);
+
 final class PromptPortLive implements PromptPort {
   PromptPortLive(this._ui);
 
@@ -76,6 +81,16 @@ final class TerminalOutputLive implements TerminalOutput {
   }
 
   @override
+  void card(String title, String content) {
+    _ui.newline();
+    _ui.runWithExecutionMode(
+      rich: () => _writeCard(title, content, _ui.defaultTheme),
+      line: () => _writeCard(title, content, _plainCardTheme),
+      unattended: () => _writeCard(title, content, _plainCardTheme),
+    );
+  }
+
+  @override
   void write(String message) => _ui.log(message);
 
   @override
@@ -92,6 +107,36 @@ final class TerminalOutputLive implements TerminalOutput {
 
   @override
   void detail(String message) => _ui.detail(message);
+
+  void _writeCard(
+    String title,
+    String content,
+    terminice_ui.PromptTheme theme,
+  ) {
+    final lines = content.split('\n');
+    var width = title.length;
+    for (final line in lines) {
+      if (line.length > width) width = line.length;
+    }
+
+    final glyphs = theme.glyphs;
+    final rightTop = glyphs.matchingCorner(glyphs.borderTop);
+    final rightBottom = glyphs.matchingCorner(glyphs.borderBottom);
+    final horizontal = glyphs.borderHorizontal;
+    final border = '${theme.gray}${glyphs.borderVertical}${theme.reset}';
+
+    _ui.log(
+      '${theme.selection}${glyphs.borderTop}$horizontal $title'
+      '${' ' * (width - title.length)} $horizontal$rightTop${theme.reset}',
+    );
+    for (final line in lines) {
+      _ui.log('$border ${line.padRight(width)} $border');
+    }
+    _ui.log(
+      '${theme.gray}${glyphs.borderBottom}${horizontal * (width + 4)}'
+      '$rightBottom${theme.reset}',
+    );
+  }
 }
 
 final class TerminiceProgress implements ProgressReporter {

@@ -13,6 +13,7 @@ void main() {
       output.success('Configuração pronta');
       output.warning('Token expira em breve');
       output.writeError('Remote indisponível');
+      output.card('Descrição do PR', 'Linha 1\nLinha 2');
 
       final progress = TerminiceProgress(tester.terminice);
       progress.start('Gerando descrição');
@@ -25,6 +26,21 @@ void main() {
     expect(output, contains('Configuração pronta'));
     expect(output, contains('Token expira em breve'));
     expect(output, contains('Remote indisponível'));
+    expect(output, contains('+- Descrição do PR -+'));
+    expect(output, contains('| Linha 1 |'));
     expect(output, contains('Descrição gerada'));
+  });
+
+  test('renders the description card with the active rich theme', () async {
+    final tester = TerminiceTester.interactive(base: prtTerminice);
+
+    await tester.runAsync((_) async {
+      TerminalOutputLive(tester.terminice).card('Descrição do PR', 'Linha 1');
+    });
+
+    final output = tester.output.plainText;
+    expect(output, contains('╭─ Descrição do PR ─╮'));
+    expect(output, contains('┊ Linha 1'));
+    expect(output, contains('┊\n'));
   });
 }
