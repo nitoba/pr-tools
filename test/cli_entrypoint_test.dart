@@ -11,6 +11,6 @@ void main() {
     ]);
 
     expect(result.exitCode, 0, reason: result.stderr.toString());
-    expect(result.stdout, contains('prt v4.0.4'));
+    expect(result.stdout, contains('prt v4.0.7'));
   });
 }

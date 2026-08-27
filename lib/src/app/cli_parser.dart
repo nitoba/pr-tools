@@ -1,7 +1,5 @@
 import 'cli_options.dart';
 
-const version = '4.0.4';
-
 const helpText = '''prt v$version
 
 Gera descrições de PR e Test Cases a partir do contexto Git.
@@ -35,6 +33,28 @@ Opções:
   --no-copy               Não copia o conteúdo
   --version, -v           Mostra a versão
   --help, -h              Mostra esta ajuda''';
+
+const version = '4.0.7';
+
+const _providers = <String>{'codex', 'opencode', 'openai-compatible'};
+
+const _valueOptions = <String>{
+  '--source',
+  '--target',
+  '--work-item',
+  '--provider',
+  '--model',
+  '--base-url',
+  '--api-key',
+  '--pr',
+  '--area-path',
+  '--assigned-to',
+  '--iteration-path',
+  '--priority',
+  '--team',
+  '--program',
+  '--examples',
+};
 
 CliParse parseCli(List<String> arguments) {
   if (arguments.contains('--help') || arguments.contains('-h')) {
@@ -165,26 +185,6 @@ CliParse parseCli(List<String> arguments) {
     ),
   );
 }
-
-const _valueOptions = <String>{
-  '--source',
-  '--target',
-  '--work-item',
-  '--provider',
-  '--model',
-  '--base-url',
-  '--api-key',
-  '--pr',
-  '--area-path',
-  '--assigned-to',
-  '--iteration-path',
-  '--priority',
-  '--team',
-  '--program',
-  '--examples',
-};
-
-const _providers = <String>{'codex', 'opencode', 'openai-compatible'};
 
 (String, String?) _splitOption(String argument) {
   final separator = argument.indexOf('=');
