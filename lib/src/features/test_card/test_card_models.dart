@@ -17,7 +17,8 @@ Retorne um objeto JSON com exatamente estes campos:
 Regras:
 - Não invente comportamento que não esteja sustentado pelo contexto.
 - Foque em cobertura funcional, validações e regressão.
-- O checklist deve ser acionável para QA.
+- O checklist deve ser uma lista de passos executáveis, com um item por passo.
+- O resultado esperado deve ser explícito e verificável; ele será associado aos passos no Test Case.
 - Não cite nomes de arquivos, classes, funções, APIs internas ou detalhes de implementação.
 - Descreva apenas cenários observáveis e validáveis pelo usuário final ou pelo analista de QA.''';
 
@@ -219,22 +220,128 @@ String buildTestCardPrompt(TestCardContext context) {
   return '${lines.join('\n')}\n';
 }
 
+String buildTestCaseStepsXml(String body) {
+  final checklist = _markdownSection(body, 'Checklist de testes');
+  final actions = _markdownListItems(checklist);
+  if (actions.isEmpty) return '';
+
+  final expectedSection = _markdownSection(body, 'Resultado esperado');
+  final expectedResults = _expectedResults(expectedSection, actions.length);
+  final xml = StringBuffer('<steps id="0" last="${actions.length + 1}">');
+  for (var index = 0; index < actions.length; index++) {
+    final expectedResult = expectedResults[index];
+    final type = expectedResult.isEmpty ? 'ActionStep' : 'ValidateStep';
+    xml
+      ..write('\n  <step id="${index + 2}" type="$type">')
+      ..write(
+        '\n    <parameterizedString isformatted="true">${_formattedStepValue(actions[index])}</parameterizedString>',
+      )
+      ..write(
+        '\n    <parameterizedString isformatted="true">${_formattedStepValue(expectedResult)}</parameterizedString>',
+      )
+      ..write('\n    <description/>')
+      ..write('\n  </step>');
+  }
+  xml.write('\n</steps>');
+  return xml.toString();
+}
+
 TestCardDraft buildCreateTestCaseInput(
   TestCardSettings settings,
   int parentId,
   String title,
   String body,
-) => TestCardDraft(
-  title: title,
-  descriptionHtml: body,
-  areaPath: settings.areaPath.isEmpty ? null : settings.areaPath,
-  parentId: parentId,
-  iterationPath: settings.iterationPath.isEmpty ? null : settings.iterationPath,
-  priority: settings.priority,
-  team: settings.team.isEmpty ? null : settings.team,
-  program: settings.program.isEmpty ? null : settings.program,
-  assignedTo: settings.assignedTo.isEmpty ? null : settings.assignedTo,
-);
+) {
+  final stepsXml = buildTestCaseStepsXml(body);
+  return TestCardDraft(
+    title: title,
+    descriptionHtml: body,
+    stepsXml: stepsXml.isEmpty ? null : stepsXml,
+    areaPath: settings.areaPath.isEmpty ? null : settings.areaPath,
+    parentId: parentId,
+    iterationPath: settings.iterationPath.isEmpty
+        ? null
+        : settings.iterationPath,
+    priority: settings.priority,
+    team: settings.team.isEmpty ? null : settings.team,
+    program: settings.program.isEmpty ? null : settings.program,
+    assignedTo: settings.assignedTo.isEmpty ? null : settings.assignedTo,
+  );
+}
+
+String _markdownSection(String body, String heading) {
+  final headingMatch = RegExp(
+    r'^\s*##\s+' + RegExp.escape(heading) + r'\s*$',
+    caseSensitive: false,
+    multiLine: true,
+  ).firstMatch(body);
+  if (headingMatch == null) return '';
+
+  final contentStart = headingMatch.end;
+  final remaining = body.substring(contentStart);
+  final nextHeading = RegExp(
+    r'^\s*##\s+.+$',
+    multiLine: true,
+  ).firstMatch(remaining);
+  final contentEnd = nextHeading == null
+      ? body.length
+      : contentStart + nextHeading.start;
+  return body.substring(contentStart, contentEnd).trim();
+}
+
+List<String> _markdownListItems(String section) {
+  if (section.trim().isEmpty) return const [];
+  final items = <String>[];
+  String? current;
+  final itemPattern = RegExp(
+    r'^\s*(?:[-*+•]\s+|\d+[.)]\s+)(?:\[[ xX]\]\s*)?(.+?)\s*$',
+  );
+  for (final line in section.split('\n')) {
+    final itemMatch = itemPattern.firstMatch(line);
+    if (itemMatch != null) {
+      if (current != null) items.add(current);
+      current = itemMatch.group(1)!.trim();
+    } else if (line.trim().isNotEmpty && current != null) {
+      current = '$current ${line.trim()}';
+    }
+  }
+  if (current != null) items.add(current);
+  if (items.isNotEmpty) return items;
+  return section
+      .split('\n')
+      .map((line) => line.trim())
+      .where((line) => line.isNotEmpty)
+      .toList(growable: false);
+}
+
+List<String> _expectedResults(String section, int count) {
+  final items = _markdownListItems(section);
+  if (items.length == count) return items;
+
+  final results = List<String>.filled(count, '');
+  final fallback = items.isEmpty ? section.trim() : items.join('\n');
+  if (fallback.isNotEmpty) results[count - 1] = fallback;
+  return results;
+}
+
+String _formattedStepValue(String value) {
+  final content = value.trim().isEmpty
+      ? '&nbsp;'
+      : _escapeHtml(value).replaceAll('\n', '<BR/>');
+  return _escapeXml('<DIV><P>$content</P></DIV>');
+}
+
+String _escapeHtml(String value) => value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;');
+
+String _escapeXml(String value) => value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&apos;');
 
 String workItemUrl(ChangeContext context, int id) {
   final remote = context.remote;

@@ -296,6 +296,11 @@ void main() {
             const CreateTestCaseInput(
               title: 'Teste login',
               descriptionHtml: '<p>Validar login.</p>',
+              stepsXml:
+                  '<steps id="0" last="1"><step id="1" type="ActionStep">'
+                  '<parameterizedString isformatted="true">Abrir login</parameterizedString>'
+                  '<parameterizedString isformatted="true">Login exibido</parameterizedString>'
+                  '</step></steps>',
               areaPath: r'Project\QA',
               parentId: 42,
               iterationPath: r'Project\Sprint 98',
@@ -334,6 +339,15 @@ void main() {
         'op': 'add',
         'path': '/fields/System.Description',
         'value': '<p>Validar login.</p>',
+      },
+      {
+        'op': 'add',
+        'path': '/fields/Microsoft.VSTS.TCM.Steps',
+        'value':
+            '<steps id="0" last="1"><step id="1" type="ActionStep">'
+            '<parameterizedString isformatted="true">Abrir login</parameterizedString>'
+            '<parameterizedString isformatted="true">Login exibido</parameterizedString>'
+            '</step></steps>',
       },
       {'op': 'add', 'path': '/fields/System.AreaPath', 'value': r'Project\QA'},
       {

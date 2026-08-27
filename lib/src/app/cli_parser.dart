@@ -34,7 +34,7 @@ Opções:
   --version, -v           Mostra a versão
   --help, -h              Mostra esta ajuda''';
 
-const version = '4.0.7';
+const version = '4.0.8';
 
 const _providers = <String>{'codex', 'opencode', 'openai-compatible'};
 
