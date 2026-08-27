@@ -8,9 +8,30 @@ final class TestCardValidationFailure extends AppFailure {
 
 String? validatePositiveDecimal(String? value) {
   final text = (value ?? '').trim();
+  if (text.isEmpty) return null;
   final number = _decimal(text);
   return number != null && number > 0 ? null : 'Informe um número positivo.';
 }
+
+String? validateRequiredText(String? value) =>
+    (value ?? '').trim().isEmpty ? 'Informe um valor.' : null;
+
+ResultDart<String, TestCardValidationFailure> parseRequiredText(
+  String value,
+  String field,
+) {
+  final text = value.trim();
+  if (text.isNotEmpty) return Success<String, TestCardValidationFailure>(text);
+  return Failure<String, TestCardValidationFailure>(
+    TestCardValidationFailure('$field é obrigatório para criar o Test Case.'),
+  );
+}
+
+ResultDart<String, TestCardValidationFailure> resolveRequiredText(
+  String value,
+  String initialValue,
+  String field,
+) => parseRequiredText(value.trim().isEmpty ? initialValue : value, field);
 
 String? validateNonNegativeDecimal(String? value) {
   final text = (value ?? '').trim();

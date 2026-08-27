@@ -184,9 +184,13 @@ Future<TestCardSettings> _settings(
       priority,
       validatePositiveDecimal,
     );
-    team = await _promptOptional(use, 'Custom.Team', team);
-    program = await _promptOptional(use, 'Custom.ProgramasAgrotrace', program);
+    team = await _promptRequired(use, 'Custom.Team', team);
+    program = await _promptRequired(use, 'Custom.ProgramasAgrotrace', program);
   }
+  team = await use.result(parseRequiredText(team, 'Custom.Team'));
+  program = await use.result(
+    parseRequiredText(program, 'Custom.ProgramasAgrotrace'),
+  );
   return TestCardSettings(
     areaPath: areaPath,
     assignedTo: assignedTo,
@@ -208,6 +212,22 @@ Future<String> _promptOptional(
   );
   if (value == null) use.fail(const TestCardFailure('Operação cancelada.'));
   return value.trim();
+}
+
+Future<String> _promptRequired(
+  EffectContext<AppFailure> use,
+  String message,
+  String initialValue,
+) async {
+  final value = use<PromptPort>().text(
+    message: message,
+    initialValue: initialValue,
+    validate: (value) => value.trim().isEmpty && initialValue.trim().isEmpty
+        ? validateRequiredText(value)
+        : null,
+  );
+  if (value == null) use.fail(const TestCardFailure('Operação cancelada.'));
+  return use.result(resolveRequiredText(value, initialValue, message));
 }
 
 Future<num> _promptNumber(
