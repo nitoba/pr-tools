@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:better_effect/better_effect.dart';
 import 'package:pr_tools/src/application/ai/description_models.dart';
 import 'package:pr_tools/src/application/ai/description_normalizer.dart';
@@ -45,6 +47,39 @@ diff --git a/file b/file
         body: '## Descrição\nCorrige fluxo.',
       ),
     );
+  });
+
+  test('decodes a JSON string returned by a provider', () async {
+    final encoded = jsonEncode({
+      'title': 'Ajusta login',
+      'body': '## Checklist de testes\n- Executar o fluxo.',
+    });
+
+    final result = await _normalize(encoded, 'ignored', 'feature/1-login');
+
+    expect(result.title, 'Ajusta login');
+    expect(result.body, '## Checklist de testes\n- Executar o fluxo.');
+  });
+
+  test('converts literal escaped line breaks in a structured body', () async {
+    final encoded = jsonEncode({
+      'title': 'Ajusta login',
+      'body': r'## Checklist de testes\n- Executar o fluxo.',
+    });
+
+    final result = await _normalize(null, encoded, 'feature/1-login');
+
+    expect(result.body, '## Checklist de testes\n- Executar o fluxo.');
+  });
+
+  test('keeps ordinary backslash sequences in the body', () async {
+    final result = await _normalize(
+      {'title': 'Documenta caminho', 'body': r'C:\repo\new'},
+      'ignored',
+      'feature/1',
+    );
+
+    expect(result.body, r'C:\repo\new');
   });
 
   test('removes echoed git context from the body', () async {

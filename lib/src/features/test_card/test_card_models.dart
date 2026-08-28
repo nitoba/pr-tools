@@ -220,10 +220,61 @@ String buildTestCardPrompt(TestCardContext context) {
   return '${lines.join('\n')}\n';
 }
 
-String buildTestCaseStepsXml(String body) {
+String markdownToHtml(String markdown) {
+  final html = StringBuffer();
+  String? listType;
+
+  void closeList() {
+    if (listType == null) return;
+    html.writeln('</$listType>');
+    listType = null;
+  }
+
+  for (final line in markdown.split('\n')) {
+    final trimmed = line.trim();
+    if (trimmed.isEmpty) {
+      closeList();
+      continue;
+    }
+
+    final heading = RegExp(r'^##\s+(.+)$').firstMatch(trimmed);
+    if (heading != null) {
+      closeList();
+      html.writeln('<h2>${_markdownInlineToHtml(heading.group(1)!)}</h2>');
+      continue;
+    }
+
+    final unordered = RegExp(r'^[-*+•]\s+(.+)$').firstMatch(trimmed);
+    final ordered = RegExp(r'^\d+[.)]\s+(.+)$').firstMatch(trimmed);
+    final item = unordered ?? ordered;
+    if (item != null) {
+      final nextType = unordered != null ? 'ul' : 'ol';
+      if (listType != nextType) {
+        closeList();
+        listType = nextType;
+        html.writeln('<$listType>');
+      }
+      html.writeln('<li>${_markdownInlineToHtml(item.group(1)!)}</li>');
+      continue;
+    }
+
+    closeList();
+    html.writeln('<p>${_markdownInlineToHtml(trimmed)}</p>');
+  }
+  closeList();
+  return html.toString();
+}
+
+String buildTestCaseStepsXml(String body, {String? fallbackAction}) {
   final checklist = _markdownSection(body, 'Checklist de testes');
-  final actions = _markdownListItems(checklist);
-  if (actions.isEmpty) return '';
+  final parsedActions = _markdownListItems(checklist);
+  final actions = parsedActions.isEmpty
+      ? [
+          fallbackAction?.trim().isNotEmpty == true
+              ? fallbackAction!.trim()
+              : 'Executar o cenário descrito na descrição do teste.',
+        ]
+      : parsedActions;
 
   final expectedSection = _markdownSection(body, 'Resultado esperado');
   final expectedResults = _expectedResults(expectedSection, actions.length);
@@ -252,10 +303,10 @@ TestCardDraft buildCreateTestCaseInput(
   String title,
   String body,
 ) {
-  final stepsXml = buildTestCaseStepsXml(body);
+  final stepsXml = buildTestCaseStepsXml(body, fallbackAction: title);
   return TestCardDraft(
     title: title,
-    descriptionHtml: body,
+    descriptionHtml: markdownToHtml(body),
     stepsXml: stepsXml.isEmpty ? null : stepsXml,
     areaPath: settings.areaPath.isEmpty ? null : settings.areaPath,
     parentId: parentId,
@@ -265,7 +316,9 @@ TestCardDraft buildCreateTestCaseInput(
     priority: settings.priority,
     team: settings.team.isEmpty ? null : settings.team,
     program: settings.program.isEmpty ? null : settings.program,
-    assignedTo: settings.assignedTo.isEmpty ? null : settings.assignedTo,
+    assignedTo: settings.assignedTo.trim().isEmpty
+        ? null
+        : settings.assignedTo.trim(),
   );
 }
 
@@ -324,9 +377,15 @@ List<String> _expectedResults(String section, int count) {
   return results;
 }
 
+String _markdownInlineToHtml(String value) => _escapeHtml(value)
+    .replaceAllMapped(
+      RegExp(r'\*\*([^*][^*]*?)\*\*'),
+      (match) => '<b>${match.group(1)}</b>',
+    );
+
 String _formattedStepValue(String value) {
   final content = value.trim().isEmpty
-      ? '&nbsp;'
+      ? '<BR/>'
       : _escapeHtml(value).replaceAll('\n', '<BR/>');
   return _escapeXml('<DIV><P>$content</P></DIV>');
 }

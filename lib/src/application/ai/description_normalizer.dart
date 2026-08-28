@@ -107,7 +107,9 @@ PrDescription cleanDescription(PrDescription description) {
     80,
   );
   final body = _stripGitContext(
-    description.body.replaceFirst(RegExp(r'^\s*---\s*'), '').trim(),
+    _normalizeEscapedLineBreaks(
+      description.body.replaceFirst(RegExp(r'^\s*---\s*'), '').trim(),
+    ),
   );
   return PrDescription(
     title: title.isEmpty ? 'Atualiza código' : title,
@@ -117,11 +119,30 @@ PrDescription cleanDescription(PrDescription description) {
 
 PrDescription? _descriptionFrom(Object? value) {
   if (value is PrDescription) return value;
+  if (value is String) {
+    try {
+      return _descriptionFrom(jsonDecode(value));
+    } on FormatException {
+      return null;
+    }
+  }
   if (value is! Map) return null;
   final title = value['title'];
   final body = value['body'];
   if (title is! String || body is! String) return null;
   return PrDescription(title: title, body: body);
+}
+
+String _normalizeEscapedLineBreaks(String value) {
+  if (!value.contains(r'\n') && !value.contains(r'\r')) return value;
+  final hasMarkdownBoundary = RegExp(
+    r'(?:^|\\[nr])\s*(?:#{1,6}\s|[-*+]\s|\d+[.)]\s)',
+  ).hasMatch(value);
+  if (!hasMarkdownBoundary) return value;
+  return value
+      .replaceAll(r'\r\n', '\n')
+      .replaceAll(r'\n', '\n')
+      .replaceAll(r'\r', '\n');
 }
 
 String _stripGitContext(String value) {

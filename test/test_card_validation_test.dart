@@ -18,5 +18,13 @@ void main() {
         'DevOps',
       );
     });
+
+    test('preserves a configured optional field when the prompt is empty', () {
+      expect(resolveOptionalText('  ', 'qa@example.com'), 'qa@example.com');
+      expect(
+        resolveOptionalText('other@example.com', 'qa@example.com'),
+        'other@example.com',
+      );
+    });
   });
 }

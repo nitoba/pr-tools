@@ -162,7 +162,7 @@ void main() {
       'sourceRefName': 'refs/heads/feature/1',
       'targetRefName': 'refs/heads/dev',
       'reviewers': [
-        {'id': 'identity-id'},
+        {'id': 'identity-id', 'isRequired': true},
       ],
       'workItemRefs': [
         {'id': '123'},

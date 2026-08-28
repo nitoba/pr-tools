@@ -43,13 +43,14 @@ A operação é concluída.
     expect(xml, contains('<step id="2" type="ActionStep">'));
     expect(xml, contains('<step id="3" type="ValidateStep">'));
     expect(xml, isNot(contains('<step id="2" type="ValidateStep">')));
+    expect(xml, contains('&lt;BR/&gt;'));
     expect(xml, contains('A operação é concluída.'));
   });
 
   test('includes generated steps in the Test Case creation input', () {
     const settings = TestCardSettings(
       areaPath: r'Project\QA',
-      assignedTo: '',
+      assignedTo: ' qa@example.com ',
       iterationPath: r'Project\Sprint 98',
       priority: 2,
       team: 'DevOps',
@@ -64,14 +65,23 @@ O fluxo termina com sucesso.
 
     final input = buildCreateTestCaseInput(settings, 42, 'Validar fluxo', body);
 
-    expect(input.descriptionHtml, body);
+    expect(input.assignedTo, 'qa@example.com');
+    expect(
+      input.descriptionHtml,
+      '<h2>Checklist de testes</h2>\n'
+      '<ol>\n'
+      '<li>Executar o fluxo principal.</li>\n'
+      '</ol>\n'
+      '<h2>Resultado esperado</h2>\n'
+      '<p>O fluxo termina com sucesso.</p>\n',
+    );
     expect(input.stepsXml, contains('<steps id="0" last="2">'));
     expect(input.stepsXml, contains('<step id="2" type="ValidateStep">'));
     expect(input.stepsXml, contains('Executar o fluxo principal.'));
     expect(input.stepsXml, contains('O fluxo termina com sucesso.'));
   });
 
-  test('does not send an empty steps field when the checklist is missing', () {
+  test('adds a fallback step when the checklist is missing', () {
     const settings = TestCardSettings(
       areaPath: '',
       assignedTo: '',
@@ -88,6 +98,8 @@ O fluxo termina com sucesso.
       '## Objetivo\nApenas descrição.',
     );
 
-    expect(input.stepsXml, isNull);
+    expect(input.stepsXml, contains('<steps id="0" last="2">'));
+    expect(input.stepsXml, contains('<step id="2" type="ActionStep">'));
+    expect(input.stepsXml, contains('Sem checklist'));
   });
 }

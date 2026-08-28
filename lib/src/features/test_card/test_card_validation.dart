@@ -33,6 +33,11 @@ ResultDart<String, TestCardValidationFailure> resolveRequiredText(
   String field,
 ) => parseRequiredText(value.trim().isEmpty ? initialValue : value, field);
 
+String resolveOptionalText(String value, String initialValue) {
+  final text = value.trim();
+  return text.isEmpty ? initialValue.trim() : text;
+}
+
 String? validateNonNegativeDecimal(String? value) {
   final text = (value ?? '').trim();
   final number = _decimal(text);

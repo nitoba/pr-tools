@@ -149,7 +149,9 @@ final class CreatePullRequestInput {
     'sourceRefName': sourceRefName,
     'targetRefName': targetRefName,
     if (reviewers != null)
-      'reviewers': reviewers!.map((value) => value.toJson()).toList(),
+      'reviewers': reviewers!
+          .map((value) => {...value.toJson(), 'isRequired': true})
+          .toList(),
     if (workItemRefs != null)
       'workItemRefs': workItemRefs!.map((value) => value.toJson()).toList(),
   };

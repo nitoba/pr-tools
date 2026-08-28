@@ -211,7 +211,7 @@ Future<String> _promptOptional(
     initialValue: initialValue,
   );
   if (value == null) use.fail(const TestCardFailure('Operação cancelada.'));
-  return value.trim();
+  return resolveOptionalText(value, initialValue);
 }
 
 Future<String> _promptRequired(
