@@ -1,4 +1,5 @@
 import 'config_models.dart';
+import '../ai/description_limits.dart';
 
 const codexModel = 'gpt-5.6-luna';
 const ReasoningLevel codexReasoning = 'high';
@@ -8,7 +9,8 @@ const defaultBaseUrl = 'https://api.openai.com/v1';
 const defaultCompatibleModel = 'gpt-4o-mini';
 const ReasoningLevel compatibleReasoning = 'provider-default';
 
-const defaultTemplate = '''Analise o diff e o log do git fornecidos e gere uma descrição de pull request em português brasileiro.
+const defaultTemplate =
+    '''Analise o diff e o log do git fornecidos e gere uma descrição de pull request em português brasileiro.
 
 Retorne um objeto JSON com exatamente estes campos:
 - "title": título curto, técnico e descritivo, com no máximo 80 caracteres.
@@ -33,4 +35,5 @@ Liste componentes ou arquivos relevantes e descreva a mudança funcional.
 
 Não invente alterações que não estejam no diff.
 
-Responda somente com o objeto JSON. Não inclua o prompt, o contexto Git, o log, o diff ou qualquer texto adicional fora desse objeto.''';
+Responda somente com o objeto JSON. Não inclua o prompt, o contexto Git, o log, o diff ou qualquer texto adicional fora desse objeto.
+$azurePrDescriptionPromptRules''';

@@ -1,4 +1,5 @@
 import '../../domain/change_context.dart';
+import '../../application/ai/description_limits.dart';
 import 'describe_models.dart';
 
 String buildDescribePrompt(DescribePrompt input) {
@@ -26,5 +27,10 @@ $fence
 ${fence}diff
 ${context.diff}
 $fence
+
+### Instruções de saída
+
+Gere somente o objeto JSON solicitado pelo prompt de sistema.
+$azurePrDescriptionPromptRules
 ''';
 }

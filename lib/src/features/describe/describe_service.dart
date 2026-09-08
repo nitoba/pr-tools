@@ -1,7 +1,9 @@
 import 'package:better_effect/better_effect.dart';
 
 import '../../application/ai/description_generator.dart';
+import '../../application/ai/description_limits.dart';
 import '../../application/ai/description_models.dart';
+import '../../application/ai/description_rewriter.dart';
 import '../../app/app_effect.dart';
 import '../../app/app_failure.dart';
 import '../../app/cli_options.dart';
@@ -121,7 +123,7 @@ final class DescribeServiceLive implements DescribeService {
     DescriptionReporter? report,
   }) => .result((use) async {
     final generator = use<DescriptionGenerator>();
-    return use.unwrap(
+    final generated = await use.unwrap(
       generator.generate(
         config: preparation.config,
         system: preparation.system,
@@ -129,6 +131,27 @@ final class DescribeServiceLive implements DescribeService {
         branch: preparation.context.branch,
         report: report,
       ),
+    );
+    if (isAzurePrDescriptionWithinLimit(generated.description.body)) {
+      return generated;
+    }
+
+    final rewritten = await use.unwrap(
+      use<DescriptionRewriter>().rewrite(
+        config: preparation.config,
+        system: preparation.system,
+        branch: preparation.context.branch,
+        description: generated.description,
+        report: report,
+      ),
+    );
+    final description = await use.result(
+      validateAzurePrDescription(rewritten.description),
+    );
+    return GeneratedDescription(
+      description: description,
+      provider: rewritten.provider,
+      model: rewritten.model,
     );
   });
 }

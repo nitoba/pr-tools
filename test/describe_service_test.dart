@@ -1,6 +1,8 @@
 import 'package:better_effect/better_effect.dart';
 import 'package:pr_tools/src/application/ai/description_generator.dart';
+import 'package:pr_tools/src/application/ai/description_limits.dart';
 import 'package:pr_tools/src/application/ai/description_models.dart';
+import 'package:pr_tools/src/application/ai/description_rewriter.dart';
 import 'package:pr_tools/src/application/config/config_models.dart';
 import 'package:pr_tools/src/application/config/config_service.dart';
 import 'package:pr_tools/src/application/change_context/change_context_reader.dart';
@@ -91,6 +93,75 @@ void main() {
       expect(success?.$2.description.title, 'Generated');
     },
   );
+
+  test('rewrites an oversized PR description before returning it', () async {
+    final original = PrDescription(
+      title: 'Título original',
+      body: 'informação importante ' * 200,
+    );
+    final rewriter = _RecordingDescriptionRewriter();
+    final preparation = DescribePreparation(
+      config: config,
+      context: context,
+      targets: const ['dev'],
+      system: 'system template',
+      prompt: 'prompt',
+      interactive: true,
+    );
+    final module = Module([
+      .instance<DescriptionGenerator>(_FixedDescriptionGenerator(original)),
+      .instance<DescriptionRewriter>(rewriter),
+      .provide<DescribeService>(DescribeServiceLive.new),
+    ]);
+
+    final result = await module.run(
+      Effect.result((use) async {
+        return use.unwrap(use<DescribeService>().generate(preparation));
+      }),
+    );
+
+    final generated = result.fold((value) => value, (failure) {
+      fail((failure as AppFailure).message);
+    });
+    expect(generated.description.body, '## Descrição\nResumo preservado.');
+    expect(rewriter.received, original);
+    expect(generated.provider, 'rewriter');
+    expect(generated.model, 'compact-model');
+  });
+
+  test('does not return an oversized description after rewriting', () async {
+    final original = PrDescription(title: 'Título', body: 'a' * 4000);
+    final preparation = DescribePreparation(
+      config: config,
+      context: context,
+      targets: const ['dev'],
+      system: 'system template',
+      prompt: 'prompt',
+      interactive: true,
+    );
+    final module = Module([
+      .instance<DescriptionGenerator>(_FixedDescriptionGenerator(original)),
+      .instance<DescriptionRewriter>(
+        _FixedDescriptionRewriter(
+          GeneratedDescription(
+            description: original,
+            provider: 'rewriter',
+            model: 'compact-model',
+          ),
+        ),
+      ),
+      .provide<DescribeService>(DescribeServiceLive.new),
+    ]);
+
+    final result = await module.run(
+      Effect.result((use) async {
+        return use.unwrap(use<DescribeService>().generate(preparation));
+      }),
+    );
+
+    expect(result.getOrNull(), isNull);
+    expect(result.exceptionOrNull(), isA<DescriptionLengthFailure>());
+  });
 
   test('recollects context from the latest merged PR source commit', () async {
     final reader = FakeChangeContextReader();
@@ -227,4 +298,65 @@ final class FakeDescriptionGenerator implements DescriptionGenerator {
       model: 'codex-model',
     ),
   );
+}
+
+final class _FixedDescriptionGenerator implements DescriptionGenerator {
+  _FixedDescriptionGenerator(this.description);
+
+  final PrDescription description;
+
+  @override
+  AppEffect<GeneratedDescription> generate({
+    required Config config,
+    required String system,
+    required String prompt,
+    required String branch,
+    DescriptionReporter? report,
+  }) => Effect.succeed(
+    GeneratedDescription(
+      description: description,
+      provider: 'initial',
+      model: 'initial-model',
+    ),
+  );
+}
+
+final class _RecordingDescriptionRewriter implements DescriptionRewriter {
+  PrDescription? received;
+
+  @override
+  AppEffect<GeneratedDescription> rewrite({
+    required Config config,
+    required String system,
+    required String branch,
+    required PrDescription description,
+    DescriptionReporter? report,
+  }) {
+    received = description;
+    return Effect.succeed(
+      const GeneratedDescription(
+        description: PrDescription(
+          title: 'Título preservado',
+          body: '## Descrição\nResumo preservado.',
+        ),
+        provider: 'rewriter',
+        model: 'compact-model',
+      ),
+    );
+  }
+}
+
+final class _FixedDescriptionRewriter implements DescriptionRewriter {
+  _FixedDescriptionRewriter(this.generated);
+
+  final GeneratedDescription generated;
+
+  @override
+  AppEffect<GeneratedDescription> rewrite({
+    required Config config,
+    required String system,
+    required String branch,
+    required PrDescription description,
+    DescriptionReporter? report,
+  }) => Effect.succeed(generated);
 }

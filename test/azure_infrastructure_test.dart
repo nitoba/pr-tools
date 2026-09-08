@@ -218,6 +218,44 @@ void main() {
       }
     },
   );
+
+  test(
+    'publisher rejects oversized PR descriptions before calling Azure',
+    () async {
+      final pullRequests = _FakePullRequests(
+        repository: const AzureRepository(id: 'repository-id'),
+      );
+      final runtime = await _runtime();
+
+      try {
+        final result = await runtime.runWith(
+          _scope(_config(), _context(), pullRequests, _FakeWorkItems()),
+          Effect.result((use) async {
+            return use.unwrap(
+              use<PullRequestPublisher>().publish(const [
+                'dev',
+              ], PullRequestDraft(title: 'title', description: 'a' * 4000)),
+            );
+          }),
+        );
+
+        result.fold(
+          (_) => fail('a description at the Azure limit should fail'),
+          (failure) {
+            expect(failure, isA<AzurePayloadError>());
+            expect(
+              (failure as AppFailure).message,
+              contains('4000 caracteres'),
+            );
+          },
+        );
+        expect(pullRequests.repositoryRequests, isEmpty);
+        expect(pullRequests.created, isEmpty);
+      } finally {
+        await runtime.close();
+      }
+    },
+  );
 }
 
 Future<Runtime> _runtime() => Module([]).start();

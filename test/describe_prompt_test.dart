@@ -43,6 +43,15 @@ $fence
 ${fence}diff
 diff --git a/login.ts b/login.ts
 $fence
+
+### Instruções de saída
+
+Gere somente o objeto JSON solicitado pelo prompt de sistema.
+REGRAS OBRIGATÓRIAS DO CAMPO "body":
+- O body deve ter menos de 4000 caracteres (limite estrito: no máximo 3999).
+- Conte todos os caracteres do Markdown, incluindo espaços e quebras de linha.
+- Preserve somente informações sustentadas pelo contexto; seja conciso e priorize o que mudou e por quê.
+- Nunca ultrapasse esse limite, não inclua o contexto Git na resposta e não escreva texto fora do JSON.
 ''');
   });
 

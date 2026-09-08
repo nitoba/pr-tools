@@ -1,6 +1,7 @@
 import 'package:better_effect/better_effect.dart';
 
 import '../../app/app_effect.dart';
+import '../../application/ai/description_limits.dart';
 import '../../features/describe/pull_request_publisher.dart';
 import 'client.dart';
 import 'execution.dart';
@@ -17,6 +18,15 @@ final class AzurePullRequestPublisherLive implements PullRequestPublisher {
     PullRequestDraft draft, {
     String Function(String target)? reviewerForTarget,
   }) => Effect.result((use) async {
+    if (!isAzurePrDescriptionWithinLimit(draft.description)) {
+      use.fail(
+        AzurePayloadError(
+          'A descrição do PR excede o limite do Azure DevOps: '
+          '${draft.description.length} caracteres (máximo '
+          '${azurePrDescriptionMaxLength - 1}).',
+        ),
+      );
+    }
     final execution = use<AzureExecutionContext>();
     final remote = execution.change.remote;
     if (remote == null) {

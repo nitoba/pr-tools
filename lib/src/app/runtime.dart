@@ -2,6 +2,7 @@ import 'package:better_effect/better_effect.dart';
 import 'package:terminice/terminice.dart' show Terminice;
 
 import '../application/ai/description_generator.dart';
+import '../application/ai/description_rewriter.dart';
 import '../application/clipboard/clipboard.dart';
 import '../application/config/config_service.dart';
 import '../application/change_context/change_context_reader.dart';
@@ -19,6 +20,7 @@ import '../features/test_card/test_card_command.dart';
 import '../features/test_card/test_card_presenter.dart';
 import '../features/init/init_command.dart';
 import '../infrastructure/ai/ai_description_generator.dart';
+import '../infrastructure/ai/description_rewriter.dart';
 import '../infrastructure/ai/genkit_compatible_generator.dart';
 import '../infrastructure/config/config_service_live.dart';
 import '../infrastructure/doctor/execution.dart';
@@ -48,6 +50,7 @@ final appModule = Module.complete([
     GenkitCompatibleDescriptionGenerator.new,
   ),
   .provide<DescriptionGenerator>(DescriptionGeneratorLive.new),
+  .provide<DescriptionRewriter>(DescriptionRewriterLive.new),
   .provide<DescribeService>(DescribeServiceLive.new),
   .provide<DescribePresenter>(DescribePresenterLive.new),
   .provide<DescribeCommand>(DescribeCommandLive.new),
