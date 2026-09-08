@@ -7,6 +7,11 @@ void main() {
       expect(validatePositiveDecimal(''), isNull);
     });
 
+    test('allows Enter to preserve a numeric default', () {
+      expect(validateNonNegativeDecimal(''), isNull);
+      expect(parsePositiveDecimal('', 1, 'Effort').getOrNull(), 1);
+    });
+
     test('rejects an empty required Azure field before publishing', () {
       expect(validateRequiredText(''), 'Informe um valor.');
       expect(validateRequiredText('DevOps'), isNull);

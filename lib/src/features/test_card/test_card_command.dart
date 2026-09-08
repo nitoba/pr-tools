@@ -108,7 +108,7 @@ final class TestCardCommandLive implements TestCardCommand {
           'Atualizar o Work Item pai para Test QA?',
           initialValue: false,
         )) {
-      final effort = workItemNumber(
+      final declaredEffort = workItemNumber(
         preparation.context.workItem,
         'Microsoft.VSTS.Scheduling.Effort',
       );
@@ -116,19 +116,18 @@ final class TestCardCommandLive implements TestCardCommand {
         preparation.context.workItem,
         'Custom.RealEffort',
       );
-      final nextEffort = effort == null
-          ? await _promptNumber(
-              use,
-              'Effort (horas decimais)',
-              0.5,
-              validateNonNegativeDecimal,
-            )
-          : null;
+      final effortDefault = declaredEffort ?? 1;
+      final nextEffort = await _promptNumber(
+        use,
+        'Effort (horas decimais; Enter usa $effortDefault)',
+        effortDefault,
+        validateNonNegativeDecimal,
+      );
       final nextRealEffort = realEffort == null
           ? await _promptNumber(
               use,
               'Real Effort (horas decimais)',
-              nextEffort ?? effort ?? 0.5,
+              nextEffort,
               validateNonNegativeDecimal,
             )
           : null;

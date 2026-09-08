@@ -43,4 +43,19 @@ void main() {
     expect(output, contains('┊ Linha 1'));
     expect(output, contains('┊\n'));
   });
+
+  test(
+    'returns the initial text value when Enter confirms an empty input',
+    () async {
+      final tester = TerminiceTester.fallback(lines: ['']);
+      String? value;
+
+      await tester.runAsync((_) async {
+        value = PromptPortLive(tester.terminice)
+            .text(message: 'Effort', initialValue: '1');
+      });
+
+      expect(value, '1');
+    },
+  );
 }

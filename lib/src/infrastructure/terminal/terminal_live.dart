@@ -21,12 +21,15 @@ final class PromptPortLive implements PromptPort {
     String? placeholder,
     PromptValidator? validate,
   }) {
-    return _ui.text(
+    final defaultValue = initialValue ?? placeholder;
+    final value = _ui.text(
       message,
-      placeholder: initialValue ?? placeholder,
+      placeholder: defaultValue,
       required: false,
       validator: validate == null ? null : (value) => validate(value),
     );
+    if (value == null) return null;
+    return value.trim().isEmpty && defaultValue != null ? defaultValue : value;
   }
 
   @override

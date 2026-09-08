@@ -40,6 +40,7 @@ String resolveOptionalText(String value, String initialValue) {
 
 String? validateNonNegativeDecimal(String? value) {
   final text = (value ?? '').trim();
+  if (text.isEmpty) return null;
   final number = _decimal(text);
   return number != null && number >= 0 ? null : 'Informe um número válido.';
 }
