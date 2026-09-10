@@ -55,6 +55,7 @@ async fn main() {
         prt::cli::Command::Test => run_test(&options).await,
         prt::cli::Command::Init => run_init(&options).await,
         prt::cli::Command::Doctor => run_doctor(&options).await,
+        prt::cli::Command::Update => run_update().await,
         // Inalcançável: `completions` retorna mais acima.
         prt::cli::Command::Completions => Ok(()),
     };
@@ -65,6 +66,12 @@ async fn main() {
                 .map_or(1, prt::error::AppError::exit_code),
         );
     }
+}
+
+async fn run_update() -> anyhow::Result<()> {
+    prt::features::update::run()
+        .await
+        .map_err(anyhow::Error::new)
 }
 
 async fn handle_desc_dry_run(

@@ -1,6 +1,6 @@
 //! Parsing da CLI — espelha `cli_parser.dart` + `cli_options.dart`.
 //!
-//! Comandos: `desc` (default), `test`, `init`, `doctor`, `completions`.
+//! Comandos: `desc` (default), `test`, `init`, `doctor`, `update`, `completions`.
 //! Mantém as mesmas flags, validações e mensagens do Dart.
 
 use clap::{Parser, Subcommand};
@@ -66,6 +66,9 @@ pub enum Command {
     Init,
     /// Diagnóstico do ambiente.
     Doctor,
+    /// Baixa a versão mais recente e atualiza o binário instalado.
+    #[command(alias = "updade")]
+    Update,
     /// Gera script de completions para o shell.
     Completions,
 }
@@ -90,6 +93,9 @@ pub enum CommandWithOpts {
     Init,
     /// `prt doctor` — diagnóstico do ambiente.
     Doctor(DoctorOpts),
+    /// `prt update` — atualiza o binário instalado.
+    #[command(alias = "updade")]
+    Update,
     /// `prt completions <shell>` — script de completions.
     Completions(CompletionsOpts),
 }
@@ -300,7 +306,10 @@ where
     // Se o primeiro posicional não é subcomando nem flag, prefixa `desc`.
     let first = collected.get(1).map_or("", String::as_str);
     if !first.starts_with('-')
-        && !matches!(first, "desc" | "test" | "init" | "doctor" | "completions")
+        && !matches!(
+            first,
+            "desc" | "test" | "init" | "doctor" | "update" | "updade" | "completions"
+        )
     {
         return Vec::new(); // sinaliza comando desconhecido abaixo
     }
@@ -322,7 +331,10 @@ fn reject_unknown_command(raw: &[String]) -> Result<()> {
     if raw.len() > 1 {
         let first = raw[1].as_str();
         if !first.starts_with('-')
-            && !matches!(first, "desc" | "test" | "init" | "doctor" | "completions")
+            && !matches!(
+                first,
+                "desc" | "test" | "init" | "doctor" | "update" | "updade" | "completions"
+            )
         {
             return Err(AppError::cli(format!("comando desconhecido: {first}")));
         }
@@ -459,6 +471,7 @@ fn build_options(sub: CommandWithOpts) -> Result<CliOptions> {
             source: o.source,
             ..empty_cli_options(Command::Doctor)
         }),
+        CommandWithOpts::Update => Ok(empty_cli_options(Command::Update)),
         CommandWithOpts::Completions(o) => Ok(CliOptions {
             completion_shell: Some(o.shell),
             ..empty_cli_options(Command::Completions)
@@ -499,7 +512,7 @@ where
 pub fn help_text() -> String {
     format!(
         "prt v{VERSION}\n\nGera descrições de PR e Test Cases a partir do contexto Git.\n\nUso:\n  \
-         prt desc [opções]\n  prt test [opções]\n  prt init\n  prt doctor\n  prt completions <shell>\n\nOpções:\n  \
+         prt desc [opções]\n  prt test [opções]\n  prt init\n  prt doctor\n  prt update\n  prt completions <shell>\n\nOpções:\n  \
          --source <branch>       Branch de origem\n  --target <branch>       Target; pode repetir\n  \
          --work-item <id>        Work Item\n  --provider <nome>       codex, opencode ou openai-compatible\n  \
          --model <nome>          Modelo do provider\n  --base-url <url>        Endpoint OpenAI-compatible\n  \
@@ -541,6 +554,18 @@ mod tests {
     fn cli_should_reject_unknown_command() {
         let err = parse_cli(["prt", "frobnicate"]).unwrap_err();
         assert!(err.to_string().contains("comando desconhecido"));
+    }
+
+    #[test]
+    fn cli_should_parse_update_and_its_typo_alias() {
+        assert_eq!(
+            parse_cli(["prt", "update"]).unwrap().command,
+            Command::Update
+        );
+        assert_eq!(
+            parse_cli(["prt", "updade"]).unwrap().command,
+            Command::Update
+        );
     }
 
     #[test]
