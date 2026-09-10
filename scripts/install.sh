@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# Instalador principal do `prt` Rust — Linux e macOS.
+#
+# Para instalar a implementação Dart de compatibilidade, use:
+#   PR_TOOLS_FLAVOR=dart bash scripts/install.sh
 
 set -euo pipefail
 
@@ -6,6 +10,16 @@ platform="$(uname -s)"
 architecture="$(uname -m)"
 version="${PR_TOOLS_VERSION:-latest}"
 repository="${PR_TOOLS_REPOSITORY:-nitoba/pr-tools}"
+flavor="${PR_TOOLS_FLAVOR:-rust}"
+
+case "$flavor" in
+  rust) asset_prefix='prt' ;;
+  dart) asset_prefix='prt-dart' ;;
+  *)
+    printf 'Implementação inválida: %s (use rust ou dart).\n' "$flavor" >&2
+    exit 2
+    ;;
+esac
 
 if [[ -z "${PR_TOOLS_BINARY:-}" && ( -z "$repository" || ! "$repository" =~ ^[^/]+/[^/]+$ ) ]]; then
   printf 'Não foi possível determinar o repositório GitHub. Use PR_TOOLS_REPOSITORY=owner/repo.\n' >&2
@@ -17,13 +31,13 @@ if [[ -n "${PR_TOOLS_BINARY:-}" ]]; then
 else
   case "$platform:$architecture" in
     Linux:x86_64|Linux:amd64)
-      asset_name='prt-linux-x64'
+      asset_name="$asset_prefix-linux-x64"
       ;;
     Linux:aarch64|Linux:arm64)
-      asset_name='prt-linux-arm64'
+      asset_name="$asset_prefix-linux-arm64"
       ;;
     Darwin:arm64)
-      asset_name='prt-macos-arm64'
+      asset_name="$asset_prefix-macos-arm64"
       ;;
     *)
       printf 'Plataforma não suportada pelo instalador Bash: %s/%s.\n' "$platform" "$architecture" >&2

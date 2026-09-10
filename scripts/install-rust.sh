@@ -2,10 +2,10 @@
 # Instalador interativo do `prt` Rust — Linux e macOS.
 #
 #   curl -fsSL https://raw.githubusercontent.com/nitoba/pr-tools/main/scripts/install-rust.sh | bash
-#   PR_TOOLS_VERSION=v4.0.10 bash scripts/install-rust.sh
+#   PR_TOOLS_VERSION=v4.0.11 bash scripts/install-rust.sh
 #
 # Env (todos opcionais, têm precedência sobre as perguntas):
-#   PR_TOOLS_VERSION      tag (v4.0.10) ou 'latest' (padrão)
+#   PR_TOOLS_VERSION      tag (v4.0.11) ou 'latest' (padrão)
 #   PR_TOOLS_REPOSITORY   owner/repo (padrão: nitoba/pr-tools)
 #   PR_TOOLS_INSTALL_DIR  diretório de instalação (padrão: ~/.local/bin)
 #   PR_TOOLS_BINARY       usa um binário local em vez de baixar do GitHub

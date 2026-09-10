@@ -9,7 +9,7 @@ use clap_complete::Shell;
 use crate::error::{AppError, Result};
 
 /// Versão da CLI (espelha `version` do Dart).
-pub const VERSION: &str = "4.0.10";
+pub const VERSION: &str = "4.0.11";
 
 /// Providers de IA suportados.
 pub const PROVIDERS: &[&str] = &["codex", "opencode", "openai-compatible"];

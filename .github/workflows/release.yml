@@ -66,19 +66,27 @@ jobs:
         include:
           - os: ubuntu-24.04
             target: linux-x64
-            asset: prt-linux-x64
+            primary_asset: prt-linux-x64
+            dart_source: prt-linux-x64
+            dart_asset: prt-dart-linux-x64
             rust_asset: prt-rust-linux-x64
           - os: ubuntu-24.04-arm
             target: linux-arm64
-            asset: prt-linux-arm64
+            primary_asset: prt-linux-arm64
+            dart_source: prt-linux-arm64
+            dart_asset: prt-dart-linux-arm64
             rust_asset: prt-rust-linux-arm64
           - os: macos-14
             target: macos-arm64
-            asset: prt-macos-arm64
+            primary_asset: prt-macos-arm64
+            dart_source: prt-macos-arm64
+            dart_asset: prt-dart-macos-arm64
             rust_asset: prt-rust-macos-arm64
           - os: windows-latest
             target: windows-x64
-            asset: prt-windows-x64.exe
+            primary_asset: prt-windows-x64.exe
+            dart_source: prt-windows-x64.exe
+            dart_asset: prt-dart-windows-x64.exe
             rust_asset: prt-rust-windows-x64.exe
     runs-on: ${{ matrix.os }}
     steps:
@@ -94,15 +102,18 @@ jobs:
         run: dart pub get
         working-directory: apps/dart
 
-      - name: Build ${{ matrix.target }}
-        run: dart run ../../scripts/build.dart ${{ matrix.target }}
+      - name: Build Dart compatibility ${{ matrix.target }}
+        shell: bash
+        run: |
+          dart run ../../scripts/build.dart ${{ matrix.target }}
+          mv "dist/${{ matrix.dart_source }}" "dist/${{ matrix.dart_asset }}"
         working-directory: apps/dart
 
-      - name: Upload platform artifact
+      - name: Upload Dart compatibility artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.asset }}
-          path: apps/dart/dist/${{ matrix.asset }}
+          name: ${{ matrix.dart_asset }}
+          path: apps/dart/dist/${{ matrix.dart_asset }}
           if-no-files-found: error
 
       - name: Setup Rust
@@ -112,7 +123,18 @@ jobs:
         shell: bash
         run: ./scripts/build-rust.sh ${{ matrix.target }} --no-verify
 
-      - name: Upload Rust platform artifact
+      - name: Stage primary Rust artifact
+        shell: bash
+        run: cp "apps/rust/dist/${{ matrix.rust_asset }}" "apps/rust/dist/${{ matrix.primary_asset }}"
+
+      - name: Upload primary Rust artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.primary_asset }}
+          path: apps/rust/dist/${{ matrix.primary_asset }}
+          if-no-files-found: error
+
+      - name: Upload Rust compatibility artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.rust_asset }}

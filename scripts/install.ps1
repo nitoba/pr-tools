@@ -2,6 +2,13 @@ $ErrorActionPreference = 'Stop'
 
 $version = if ($env:PR_TOOLS_VERSION) { $env:PR_TOOLS_VERSION } else { 'latest' }
 $repository = if ($env:PR_TOOLS_REPOSITORY) { $env:PR_TOOLS_REPOSITORY } else { 'nitoba/pr-tools' }
+$flavor = if ($env:PR_TOOLS_FLAVOR) { $env:PR_TOOLS_FLAVOR } else { 'rust' }
+
+$assetPrefix = switch ($flavor) {
+  'rust' { 'prt' }
+  'dart' { 'prt-dart' }
+  default { throw "Implementação inválida: $flavor (use rust ou dart)." }
+}
 
 if ($repository) {
   $repository = $repository -replace '^https?://github\.com/', ''
@@ -12,7 +19,7 @@ if ($repository) {
 }
 
 $binaryPath = $env:PR_TOOLS_BINARY
-$assetName = 'prt-windows-x64.exe'
+$assetName = "$assetPrefix-windows-x64.exe"
 $temporaryPath = $null
 if (-not $binaryPath) {
   if (-not $repository -or $repository -notmatch '^[^/]+/[^/]+$') {

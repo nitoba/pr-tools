@@ -6,7 +6,7 @@ O fluxo é guiado: a descrição/card é exibida antes da publicação e a cria�
 
 ## Instalação
 
-As releases publicam binários para Linux x64/arm64, macOS arm64 e Windows x64. O instalador baixa automaticamente a versão mais recente e adiciona o diretório do executável ao PATH do usuário.
+As releases publicam a implementação Rust principal para Linux x64/arm64, macOS arm64 e Windows x64. A implementação Dart continua disponível como compatibilidade. O instalador baixa automaticamente a versão mais recente e adiciona o diretório do executável ao PATH do usuário.
 
 Depois da instalação, o comando disponível é `prt`.
 
@@ -23,7 +23,7 @@ Para instalar uma versão específica:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/nitoba/pr-tools/main/scripts/install.sh \
-  | PR_TOOLS_VERSION=v4.0.4 bash
+  | PR_TOOLS_VERSION=v4.0.11 bash
 ```
 
 Abra um novo terminal após a instalação. O instalador configura `.profile`/`.bashrc`, `.zprofile` ou `config.fish`, conforme o shell usado.
@@ -119,7 +119,7 @@ As implementações são aplicações independentes dentro de `apps/`:
 ```text
 apps/
 ├── dart/   # implementação Dart existente
-└── rust/   # implementação Rust com Ratatui
+└── rust/   # implementação Rust principal com Ratatui
 ```
 
 A raiz contém somente a configuração compartilhada do monorepo, a automação
@@ -128,10 +128,14 @@ usam o mesmo nome de comando (`prt`) e a mesma configuração em
 `~/.config/pr-tools`. Escolha explicitamente qual instalador usar:
 
 ```bash
-# Dart (compatibilidade)
+# Rust (implementação principal)
 curl -fsSL https://raw.githubusercontent.com/nitoba/pr-tools/main/scripts/install.sh | bash
 
-# Rust (TUI Ratatui)
+# Dart (compatibilidade)
+curl -fsSL https://raw.githubusercontent.com/nitoba/pr-tools/main/scripts/install.sh \
+  | PR_TOOLS_FLAVOR=dart bash
+
+# Rust (alias explícito, compatível com versões anteriores)
 curl -fsSL https://raw.githubusercontent.com/nitoba/pr-tools/main/scripts/install-rust.sh | bash
 ```
 
@@ -161,4 +165,6 @@ externos `codex` e `opencode` continuam sendo instalados e autenticados
 separadamente na máquina do usuário.
 
 `./scripts/build-rust.sh` gera `apps/rust/dist/prt-rust-<plataforma>` para o
-host atual, depois de executar as verificações Rust por padrão.
+host atual, depois de executar as verificações Rust por padrão. Nas releases,
+esse binário também é publicado como `prt-<plataforma>` (nome principal),
+enquanto o Dart usa `prt-dart-<plataforma>`.
