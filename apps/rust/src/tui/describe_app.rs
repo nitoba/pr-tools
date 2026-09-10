@@ -103,6 +103,8 @@ pub struct DescribeApp {
     pub scroll: u16,
     /// Mensagem de erro.
     pub error: Option<String>,
+    /// Etapa em que ocorreu o erro (para manter o stepper contextual).
+    pub error_step: usize,
     /// Mostra popup de ajuda?
     pub show_help: bool,
     /// Copiado agora? (feedback visual temporário).
@@ -157,6 +159,7 @@ impl DescribeApp {
             progress_label: "preparando".to_owned(),
             scroll: 0,
             error: None,
+            error_step: 0,
             show_help: false,
             copied_flash_until_tick: 0,
             published_urls: Vec::new(),
@@ -199,7 +202,12 @@ impl DescribeApp {
             BackendEvent::Phase(label) => {
                 self.phase_label.clone_from(&label);
                 self.push_log(label);
-                if self.phase == Phase::Boot {
+                // A coleta de contexto é a própria etapa de Boot. Só entra
+                // em Generating quando o backend sinaliza o provider ou
+                // começa a entregar tokens; assim a primeira etapa permanece
+                // visível em vez de ser pulada no primeiro evento.
+                if self.phase == Phase::Boot && !self.phase_label.starts_with("coletando contexto")
+                {
                     self.phase = Phase::Generating;
                 }
             }
@@ -219,13 +227,23 @@ impl DescribeApp {
                 "publicado".clone_into(&mut self.phase_label);
                 self.progress = 1.0;
                 "pronto".clone_into(&mut self.progress_label);
-                for item in &published {
-                    self.push_log(format!("PR {} criado: {}", item.target, item.url));
+                for item in published {
+                    if !self.published.iter().any(|current| current.id == item.id) {
+                        self.push_log(format!("PR {} criado: {}", item.target, item.url));
+                        self.published.push(item);
+                    }
                 }
-                self.published_urls = published.iter().map(|p| p.url.clone()).collect();
-                self.published = published;
+                self.published_urls = self.published.iter().map(|p| p.url.clone()).collect();
+            }
+            BackendEvent::PublishedOne(item) => {
+                if !self.published.iter().any(|current| current.id == item.id) {
+                    self.push_log(format!("PR {} criado: {}", item.target, item.url));
+                    self.published_urls.push(item.url.clone());
+                    self.published.push(item);
+                }
             }
             BackendEvent::Failed(msg) => {
+                self.error_step = self.step_index();
                 self.phase = Phase::Error;
                 self.error = Some(msg.clone());
                 "erro".clone_into(&mut self.phase_label);
@@ -282,10 +300,38 @@ impl DescribeApp {
         if let Some(d) = &self.desc {
             format!("# {}\n\n{}", d.title, d.body)
         } else if self.streamed_raw.is_empty() {
-            "aguardando primeiro token…".to_owned()
+            if super::ascii_only() {
+                "aguardando primeiro token...".to_owned()
+            } else {
+                "aguardando primeiro token…".to_owned()
+            }
         } else {
-            format!("{}▊", self.streamed_raw)
+            let cursor = if super::ascii_only() { "_" } else { "▊" };
+            format!("{}{cursor}", self.streamed_raw)
         }
+    }
+
+    /// Índice da etapa exibida no stepper (0 = contexto, 3 = publicação).
+    #[must_use]
+    pub fn step_index(&self) -> usize {
+        match self.phase {
+            Phase::Boot => 0,
+            Phase::Generating => 1,
+            Phase::Review => 2,
+            Phase::Publishing => 3,
+            Phase::Done => 4,
+            Phase::Error => self.error_step.min(3),
+        }
+    }
+
+    /// Quantidade de caracteres exibida para a descrição/stream.
+    #[must_use]
+    pub fn content_chars(&self) -> usize {
+        self.desc
+            .as_ref()
+            .map_or(self.streamed_raw.len(), |description| {
+                description.body.len()
+            })
     }
 
     /// Número de tokens (aprox. por chars/4).
@@ -459,6 +505,18 @@ mod tests {
     }
 
     #[test]
+    fn context_phase_should_keep_boot_until_generation_starts() {
+        let mut a = app();
+        a.on_backend(BackendEvent::Phase("coletando contexto git…".to_owned()));
+        assert_eq!(a.phase, Phase::Boot);
+        assert_eq!(a.step_index(), 0);
+
+        a.on_backend(BackendEvent::Phase("streaming gpt…".to_owned()));
+        assert_eq!(a.phase, Phase::Generating);
+        assert_eq!(a.step_index(), 1);
+    }
+
+    #[test]
     fn spinner_should_stop_when_idle() {
         let frames: std::collections::HashSet<&str> =
             crate::tui::spin_frames().iter().copied().collect();
@@ -534,6 +592,26 @@ mod tests {
     }
 
     #[test]
+    fn reviewer_editor_should_commit_cursor_edits_when_switching_fields() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let mut a = app();
+        a.open_reviewers();
+        let key = |code| KeyEvent::new(code, KeyModifiers::NONE);
+        assert!(a.reviewer_edit_input(key(KeyCode::Char('!'))));
+        assert!(a.reviewer_edit_input(key(KeyCode::Left)));
+        assert!(a.reviewer_edit_input(key(KeyCode::Char('X'))));
+        a.focus_reviewer(1);
+        assert_eq!(a.reviewers[0], "dev@x.comX!");
+        assert_eq!(a.reviewer_edit, "sprint@x.com");
+
+        assert!(a.reviewer_edit_input(key(KeyCode::Home)));
+        assert!(a.reviewer_edit_input(key(KeyCode::Char('x'))));
+        a.focus_reviewer(0);
+        assert_eq!(a.reviewers[1], "xsprint@x.com");
+    }
+
+    #[test]
     fn published_should_enter_done_with_urls() {
         use crate::azure::pull_requests::PublishedPr;
         let mut a = app();
@@ -545,5 +623,23 @@ mod tests {
         assert_eq!(a.phase, Phase::Done);
         assert_eq!(a.published_urls, vec!["https://x/pr/7"]);
         assert_eq!(a.published.len(), 1);
+    }
+
+    #[test]
+    fn published_one_should_preserve_partial_success_before_final_event() {
+        use crate::azure::pull_requests::PublishedPr;
+
+        let mut a = app();
+        a.on_backend(BackendEvent::PublishedOne(PublishedPr {
+            target: "dev".to_owned(),
+            id: 7,
+            url: "https://x/pr/7".to_owned(),
+        }));
+        a.on_backend(BackendEvent::Failed("sprint indisponível".to_owned()));
+
+        assert_eq!(a.phase, Phase::Error);
+        assert_eq!(a.published.len(), 1);
+        assert_eq!(a.published_urls, vec!["https://x/pr/7"]);
+        assert!(a.logs.iter().any(|line| line.contains("PR dev criado")));
     }
 }

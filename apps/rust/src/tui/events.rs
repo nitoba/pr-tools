@@ -18,6 +18,8 @@ pub enum BackendEvent {
     Finished(PrDescription, String),
     /// Publicação concluída (um item por target).
     Published(Vec<PublishedPr>),
+    /// Um PR foi criado durante uma publicação multi-target.
+    PublishedOne(PublishedPr),
     /// Falha terminal.
     Failed(String),
 }

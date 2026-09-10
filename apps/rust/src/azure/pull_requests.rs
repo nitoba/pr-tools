@@ -378,6 +378,11 @@ pub struct PublishInput<'a> {
     pub work_item_ids: &'a [String],
     /// Reviewer por target (vazio = sem reviewer).
     pub reviewer_for: &'a (dyn Fn(&str) -> String + Sync),
+    /// Notifica cada PR criado, antes de continuar para o próximo target.
+    ///
+    /// Permite que uma UI mostre progresso real e preserve sucessos parciais
+    /// quando um target posterior falhar.
+    pub on_published: Option<&'a (dyn Fn(&PublishedPr) + Sync)>,
 }
 
 /// Publica a descrição em todos os targets (espelha o publisher Dart).
@@ -438,11 +443,15 @@ pub async fn publish_pull_requests(
             },
         )
         .await?;
-        published.push(PublishedPr {
+        let item = PublishedPr {
             target: target.clone(),
             id: created.pull_request_id,
             url: created.web_link().to_owned(),
-        });
+        };
+        published.push(item.clone());
+        if let Some(on_published) = input.on_published {
+            on_published(&item);
+        }
     }
     Ok(published)
 }

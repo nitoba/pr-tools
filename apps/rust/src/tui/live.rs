@@ -14,22 +14,21 @@ use ratatui::{
     DefaultTerminal,
     buffer::Buffer,
     layout::{Constraint, Layout, Rect},
-    style::{Modifier, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{
-        Block, Borders, List, ListItem, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
-        Tabs, Widget, Wrap,
+        Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Widget, Wrap,
     },
 };
 use tokio::sync::mpsc;
 
 use super::describe_app::{DescribeApp, Phase, PublishDialog, PublishSetup};
 use super::events::{BackendEvent, LiveOutcome};
-use super::shimmer::{f64_from_usize, percent_u16};
-use super::{app_layout, border_type, centered_buttons, modal_frame, theme};
+use super::shimmer::{f64_from_usize, filled_cells, percent_u16};
+use super::{ascii_only, border_type, centered_buttons, modal_frame, theme};
 use crate::ai;
 use crate::azure::AzureClient;
-use crate::azure::pull_requests::publish_pull_requests;
+use crate::azure::pull_requests::{PublishedPr, publish_pull_requests};
 use crate::config::Config;
 use crate::features::describe::DescribePrep;
 use crate::git::RepositoryRemote;
@@ -264,6 +263,18 @@ async fn publish_task(
     };
     let targets = base.targets.clone();
     let total = f64_from_usize(targets.len().max(1));
+    let tx_target = tx.clone();
+    let on_published = |item: &PublishedPr| {
+        let completed = targets
+            .iter()
+            .position(|target| target == &item.target)
+            .map_or(1, |index| index + 1);
+        let _ = tx_target.send(BackendEvent::Progress(
+            0.1 + 0.9 * (f64_from_usize(completed) / total),
+            format!("PR {} criado", item.target),
+        ));
+        let _ = tx_target.send(BackendEvent::PublishedOne(item.clone()));
+    };
     // Resolve reviewers uma vez aqui (o publisher também cacheia; o log
     // mostra o que está acontecendo por target).
     let input = crate::azure::pull_requests::PublishInput {
@@ -284,20 +295,11 @@ async fn publish_task(
                 .cloned()
                 .unwrap_or_default()
         },
+        on_published: Some(&on_published),
     };
     let result = publish_pull_requests(&client, &input).await;
     match result {
         Ok(published) => {
-            for (i, item) in published.iter().enumerate() {
-                let _ = tx.send(BackendEvent::Progress(
-                    0.1 + 0.9 * (f64_from_usize(i + 1) / total),
-                    format!("PR {} criado", item.target),
-                ));
-                let _ = tx.send(BackendEvent::Log(format!(
-                    "PR {} criado: {}",
-                    item.target, item.url
-                )));
-            }
             let _ = tx.send(BackendEvent::Published(published));
         }
         Err(e) => {
@@ -345,7 +347,14 @@ impl Widget for &DescribeApp {
             render_too_small(area, buf);
             return;
         }
-        let [head, body, foot] = app_layout(area);
+        // A tela Foco usa duas linhas de cabeçalho para separar o estado
+        // atual das métricas, sem voltar ao mosaico de duas colunas.
+        let [head, body, foot] = Layout::vertical([
+            Constraint::Length(2),
+            Constraint::Min(0),
+            Constraint::Length(1),
+        ])
+        .areas(area);
         Block::new().style(theme().root).render(area, buf);
         render_header(self, head, buf);
         render_body(self, body, buf);
@@ -365,10 +374,17 @@ fn render_too_small(area: Rect, buf: &mut Buffer) {
         return;
     }
     Block::new().style(theme().root).render(area, buf);
-    let msg = format!(
-        "terminal muito pequeno — mínimo 60×20 (atual {}×{})",
-        area.width, area.height
-    );
+    let msg = if ascii_only() {
+        format!(
+            "terminal muito pequeno - mínimo 60x20 (atual {}x{})",
+            area.width, area.height
+        )
+    } else {
+        format!(
+            "terminal muito pequeno — mínimo 60×20 (atual {}×{})",
+            area.width, area.height
+        )
+    };
     let pop_w = area.width.saturating_sub(2).clamp(1, 56).min(area.width);
     let pop_h = 5.min(area.height).max(1).min(area.height);
     let x = area.x.saturating_add(area.width.saturating_sub(pop_w) / 2);
@@ -380,7 +396,10 @@ fn render_too_small(area: Rect, buf: &mut Buffer) {
         height: pop_h,
     };
     let block = Block::default()
-        .title(Span::styled(" ◆ prt ", theme().warning))
+        .title(Span::styled(
+            if ascii_only() { " prt " } else { " ◆ prt " },
+            theme().warning,
+        ))
         .borders(Borders::ALL)
         .border_type(border_type())
         .border_style(theme().warning);
@@ -396,201 +415,258 @@ fn render_too_small(area: Rect, buf: &mut Buffer) {
 }
 
 fn render_header(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
-    let phase_txt = match app.phase {
-        Phase::Boot => "boot",
-        Phase::Generating => "gerando",
-        Phase::Review => "revisão",
-        Phase::Publishing => "publicando",
-        Phase::Done => "ok",
-        Phase::Error => "erro",
-    };
-    // Cor do spinner: pulsa com trabalho, fixa no ocioso.
+    let [top, detail] =
+        Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).areas(area);
+    let (kicker, title) = phase_copy(app.phase);
+    let kicker = terminal_text(kicker);
+    let title = terminal_text(title);
     let active = matches!(
-        app.phase,
-        Phase::Generating | Phase::Publishing | Phase::Boot
-    );
-    let pulse = if active {
-        if app.tick % 2 == 0 {
-            theme().accent
-        } else {
-            theme().app_title
-        }
-    } else {
-        theme().accent
-    };
-    let phase_line = if active {
-        super::shimmer::shimmer_text(&app.phase_label, app.tick, 32)
-    } else {
-        Line::from(Span::styled(app.phase_label.clone(), theme().accent))
-    };
-    let mut spans = vec![
-        Span::styled(format!("{} ", app.spinner()), pulse),
-        Span::styled("◆ prt ", theme().app_title),
-        Span::styled(crate::cli::VERSION, theme().muted),
-        Span::styled(
-            format!(
-                "  ·  desc  ·  {}  ·  {}s  ·  ~{} tok",
-                phase_txt,
-                app.elapsed_secs(),
-                app.token_count()
-            ),
-            theme().muted,
-        ),
-        Span::styled("  ·  ", theme().muted),
-    ];
-    spans.extend(phase_line.spans);
-    Paragraph::new(Line::from(spans)).render(area, buf);
-}
-
-fn render_body(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
-    // Linha de abas (targets) + colunas com respiro de 1 célula entre painéis.
-    // Tabs intactas (outro dono); só as colunas colapsam no modo estreito.
-    let [tabs_area, cols] =
-        Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(area);
-    if !app.targets.is_empty() {
-        let titles: Vec<&str> = app.targets.iter().map(String::as_str).collect();
-        Tabs::new(titles)
-            .style(theme().tabs)
-            .highlight_style(theme().tabs_selected)
-            .select(app.selected_target)
-            .divider(" │ ")
-            .render(tabs_area, buf);
-    }
-    // Fallback estreito 60 <= w < 100: 1 coluna (preview Min + strip 3 linhas).
-    if cols.width < 100 {
-        let strip_h = 3.min(cols.height);
-        let preview_h = cols.height.saturating_sub(strip_h);
-        let preview_area = Rect {
-            x: cols.x,
-            y: cols.y,
-            width: cols.width,
-            height: preview_h,
-        };
-        let strip_area = Rect {
-            x: cols.x,
-            y: cols.y.saturating_add(preview_h),
-            width: cols.width,
-            height: strip_h,
-        };
-        if preview_area.height > 0 && preview_area.width > 0 {
-            render_preview(app, preview_area, buf);
-        }
-        render_narrow_strip(app, strip_area, buf);
-        return;
-    }
-    let [left, _gap, right] = Layout::horizontal([
-        Constraint::Percentage(58),
-        Constraint::Length(1),
-        Constraint::Percentage(42),
-    ])
-    .areas(cols);
-    render_preview(app, left, buf);
-    render_side(app, right, buf);
-}
-
-fn render_narrow_strip(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
-    // Strip de 3 linhas p/ largura estreita: barra shimmer + phase + resumo ctx.
-    if area.width == 0 || area.height == 0 {
-        return;
-    }
-    let generating = matches!(
         app.phase,
         Phase::Boot | Phase::Generating | Phase::Publishing
     );
-    let bar_width = area.width as usize;
-    let bar = super::shimmer::shimmer_bar(app.progress, bar_width, app.tick, generating);
+    let pulse = if active && app.tick % 2 == 0 {
+        theme().accent
+    } else if active {
+        theme().app_title
+    } else {
+        phase_style(app.phase)
+    };
+    let brand = if ascii_only() { "prt" } else { "◆ prt" };
+    let header_separator = if ascii_only() { "  -  " } else { "  ·  " };
+    let mut top_spans = vec![
+        Span::styled(format!("{} ", app.spinner()), pulse),
+        Span::styled(format!("{brand} "), theme().app_title),
+        Span::styled(crate::cli::VERSION, theme().muted),
+        Span::styled(format!("{header_separator}desc  /  "), theme().muted),
+        Span::styled(kicker, phase_style(app.phase)),
+    ];
+    if app.phase == Phase::Error {
+        top_spans.push(Span::styled(
+            if ascii_only() {
+                "  -  sem sucesso"
+            } else {
+                "  ·  sem sucesso"
+            },
+            theme().error,
+        ));
+    }
+    Paragraph::new(Line::from(top_spans)).render(top, buf);
+
     let pct = percent_u16(app.progress);
-    let phase_line = if generating {
-        super::shimmer::shimmer_text(&app.phase_label, app.tick, 24)
+    let phase_label = terminal_text(&app.phase_label);
+    let label = if active {
+        super::shimmer::shimmer_text(&phase_label, app.tick, 28)
     } else {
-        Line::from(Span::styled(app.phase_label.clone(), theme().success))
+        Line::from(Span::styled(phase_label, phase_style(app.phase)))
     };
-    let mut phase_spans = phase_line.spans.clone();
-    phase_spans.push(Span::styled(format!("  {pct}%"), theme().muted));
-    let targets = if app.targets.is_empty() {
-        "—".to_owned()
-    } else {
-        app.targets.join(", ")
-    };
-    let nchars = app
-        .desc
-        .as_ref()
-        .map_or(app.streamed_raw.len(), |d| d.body.len());
-    let flag = if app
-        .desc
-        .as_ref()
-        .is_some_and(|d| ai::is_within_limit(&d.body))
-    {
-        "✓ <4000"
-    } else if app.desc.is_some() {
-        "✘ ≥4000"
-    } else {
-        ""
-    };
-    let resumo = format!("{} · {} · {nchars} chars {flag}", app.branch, targets);
-    if area.height >= 1 {
-        let r0 = Rect {
-            x: area.x,
-            y: area.y,
-            width: area.width,
-            height: 1,
-        };
-        Paragraph::new(bar).render(r0, buf);
+    let separator = if ascii_only() { "  -  " } else { "  ·  " };
+    let mut detail_spans = vec![Span::styled(format!("  {title}{separator}"), theme().muted)];
+    detail_spans.extend(label.spans);
+    detail_spans.extend([Span::styled(
+        format!(
+            "{separator}{pct}%{separator}~{} tok{separator}{}s",
+            app.token_count(),
+            app.elapsed_secs()
+        ),
+        theme().muted,
+    )]);
+    Paragraph::new(Line::from(detail_spans)).render(detail, buf);
+}
+
+fn render_body(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
+    // Um único eixo vertical deixa a descrição dominar a tela. O segundo
+    // bloco é deliberadamente enxuto: contexto, atividade e progresso.
+    let [steps, primary, secondary] = Layout::vertical([
+        Constraint::Length(2),
+        Constraint::Min(8),
+        Constraint::Length(5),
+    ])
+    .areas(area);
+    render_steps(app, steps, buf);
+    render_primary(app, primary, buf);
+    render_secondary(app, secondary, buf);
+}
+
+fn render_steps(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
+    if area.width == 0 || area.height == 0 {
+        return;
     }
-    if area.height >= 2 {
-        let r1 = Rect {
-            x: area.x,
-            y: area.y.saturating_add(1),
-            width: area.width,
-            height: 1,
+    // No mínimo aceito de 60 colunas, abrevia sem cortar a etapa de
+    // publicação. Em telas normais mantém os nomes completos.
+    let labels = if area.width < 72 {
+        ["Ctx", "Ger", "Rev", "Pub"]
+    } else if ascii_only() {
+        ["Contexto", "Geracao", "Revisao", "Publicacao"]
+    } else {
+        ["Contexto", "Geração", "Revisão", "Publicação"]
+    };
+    let current = app.step_index();
+    let done_mark = if ascii_only() { "x" } else { "✓" };
+    let pending_mark = if ascii_only() { "o" } else { "○" };
+    let current_mark = if ascii_only() { ">" } else { "●" };
+    let error_mark = if ascii_only() { "!" } else { "✘" };
+    let mut spans = Vec::with_capacity(labels.len() * 2);
+    for (idx, label) in labels.iter().enumerate() {
+        if idx > 0 {
+            spans.push(Span::styled(
+                if ascii_only() { "  -  " } else { "  ─  " },
+                theme().muted,
+            ));
+        }
+        let is_done = app.phase == Phase::Done || current > idx;
+        let is_current = app.phase != Phase::Done && current == idx;
+        let mark = if app.phase == Phase::Error && is_current {
+            error_mark
+        } else if is_done {
+            done_mark
+        } else if is_current {
+            current_mark
+        } else {
+            pending_mark
         };
-        Paragraph::new(Line::from(phase_spans)).render(r1, buf);
+        let style = if app.phase == Phase::Error && is_current {
+            theme().error
+        } else if is_done {
+            theme().success
+        } else if is_current {
+            theme().accent.add_modifier(Modifier::BOLD)
+        } else {
+            theme().muted
+        };
+        spans.push(Span::styled(format!("[{mark}] {label}"), style));
     }
-    if area.height >= 3 {
-        let r2 = Rect {
-            x: area.x,
-            y: area.y.saturating_add(2),
-            width: area.width,
-            height: 1,
-        };
-        Paragraph::new(resumo).style(theme().muted).render(r2, buf);
+    Paragraph::new(Line::from(spans)).render(area, buf);
+}
+
+fn render_primary(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
+    match app.phase {
+        Phase::Boot => render_boot(app, area, buf),
+        Phase::Generating => render_stream(app, area, buf),
+        Phase::Review => render_description(app, area, buf),
+        Phase::Publishing => render_publishing(app, area, buf),
+        Phase::Done => render_done(app, area, buf),
+        Phase::Error => render_error(app, area, buf),
     }
 }
 
-fn render_preview(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
-    let (title, is_live) = if app.desc.is_some() {
-        (" ◉ Descrição do PR ", false)
-    } else {
-        (" ◌ Streaming… ", true)
-    };
-    let block = Block::default()
-        .title(Span::styled(
-            title,
-            if is_live {
-                theme().warning
-            } else {
-                theme().success
-            },
-        ))
-        .borders(Borders::ALL)
-        .border_style(if is_live {
-            theme().warning
-        } else {
-            theme().border
-        })
-        .border_type(border_type())
-        .padding(ratatui::widgets::Padding::horizontal(1));
+fn render_boot(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
+    let block = primary_block(" Preparando contexto ", theme().accent);
     let inner = block.inner(area);
     block.render(area, buf);
-    // Texto final com highlight Markdown; streaming mostra raw + cursor.
-    if let Some(d) = &app.desc {
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+    let [status, details, bar] = Layout::vertical([
+        Constraint::Length(2),
+        Constraint::Min(1),
+        Constraint::Length(1),
+    ])
+    .areas(inner);
+    let phase_label = terminal_text(&app.phase_label);
+    let phase = super::shimmer::shimmer_text(&phase_label, app.tick, 30);
+    Paragraph::new(vec![
+        Line::from(vec![
+            Span::styled(format!("{} ", app.spinner()), theme().accent),
+            Span::styled(
+                "Preparando o ambiente",
+                Style::new().add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        phase,
+    ])
+    .render(status, buf);
+    let details_copy = terminal_text(
+        "Branch, work item e diff serão exibidos conforme o contexto fica disponível.",
+    );
+    Paragraph::new(details_copy)
+        .style(theme().muted)
+        .wrap(Wrap { trim: false })
+        .render(details, buf);
+    Paragraph::new(progress_line(app, bar.width as usize)).render(bar, buf);
+}
+
+fn render_stream(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
+    let title = if ascii_only() {
+        " Geração via IA - ao vivo "
+    } else {
+        " Geração via IA · ao vivo "
+    };
+    let block = primary_block(title, theme().warning);
+    let inner = block.inner(area);
+    block.render(area, buf);
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+    let [content, meta] =
+        Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(inner);
+    let cursor = if ascii_only() { "_" } else { "▊" };
+    let text = if app.streamed_raw.is_empty() {
+        if ascii_only() {
+            "aguardando primeiro token...".to_owned()
+        } else {
+            "aguardando primeiro token…".to_owned()
+        }
+    } else {
+        format!("{}{cursor}", app.streamed_raw)
+    };
+    let lines = text.lines().count();
+    Paragraph::new(text)
+        .wrap(Wrap { trim: false })
+        .scroll((app.scroll, 0))
+        .render(content, buf);
+    let mut state = ScrollbarState::new(lines.max(1)).position(app.scroll as usize);
+    <Scrollbar as ratatui::widgets::StatefulWidget>::render(
+        Scrollbar::new(ScrollbarOrientation::VerticalRight),
+        content,
+        buf,
+        &mut state,
+    );
+    Paragraph::new(Line::from(vec![
+        Span::styled(
+            terminal_text("renderizando resposta do provider"),
+            theme().muted,
+        ),
+        Span::styled(format!("  {}%", percent_u16(app.progress)), theme().accent),
+    ]))
+    .render(meta, buf);
+}
+
+fn render_description(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
+    let chars = app.content_chars();
+    let limit_mark = if app
+        .desc
+        .as_ref()
+        .is_some_and(|description| ai::is_within_limit(&description.body))
+    {
+        if ascii_only() { "ok" } else { "✓" }
+    } else if ascii_only() {
+        "over"
+    } else {
+        "✘"
+    };
+    let title_separator = if ascii_only() { " - " } else { " · " };
+    let title = terminal_text(&format!(
+        " Descrição gerada{title_separator}{chars}/4000 {limit_mark} "
+    ));
+    let block = primary_block(&title, theme().success);
+    let inner = block.inner(area);
+    block.render(area, buf);
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+    if let Some(description) = &app.desc {
         use super::markdown::{markdown_text, title_line};
         use ratatui::text::Text;
-        let mut lines: Vec<Line> = vec![title_line(&d.title), Line::from("")];
-        lines.extend(markdown_text(&d.body).lines);
+        let mut lines: Vec<Line> = vec![title_line(&description.title), Line::from("")];
+        if ascii_only() {
+            // O renderer Markdown usa molduras/checkboxes Unicode; em
+            // TERM=dumb mantemos o texto literal e a navegação intacta.
+            lines.extend(description.body.lines().map(Line::from));
+        } else {
+            lines.extend(markdown_text(&description.body).lines);
+        }
         let total = lines.len();
-        let text = Text::from(lines);
-        Paragraph::new(text)
+        Paragraph::new(Text::from(lines))
             .wrap(Wrap { trim: false })
             .scroll((app.scroll, 0))
             .render(inner, buf);
@@ -602,179 +678,378 @@ fn render_preview(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
             &mut state,
         );
     } else {
-        let text = if app.streamed_raw.is_empty() {
-            "aguardando primeiro token…".to_owned()
-        } else {
-            format!("{}▊", app.streamed_raw)
-        };
-        let lines = text.lines().count();
-        Paragraph::new(text)
-            .style(Style::new())
-            .wrap(Wrap { trim: false })
-            .scroll((app.scroll, 0))
-            .render(inner, buf);
-        // Scrollbar reage ao scroll (j/k).
-        let mut state = ScrollbarState::new(lines.max(1)).position(app.scroll as usize);
-        <Scrollbar as ratatui::widgets::StatefulWidget>::render(
-            Scrollbar::new(ScrollbarOrientation::VerticalRight),
-            inner,
-            buf,
-            &mut state,
-        );
+        render_stream(app, area, buf);
     }
 }
 
-fn render_side(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
-    // Painéis bem separados: 1 célula de respiro entre cada bloco.
-    let [ctx, _g1, logs, _g2, stats] = Layout::vertical([
-        Constraint::Length(7),
-        Constraint::Length(1),
-        Constraint::Min(4),
-        Constraint::Length(1),
-        Constraint::Length(5),
-    ])
-    .areas(area);
-    render_context(app, ctx, buf);
-    render_logs(app, logs, buf);
-    render_stats(app, stats, buf);
-}
-
-fn render_context(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
-    let body = format!(
-        "branch  {}\nwork    #{}\ntargets  {}\nbody    {} chars {}",
-        app.branch,
-        if app.work_item_id.is_empty() {
-            "—"
-        } else {
-            &app.work_item_id
-        },
-        if app.targets.is_empty() {
-            "—".to_owned()
-        } else {
-            app.targets.join(", ")
-        },
-        app.desc
-            .as_ref()
-            .map_or(app.streamed_raw.len(), |d| d.body.len()),
-        if app
-            .desc
-            .as_ref()
-            .is_some_and(|d| ai::is_within_limit(&d.body))
-        {
-            "✓ <4000"
-        } else if app.desc.is_some() {
-            "✘ ≥4000"
-        } else {
-            ""
-        }
-    );
-    Paragraph::new(body)
-        .block(
-            Block::default()
-                .title(Span::styled(
-                    " ◈ Contexto ",
-                    theme().app_title.add_modifier(Modifier::BOLD),
-                ))
-                .borders(Borders::ALL)
-                .border_style(theme().app_title)
-                .border_type(border_type())
-                .padding(ratatui::widgets::Padding::horizontal(1)),
-        )
-        .render(area, buf);
-}
-
-fn render_logs(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
-    // Últimas N linhas cabem na altura — auto-scroll para o fim.
-    let height = area.height.saturating_sub(2) as usize;
-    let items: Vec<ListItem> = app
-        .logs
-        .iter()
-        .rev()
-        .take(height.max(1))
-        .rev()
-        .map(|l| ListItem::new(Line::from(Span::styled(l.clone(), theme().muted))))
-        .collect();
-    List::new(items)
-        .block(
-            Block::default()
-                .title(Span::styled(" ≡ Log vivo ", theme().muted))
-                .borders(Borders::ALL)
-                .border_style(theme().muted)
-                .border_type(border_type())
-                .padding(ratatui::widgets::Padding::horizontal(1)),
-        )
-        .render(area, buf);
-}
-
-fn render_stats(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
-    // Barra custom com shimmer enquanto gera; sólida quando pronto.
-    let generating = matches!(
-        app.phase,
-        Phase::Boot | Phase::Generating | Phase::Publishing
-    );
-    let bar_width = area.width.saturating_sub(4) as usize;
-    let bar = super::shimmer::shimmer_bar(app.progress, bar_width, app.tick, generating);
-    let label = if generating {
-        super::shimmer::shimmer_text(&app.progress_label, app.tick, 24)
+fn render_publishing(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
+    let title = if ascii_only() {
+        " Publicação - Pull Requests "
     } else {
-        Line::from(Span::styled(app.progress_label.clone(), theme().success))
+        " Publicação · Pull Requests "
     };
-    let pct = percent_u16(app.progress);
-    let block = Block::default()
-        .title(Span::styled(
-            format!(" ⚡ Progresso {pct}% "),
-            if generating {
-                theme().accent.add_modifier(Modifier::BOLD)
-            } else {
-                theme().success
-            },
-        ))
-        .borders(Borders::ALL)
-        .border_type(border_type())
-        .border_style(if generating {
-            theme().accent
+    let block = primary_block(title, theme().accent);
+    let inner = block.inner(area);
+    block.render(area, buf);
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+    let [status, bar, meta, latest] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Min(1),
+    ])
+    .areas(inner);
+    Paragraph::new(Line::from(vec![
+        Span::styled(format!("{} ", app.spinner()), theme().accent),
+        Span::styled(
+            terminal_text("Enviando a descrição e os reviewers selecionados"),
+            Style::new().add_modifier(Modifier::BOLD),
+        ),
+    ]))
+    .render(status, buf);
+    Paragraph::new(progress_line(app, bar.width as usize)).render(bar, buf);
+    let separator = if ascii_only() { "  -  " } else { "  ·  " };
+    let progress_label = terminal_text(&app.progress_label);
+    Paragraph::new(Line::from(vec![
+        Span::styled(progress_label, theme().muted),
+        Span::styled(
+            format!(
+                "{separator}{}%{separator}{}/{} target(s)",
+                percent_u16(app.progress),
+                app.published.len(),
+                app.targets.len()
+            ),
+            theme().accent,
+        ),
+    ]))
+    .render(meta, buf);
+    let recent = app
+        .logs
+        .back()
+        .map_or("aguardando resposta do Azure DevOps", String::as_str);
+    let recent = terminal_text(recent);
+    Paragraph::new(Line::from(vec![
+        Span::styled(if ascii_only() { "> " } else { "› " }, theme().muted),
+        Span::styled(recent, theme().muted),
+    ]))
+    .wrap(Wrap { trim: false })
+    .render(latest, buf);
+}
+
+fn render_done(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
+    let block_title = terminal_text(" Publicação concluída ");
+    let block = primary_block(&block_title, theme().success);
+    let inner = block.inner(area);
+    block.render(area, buf);
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+    let mark = if ascii_only() { "[x]" } else { "✓" };
+    let summary = if app.published.is_empty() {
+        if ascii_only() {
+            "A operacao terminou sem PRs retornados pelo backend.".to_owned()
         } else {
-            theme().success
-        })
+            "A operação terminou sem PRs retornados pelo backend.".to_owned()
+        }
+    } else {
+        format!("{} PR(s) criado(s) no Azure DevOps.", app.published.len())
+    };
+    let mut lines = vec![Line::from(vec![
+        Span::styled(format!("{mark} "), theme().success),
+        Span::styled(summary, Style::new().add_modifier(Modifier::BOLD)),
+    ])];
+    for item in &app.published {
+        lines.push(Line::from(vec![
+            Span::styled(format!("  {}  ", item.target), branch_style()),
+            Span::styled(item.url.clone(), link_style()),
+        ]));
+    }
+    Paragraph::new(lines)
+        .wrap(Wrap { trim: false })
+        .render(inner, buf);
+}
+
+fn render_error(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
+    let title = if ascii_only() {
+        " Erro na operacao "
+    } else {
+        " Erro na operação "
+    };
+    let block = primary_block(title, theme().error);
+    let inner = block.inner(area);
+    block.render(area, buf);
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+    let error = app.error.as_deref().unwrap_or("falha sem mensagem");
+    let partial = if app.published.is_empty() {
+        "Nenhum PR foi criado antes da falha."
+    } else {
+        "Alguns PRs foram criados antes da falha; confira os links abaixo."
+    };
+    let mut lines = vec![
+        Line::from(vec![
+            Span::styled(if ascii_only() { "x " } else { "✘ " }, theme().error),
+            Span::styled(error, theme().error),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled(partial, theme().muted)),
+        Line::from(Span::styled(
+            if ascii_only() {
+                "r retorna o erro ao comando - q sai - ? ajuda"
+            } else {
+                "r retorna o erro ao comando · q sai · ? ajuda"
+            },
+            theme().muted,
+        )),
+    ];
+    if !app.published.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "PRs criados:",
+            theme().accent.add_modifier(Modifier::BOLD),
+        )));
+        lines.extend(app.published.iter().map(|item| {
+            Line::from(vec![
+                Span::styled(format!("  {}  ", item.target), branch_style()),
+                Span::styled(item.url.clone(), link_style()),
+            ])
+        }));
+    }
+    lines.truncate(inner.height as usize);
+    Paragraph::new(lines)
+        .wrap(Wrap { trim: false })
+        .render(inner, buf);
+}
+
+fn render_secondary(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
+    let secondary_title = if ascii_only() {
+        " Contexto - atividade - progresso "
+    } else {
+        " Contexto · atividade · progresso "
+    };
+    let block = Block::default()
+        .title(Span::styled(secondary_title, theme().muted))
+        .borders(Borders::ALL)
+        .border_style(theme().muted)
+        .border_type(border_type())
         .padding(ratatui::widgets::Padding::horizontal(1));
     let inner = block.inner(area);
     block.render(area, buf);
-    let [b, l] = Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).areas(inner);
-    Paragraph::new(bar).render(b, buf);
-    Paragraph::new(label).render(l, buf);
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+    let work = if app.work_item_id.is_empty() {
+        if ascii_only() { "-" } else { "—" }.to_owned()
+    } else {
+        format!("#{}", app.work_item_id)
+    };
+    let separator = if ascii_only() { "  -  " } else { "  ·  " };
+    let mut context = vec![Span::styled(
+        format!(
+            "branch {}{separator}work {}{separator}targets ",
+            app.branch, work
+        ),
+        theme().muted,
+    )];
+    if app.targets.is_empty() {
+        context.push(Span::styled(
+            if ascii_only() { "-" } else { "—" },
+            theme().muted,
+        ));
+    } else {
+        for (idx, target) in app.targets.iter().enumerate() {
+            if idx > 0 {
+                context.push(Span::styled(", ", theme().muted));
+            }
+            let style = if idx == app.selected_target {
+                theme().accent.add_modifier(Modifier::BOLD)
+            } else {
+                theme().muted
+            };
+            context.push(Span::styled(target.clone(), style));
+        }
+    }
+    let recent = app
+        .logs
+        .back()
+        .map_or(app.phase_label.as_str(), String::as_str);
+    let recent = terminal_text(recent);
+    let active = matches!(
+        app.phase,
+        Phase::Boot | Phase::Generating | Phase::Publishing
+    );
+    let activity = if active {
+        let phase = super::shimmer::shimmer_text(&recent, app.tick, 28);
+        let mut line = vec![Span::styled(format!("{} ", app.spinner()), theme().accent)];
+        line.extend(phase.spans);
+        Line::from(line)
+    } else {
+        Line::from(vec![
+            Span::styled(format!("{} ", app.spinner()), phase_style(app.phase)),
+            Span::styled(recent, theme().muted),
+        ])
+    };
+    let progress_separator = if ascii_only() { " - " } else { " · " };
+    let progress_label = format!(
+        "  {}%{progress_separator}{}",
+        percent_u16(app.progress),
+        app.progress_label
+    );
+    let label_width = u16::try_from(progress_label.chars().count()).unwrap_or(u16::MAX);
+    let progress_width = usize::from(inner.width.saturating_sub(label_width.saturating_add(1)));
+    let mut progress = progress_line(app, progress_width).spans;
+    progress.push(Span::styled(progress_label, theme().muted));
+    Paragraph::new(vec![Line::from(context), activity, Line::from(progress)])
+        .wrap(Wrap { trim: false })
+        .render(inner, buf);
+}
+
+fn primary_block(title: &str, style: Style) -> Block<'static> {
+    Block::default()
+        .title(Span::styled(title.to_owned(), style))
+        .borders(Borders::ALL)
+        .border_style(style)
+        .border_type(border_type())
+        .padding(ratatui::widgets::Padding::horizontal(1))
+}
+
+fn phase_copy(phase: Phase) -> (&'static str, &'static str) {
+    match phase {
+        Phase::Boot => ("Preparação", "Inicializando o fluxo"),
+        Phase::Generating => ("Geração via IA", "Escrevendo a descrição"),
+        Phase::Review => ("Revisão", "Descrição pronta para revisão"),
+        Phase::Publishing => ("Publicação", "Criando Pull Request(s)"),
+        Phase::Done => ("Concluído", "Pull Request publicado"),
+        Phase::Error => ("Erro", "A operação não foi concluída"),
+    }
+}
+
+fn phase_style(phase: Phase) -> Style {
+    match phase {
+        Phase::Done | Phase::Review => theme().success,
+        Phase::Error => theme().error,
+        Phase::Boot | Phase::Generating | Phase::Publishing => theme().accent,
+    }
+}
+
+/// Estilo do target/branch em resultados de publicação.
+fn branch_style() -> Style {
+    theme().accent.add_modifier(Modifier::BOLD)
+}
+
+/// Estilo separado para links publicados.
+fn link_style() -> Style {
+    if super::colors_enabled() {
+        Style::new().fg(Color::Rgb(96, 165, 250))
+    } else {
+        Style::new()
+    }
+}
+
+/// Normaliza glifos decorativos de status quando o terminal exige ASCII.
+///
+/// Conteúdo gerado pelo usuário permanece intacto; esta função é usada apenas
+/// para rótulos e mensagens controlados pela própria TUI.
+fn terminal_text(value: &str) -> String {
+    if !ascii_only() {
+        return value.to_owned();
+    }
+    value
+        .replace('…', "...")
+        .replace('→', "->")
+        .replace(['—', '·'], "-")
+        .replace('×', "x")
+        .replace('✓', "ok")
+        .replace('✘', "x")
+        .replace('▊', "_")
+        .replace(['○', '●'], "o")
+}
+
+fn progress_line(app: &DescribeApp, width: usize) -> Line<'static> {
+    if ascii_only() {
+        let width = width.max(1);
+        let filled = filled_cells(app.progress, width);
+        return Line::from(vec![
+            Span::styled("#".repeat(filled), theme().accent),
+            Span::styled("-".repeat(width.saturating_sub(filled)), theme().muted),
+        ]);
+    }
+    super::shimmer::shimmer_bar(
+        app.progress,
+        width.max(8),
+        app.tick,
+        matches!(
+            app.phase,
+            Phase::Boot | Phase::Generating | Phase::Publishing
+        ),
+    )
 }
 
 fn render_footer(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
+    let success_mark = if ascii_only() { "+" } else { "✓" };
+    let error_mark = if ascii_only() { "x" } else { "✘" };
     let hints = match &app.publish_dialog {
         Some(PublishDialog::ConfirmCreate(_) | PublishDialog::ConfirmPublish(_)) => {
-            "←/→ alternar · y sim · n não · enter confirmar · esc voltar"
+            if ascii_only() {
+                "<-/-> alternar - y sim - n nao - enter confirmar - esc voltar"
+            } else {
+                "←/→ alternar · y sim · n não · enter confirmar · esc voltar"
+            }
         }
         Some(PublishDialog::Reviewers) => {
-            "digite o reviewer · tab/↓↑ trocar campo · enter avançar · esc voltar"
+            if ascii_only() {
+                "digite o reviewer - tab/up/down trocar campo - enter avancar - esc voltar"
+            } else {
+                "digite o reviewer · tab/↓↑ trocar campo · enter avançar · esc voltar"
+            }
         }
         None => match app.phase {
             Phase::Review => {
-                "enter publicar · c copiar · tab target · j/k scroll · ? ajuda · q sair"
+                if ascii_only() {
+                    "enter publicar - c copiar - tab target - j/k scroll - ? ajuda - q sair"
+                } else {
+                    "enter publicar · c copiar · tab target · j/k scroll · ? ajuda · q sair"
+                }
             }
             Phase::Done => "q sair",
-            Phase::Error => "r tenta de novo · q sair · ? ajuda",
-            _ => "j/k scroll · tab target · ? ajuda · q sair",
+            Phase::Error => {
+                if ascii_only() {
+                    "r retornar erro ao comando - q sair - ? ajuda"
+                } else {
+                    "r retornar erro ao comando · q sair · ? ajuda"
+                }
+            }
+            _ => {
+                if ascii_only() {
+                    "j/k scroll - tab target - ? ajuda - q sair"
+                } else {
+                    "j/k scroll · tab target · ? ajuda · q sair"
+                }
+            }
         },
     };
     let mut spans = vec![Span::styled(hints, theme().muted)];
     if app.is_copied_flash() {
-        spans.push(Span::styled("   ✓ copiado!", theme().success));
+        spans.push(Span::styled(
+            format!("   {success_mark} copiado!"),
+            theme().success,
+        ));
     }
     if !app.published_urls.is_empty() {
         spans.push(Span::styled(
-            format!("   ✓ {} PR(s) publicado(s)", app.published_urls.len()),
+            format!(
+                "   {success_mark} {} PR(s) publicado(s)",
+                app.published_urls.len()
+            ),
             theme().success,
         ));
     }
     // Barra de erro em destaque quando falha.
     if let Phase::Error = app.phase {
         if let Some(e) = &app.error {
-            spans.push(Span::styled(format!("   ✘ {e}"), theme().error));
+            spans.push(Span::styled(format!("   {error_mark} {e}"), theme().error));
         }
     }
     Paragraph::new(Line::from(spans)).render(area, buf);
@@ -786,37 +1061,70 @@ fn render_help(area: Rect, buf: &mut Buffer) {
     if inner.width == 0 || inner.height == 0 {
         return;
     }
-    Paragraph::new(vec![
-        Line::from(Span::styled(
-            "navegação",
-            theme().accent.add_modifier(Modifier::BOLD),
-        )),
-        Line::from("j/k ou ↑/↓ — rolar preview · tab — trocar target"),
-        Line::from("c — copiar body · ? — alternar ajuda · q/esc — sair"),
-        Line::from(""),
-        Line::from(Span::styled(
-            "publicação",
-            theme().accent.add_modifier(Modifier::BOLD),
-        )),
-        Line::from("enter — publicar · esc — voltar"),
-        Line::from("nos reviewers: digite o email · tab/↓↑ — trocar campo"),
-        Line::from("←/→ ou y/n — alternar Sim/Não"),
-        Line::from(""),
-        Line::from(Span::styled(
-            "erros",
-            theme().accent.add_modifier(Modifier::BOLD),
-        )),
-        Line::from("r — tentar de novo (só na tela de erro)"),
-        Line::from(""),
-        Line::from(Span::styled(
-            "enter confirma · esc sempre volta um nível",
-            theme().muted,
-        )),
-        Line::from(""),
-        Line::from(Span::styled("? fecha esta ajuda", theme().muted)),
-    ])
-    .wrap(Wrap { trim: false })
-    .render(inner, buf);
+    let navigation = if ascii_only() {
+        vec![
+            Line::from(Span::styled(
+                "navegacao",
+                theme().accent.add_modifier(Modifier::BOLD),
+            )),
+            Line::from("j/k ou up/down - rolar preview - tab - trocar target"),
+            Line::from("c - copiar body - ? - alternar ajuda - q/esc - sair"),
+            Line::from(""),
+            Line::from(Span::styled(
+                "publicacao",
+                theme().accent.add_modifier(Modifier::BOLD),
+            )),
+            Line::from("enter - publicar - esc - voltar"),
+            Line::from("nos reviewers: digite o email - tab/up/down - trocar campo"),
+            Line::from("<- / -> ou y/n - alternar Sim/Nao"),
+            Line::from(""),
+            Line::from(Span::styled(
+                "erros",
+                theme().accent.add_modifier(Modifier::BOLD),
+            )),
+            Line::from("r - retornar erro ao comando (so na tela de erro)"),
+            Line::from(""),
+            Line::from(Span::styled(
+                "enter confirma - esc sempre volta um nivel",
+                theme().muted,
+            )),
+            Line::from(""),
+            Line::from(Span::styled("? fecha esta ajuda", theme().muted)),
+        ]
+    } else {
+        vec![
+            Line::from(Span::styled(
+                "navegação",
+                theme().accent.add_modifier(Modifier::BOLD),
+            )),
+            Line::from("j/k ou ↑/↓ — rolar preview · tab — trocar target"),
+            Line::from("c — copiar body · ? — alternar ajuda · q/esc — sair"),
+            Line::from(""),
+            Line::from(Span::styled(
+                "publicação",
+                theme().accent.add_modifier(Modifier::BOLD),
+            )),
+            Line::from("enter — publicar · esc — voltar"),
+            Line::from("nos reviewers: digite o email · tab/↓↑ — trocar campo"),
+            Line::from("←/→ ou y/n — alternar Sim/Não"),
+            Line::from(""),
+            Line::from(Span::styled(
+                "erros",
+                theme().accent.add_modifier(Modifier::BOLD),
+            )),
+            Line::from("r — retornar erro ao comando (só na tela de erro)"),
+            Line::from(""),
+            Line::from(Span::styled(
+                "enter confirma · esc sempre volta um nível",
+                theme().muted,
+            )),
+            Line::from(""),
+            Line::from(Span::styled("? fecha esta ajuda", theme().muted)),
+        ]
+    };
+    Paragraph::new(navigation)
+        .wrap(Wrap { trim: false })
+        .render(inner, buf);
 }
 
 /// Diálogos modais do fluxo de publicação.
@@ -836,7 +1144,11 @@ fn render_confirm_create(app: &DescribeApp, yes: bool, area: Rect, buf: &mut Buf
         return;
     }
     let targets = if app.targets.is_empty() {
-        "—".to_owned()
+        if ascii_only() {
+            "-".to_owned()
+        } else {
+            "—".to_owned()
+        }
     } else {
         app.targets.join(", ")
     };
@@ -851,7 +1163,11 @@ fn render_confirm_create(app: &DescribeApp, yes: bool, area: Rect, buf: &mut Buf
         centered_buttons(yes, inner.width),
         Line::from(""),
         Line::from(Span::styled(
-            "←/→ alternar · y sim · n não · enter confirmar · esc voltar",
+            if ascii_only() {
+                "<-/-> alternar - y sim - n nao - enter confirmar - esc voltar"
+            } else {
+                "←/→ alternar · y sim · n não · enter confirmar · esc voltar"
+            },
             theme().muted,
         )),
     ])
@@ -868,7 +1184,11 @@ fn render_reviewers_dialog(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
     }
     let mut lines = vec![
         Line::from(Span::styled(
-            "opcional; vazio mantém o padrão · tab/↓↑ troca de campo",
+            if ascii_only() {
+                "opcional; vazio mantem o padrao - tab/up/down troca de campo"
+            } else {
+                "opcional; vazio mantém o padrão · tab/↓↑ troca de campo"
+            },
             theme().muted,
         )),
         Line::from(""),
@@ -877,7 +1197,11 @@ fn render_reviewers_dialog(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
         let focused = i == app.reviewer_idx;
         lines.push(Line::from(vec![
             Span::styled(
-                if focused { "▸ " } else { "  " },
+                if focused {
+                    if ascii_only() { "> " } else { "▸ " }
+                } else {
+                    "  "
+                },
                 if focused {
                     theme().accent
                 } else {
@@ -896,11 +1220,21 @@ fn render_reviewers_dialog(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
         // Valor com barra lateral (sem caixa aninhada: caixa dentro de
         // caixa é o maior causador de poluição visual).
         let value = app.reviewers.get(i).cloned().unwrap_or_default();
-        let mut row = vec![Span::styled("│ ", theme().muted)];
+        let mut row = vec![Span::styled(
+            if ascii_only() { "| " } else { "│ " },
+            theme().muted,
+        )];
         if focused {
             row.extend(editor_spans(&app.reviewer_edit, app.reviewer_cursor));
         } else if value.trim().is_empty() {
-            row.push(Span::styled("(padrão)", theme().muted));
+            row.push(Span::styled(
+                if ascii_only() {
+                    "(padrao)"
+                } else {
+                    "(padrão)"
+                },
+                theme().muted,
+            ));
         } else {
             row.push(Span::styled(value, Style::new()));
         }
@@ -908,7 +1242,11 @@ fn render_reviewers_dialog(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
     }
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "enter avançar · esc voltar",
+        if ascii_only() {
+            "enter avancar - esc voltar"
+        } else {
+            "enter avançar · esc voltar"
+        },
         theme().muted,
     )));
     Paragraph::new(lines)
@@ -935,15 +1273,32 @@ fn render_confirm_publish(app: &DescribeApp, yes: bool, area: Rect, buf: &mut Bu
             Style::new().add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
-        Line::from(Span::styled(app.reviewer_summary(), Style::new())),
+    ];
+    for (index, target) in app.targets.iter().enumerate() {
+        let reviewer = app.reviewers.get(index).map_or("", String::as_str);
+        let shown = if reviewer.trim().is_empty() {
+            "nenhum"
+        } else {
+            reviewer.trim()
+        };
+        lines.push(Line::from(vec![
+            Span::styled(format!("{target}: "), branch_style()),
+            Span::styled(shown.to_owned(), Style::new()),
+        ]));
+    }
+    lines.extend([
         Line::from(""),
         centered_buttons(yes, inner.width),
         Line::from(""),
         Line::from(Span::styled(
-            "←/→ alternar · y sim · n não · enter confirmar · esc voltar",
+            if ascii_only() {
+                "<-/-> alternar - y sim - n nao - enter confirmar - esc voltar"
+            } else {
+                "←/→ alternar · y sim · n não · enter confirmar · esc voltar"
+            },
             theme().muted,
         )),
-    ];
+    ]);
     lines.truncate(inner.height as usize);
     Paragraph::new(lines)
         .wrap(Wrap { trim: false })
@@ -1255,6 +1610,12 @@ fn handle_key_event(
     use crossterm::event::KeyCode;
     match (key.code, key.modifiers) {
         (KeyCode::Char('c'), m) if m.contains(KeyModifiers::CONTROL) => {
+            if app.phase == Phase::Publishing {
+                app.logs
+                    .push_back("publicação em andamento — aguarde a conclusão".to_owned());
+                *needs_draw = true;
+                return Ok(None);
+            }
             return Ok(Some(LiveOutcome::Aborted));
         }
         (KeyCode::Char('z'), m) if m.contains(KeyModifiers::CONTROL) => {
@@ -1265,8 +1626,32 @@ fn handle_key_event(
             }
             return Ok(None);
         }
-        (KeyCode::Char('q') | KeyCode::Esc, _) => {
-            if app.publish_dialog.is_some() {
+        (KeyCode::Char('q'), _) if app.publish_dialog != Some(PublishDialog::Reviewers) => {
+            if app.phase == Phase::Publishing {
+                app.logs
+                    .push_back("publicação em andamento — aguarde a conclusão".to_owned());
+                *needs_draw = true;
+            } else if app.publish_dialog.is_some() {
+                // Fecha o diálogo e volta à revisão (não sai).
+                app.publish_dialog = None;
+                *needs_draw = true;
+            } else {
+                return Ok(Some(quit_outcome(app)));
+            }
+            return Ok(None);
+        }
+        (KeyCode::Esc, _) => {
+            if app.phase == Phase::Publishing {
+                app.logs
+                    .push_back("publicação em andamento — aguarde a conclusão".to_owned());
+                *needs_draw = true;
+            } else if matches!(app.publish_dialog, Some(PublishDialog::ConfirmPublish(_))) {
+                // Permite corrigir reviewers antes de confirmar a publicação.
+                app.commit_reviewer();
+                app.publish_dialog = Some(PublishDialog::Reviewers);
+                app.rebind_reviewer();
+                *needs_draw = true;
+            } else if app.publish_dialog.is_some() {
                 // Fecha o diálogo e volta à revisão (não sai).
                 app.publish_dialog = None;
                 *needs_draw = true;
@@ -1439,6 +1824,93 @@ mod tests {
     }
 
     #[test]
+    fn desc_boot_100x30() -> anyhow::Result<()> {
+        let app = DescribeApp::new(
+            "feature/11763-exemplo",
+            &["dev".to_owned()],
+            "11763",
+            false,
+            None,
+            Some("PAT não configurado".to_owned()),
+        );
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend)?;
+        terminal.draw(|f| f.render_widget(&app, f.area()))?;
+        insta::assert_snapshot!("desc_boot_100x30", terminal.backend());
+        Ok(())
+    }
+
+    #[test]
+    fn desc_generating_100x30() -> anyhow::Result<()> {
+        let mut app = DescribeApp::new(
+            "feature/11763-exemplo",
+            &["dev".to_owned()],
+            "11763",
+            false,
+            None,
+            None,
+        );
+        app.on_backend(BackendEvent::Phase("streaming provider…".to_owned()));
+        app.on_backend(BackendEvent::Progress(0.42, "gerando descrição".to_owned()));
+        app.on_backend(BackendEvent::Token(
+            "# Atualiza checkout\n\n## Descrição\n".to_owned(),
+        ));
+        app.on_tick();
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend)?;
+        terminal.draw(|f| f.render_widget(&app, f.area()))?;
+        insta::assert_snapshot!("desc_generating_100x30", terminal.backend());
+        Ok(())
+    }
+
+    #[test]
+    fn desc_publishing_100x30() -> anyhow::Result<()> {
+        let mut app = review_app();
+        app.phase = Phase::Publishing;
+        app.phase_label = "publicando…".to_owned();
+        app.progress = 0.55;
+        app.progress_label = "criando PR dev".to_owned();
+        app.logs.push_back("criando PR dev".to_owned());
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend)?;
+        terminal.draw(|f| f.render_widget(&app, f.area()))?;
+        insta::assert_snapshot!("desc_publishing_100x30", terminal.backend());
+        Ok(())
+    }
+
+    #[test]
+    fn desc_done_100x30() -> anyhow::Result<()> {
+        let mut app = review_app();
+        app.on_backend(BackendEvent::Published(vec![
+            crate::azure::pull_requests::PublishedPr {
+                target: "dev".to_owned(),
+                id: 42,
+                url: "https://dev.azure.com/example/pr/42".to_owned(),
+            },
+        ]));
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend)?;
+        terminal.draw(|f| f.render_widget(&app, f.area()))?;
+        insta::assert_snapshot!("desc_done_100x30", terminal.backend());
+        Ok(())
+    }
+
+    #[test]
+    fn desc_error_100x30() -> anyhow::Result<()> {
+        let mut app = review_app();
+        app.phase = Phase::Publishing;
+        app.phase_label = "publicando…".to_owned();
+        app.progress = 0.35;
+        app.progress_label = "criando PR dev".to_owned();
+        app.on_backend(BackendEvent::Failed("Azure DevOps indisponível".to_owned()));
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend)?;
+        terminal.draw(|f| f.render_widget(&app, f.area()))?;
+        insta::assert_snapshot!("desc_error_100x30", terminal.backend());
+        Ok(())
+    }
+
+    #[test]
     fn desc_too_small_50x15() -> anyhow::Result<()> {
         let app = review_app();
         let backend = TestBackend::new(50, 15);
@@ -1492,6 +1964,27 @@ mod tests {
         let mut terminal = Terminal::new(backend)?;
         terminal.draw(|f| f.render_widget(&app, f.area()))?;
         insta::assert_snapshot!("desc_confirm_publish_100x30", terminal.backend());
+        Ok(())
+    }
+
+    #[test]
+    fn desc_confirm_publish_multiple_targets_should_use_one_line_per_reviewer() -> anyhow::Result<()>
+    {
+        use crate::tui::describe_app::PublishDialog;
+        let mut app = review_app();
+        app.targets = vec!["sprint/110".to_owned(), "dev".to_owned()];
+        app.reviewers = vec![
+            "iohan.hinokuma@ibssystemico.org.br".to_owned(),
+            "ronaldo.pereira@ibssystemico.com.br".to_owned(),
+        ];
+        app.publish_dialog = Some(PublishDialog::ConfirmPublish(true));
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend)?;
+        terminal.draw(|f| f.render_widget(&app, f.area()))?;
+        insta::assert_snapshot!(
+            "desc_confirm_publish_multiple_targets_100x30",
+            terminal.backend()
+        );
         Ok(())
     }
 }
