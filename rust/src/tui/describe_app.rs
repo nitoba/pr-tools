@@ -1,0 +1,549 @@
+//! Estado do app `desc` — máquina de fases puramente testável (sem terminal).
+//!
+//! O loop vivo em `live.rs` alimenta este estado via [`BackendEvent`];
+//! o `Widget for &App` desenha tudo a cada frame, então cada token,
+//! log ou progresso reage na tela em ~33ms.
+
+use std::collections::VecDeque;
+use std::time::Instant;
+
+use super::events::BackendEvent;
+use super::shimmer::{tick_frame_index, u16_from_i32_clamped};
+use super::spin_frames;
+use crate::ai::PrDescription;
+
+/// Frames do spinner (efeito de atividade).
+///
+/// Mantido por compat; o estado usa [`super::spin_frames()`], que respeita
+/// `PRT_ASCII`/`TERM=dumb`.
+pub const SPINNER: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+/// Fase do fluxo.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Phase {
+    /// Inicializando / coletando contexto.
+    #[default]
+    Boot,
+    /// Gerando via IA (streaming).
+    Generating,
+    /// Revisão do resultado (scroll, copy, publish).
+    Review,
+    /// Publicando PRs (animado).
+    Publishing,
+    /// Concluído.
+    Done,
+    /// Erro.
+    Error,
+}
+
+/// Config de publicação (espelha os defaults do comando Dart).
+#[derive(Debug, Clone)]
+pub struct PublishSetup {
+    /// Email de review para targets `sprint*` (pode ser vazio).
+    pub reviewer_sprint: String,
+    /// Email de review para os demais targets.
+    pub reviewer_dev: String,
+}
+
+impl PublishSetup {
+    /// Default por target: `sprint*` usa sprint (ou dev de fallback), resto dev.
+    #[must_use]
+    pub fn default_for(&self, target: &str) -> String {
+        if target.contains("sprint") && !self.reviewer_sprint.trim().is_empty() {
+            self.reviewer_sprint.trim().to_owned()
+        } else {
+            self.reviewer_dev.trim().to_owned()
+        }
+    }
+}
+
+/// Diálogo modal do fluxo de publicação.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PublishDialog {
+    /// "Criar PR(s)?" — bool = Sim selecionado?
+    ConfirmCreate(bool),
+    /// Um campo de reviewer por target.
+    Reviewers,
+    /// "Criar com estes reviewers?" — bool = Sim selecionado?
+    ConfirmPublish(bool),
+}
+
+/// Estado completo da tela `desc`.
+#[derive(Debug)]
+pub struct DescribeApp {
+    /// Branch de origem.
+    pub branch: String,
+    /// Targets (abas).
+    pub targets: Vec<String>,
+    /// Aba selecionada.
+    pub selected_target: usize,
+    /// Work Item.
+    pub work_item_id: String,
+    /// Fase atual.
+    pub phase: Phase,
+    /// Rótulo da fase (ex.: "tentando codex…").
+    pub phase_label: String,
+    /// Início (para elapsed).
+    pub started_at: Instant,
+    /// Frame do spinner (incrementado a cada tick).
+    pub tick: u64,
+    /// Tokens brutos recebidos (efeito typing).
+    pub streamed_raw: String,
+    /// Descrição final normalizada.
+    pub desc: Option<PrDescription>,
+    /// Raw final (para debug).
+    pub raw_final: String,
+    /// Logs recentes (cap 200).
+    pub logs: VecDeque<String>,
+    /// Progresso 0.0–1.0.
+    pub progress: f64,
+    /// Rótulo do progresso.
+    pub progress_label: String,
+    /// Scroll vertical do preview.
+    pub scroll: u16,
+    /// Mensagem de erro.
+    pub error: Option<String>,
+    /// Mostra popup de ajuda?
+    pub show_help: bool,
+    /// Copiado agora? (feedback visual temporário).
+    pub copied_flash_until_tick: u64,
+    /// URLs publicadas (uma por target, na ordem).
+    pub published_urls: Vec<String>,
+    /// Valor inicial do "Criar PR(s)?" (vem de `--create`).
+    pub create_initial: bool,
+    /// Setup de publicação (`None` = publicar indisponível + motivo).
+    pub publish_setup: Option<PublishSetup>,
+    /// Motivo quando `publish_setup` é `None`.
+    pub publish_blocked: Option<String>,
+    /// Diálogo modal aberto (publicação).
+    pub publish_dialog: Option<PublishDialog>,
+    /// Reviewers por target (paralelo a `targets`).
+    pub reviewers: Vec<String>,
+    /// Índice do campo de reviewer focado.
+    pub reviewer_idx: usize,
+    /// Buffer de edição do campo focado.
+    pub reviewer_edit: String,
+    /// Cursor (índice de char) no buffer.
+    pub reviewer_cursor: usize,
+    /// PRs publicados (target, id, url).
+    pub published: Vec<crate::azure::pull_requests::PublishedPr>,
+}
+
+impl DescribeApp {
+    /// Cria estado inicial.
+    #[must_use]
+    pub fn new(
+        branch: &str,
+        targets: &[String],
+        work_item_id: &str,
+        create_initial: bool,
+        publish_setup: Option<PublishSetup>,
+        publish_blocked: Option<String>,
+    ) -> Self {
+        Self {
+            branch: branch.to_owned(),
+            targets: targets.to_vec(),
+            selected_target: 0,
+            work_item_id: work_item_id.to_owned(),
+            phase: Phase::Boot,
+            phase_label: "inicializando…".to_owned(),
+            started_at: Instant::now(),
+            tick: 0,
+            streamed_raw: String::new(),
+            desc: None,
+            raw_final: String::new(),
+            logs: VecDeque::with_capacity(200),
+            progress: 0.0,
+            progress_label: "preparando".to_owned(),
+            scroll: 0,
+            error: None,
+            show_help: false,
+            copied_flash_until_tick: 0,
+            published_urls: Vec::new(),
+            create_initial,
+            publish_setup,
+            publish_blocked,
+            publish_dialog: None,
+            reviewers: Vec::new(),
+            reviewer_idx: 0,
+            reviewer_edit: String::new(),
+            reviewer_cursor: 0,
+            published: Vec::new(),
+        }
+    }
+
+    /// Avança 1 tick (~33ms): move spinner e shimmer.
+    pub fn on_tick(&mut self) {
+        self.tick = self.tick.wrapping_add(1);
+    }
+
+    /// Aplica evento do backend — cada chamada muda a tela no próximo frame.
+    pub fn on_backend(&mut self, ev: BackendEvent) {
+        match ev {
+            BackendEvent::Log(line) => {
+                if self.logs.len() >= 200 {
+                    self.logs.pop_front();
+                }
+                self.logs.push_back(line);
+            }
+            BackendEvent::Token(chunk) => {
+                self.streamed_raw.push_str(&chunk);
+                if self.phase == Phase::Boot {
+                    self.phase = Phase::Generating;
+                }
+            }
+            BackendEvent::Progress(ratio, label) => {
+                self.progress = ratio.clamp(0.0, 1.0);
+                self.progress_label = label;
+            }
+            BackendEvent::Phase(label) => {
+                self.phase_label.clone_from(&label);
+                self.push_log(label);
+                if self.phase == Phase::Boot {
+                    self.phase = Phase::Generating;
+                }
+            }
+            BackendEvent::Finished(desc, raw) => {
+                self.desc = Some(desc);
+                self.raw_final = raw;
+                self.phase = Phase::Review;
+                "revisão".clone_into(&mut self.phase_label);
+                self.progress = 1.0;
+                "pronto".clone_into(&mut self.progress_label);
+                self.push_log(
+                    "descrição pronta — revise, copie (c) ou publique (enter)".to_owned(),
+                );
+            }
+            BackendEvent::Published(published) => {
+                self.phase = Phase::Done;
+                "publicado".clone_into(&mut self.phase_label);
+                self.progress = 1.0;
+                "pronto".clone_into(&mut self.progress_label);
+                for item in &published {
+                    self.push_log(format!("PR {} criado: {}", item.target, item.url));
+                }
+                self.published_urls = published.iter().map(|p| p.url.clone()).collect();
+                self.published = published;
+            }
+            BackendEvent::Failed(msg) => {
+                self.phase = Phase::Error;
+                self.error = Some(msg.clone());
+                "erro".clone_into(&mut self.phase_label);
+                self.push_log(format!("erro: {msg}"));
+            }
+        }
+    }
+
+    /// Segundos decorridos.
+    #[must_use]
+    pub fn elapsed_secs(&self) -> u64 {
+        self.started_at.elapsed().as_secs()
+    }
+
+    /// Símbolo de atividade: gira enquanto há trabalho, parado no ocioso.
+    ///
+    /// Ocioso mostra estado final (`●` revisando, `✓` pronto, `✘` erro) em
+    /// vez de girar à toa — spinner que nunca para sinaliza trabalho
+    /// inexistente.
+    #[must_use]
+    pub fn spinner(&self) -> &str {
+        match self.phase {
+            Phase::Boot | Phase::Generating | Phase::Publishing => {
+                let frames = spin_frames();
+                frames[tick_frame_index(self.tick, frames.len())]
+            }
+            Phase::Review => {
+                if super::ascii_only() {
+                    "*"
+                } else {
+                    "●"
+                }
+            }
+            Phase::Done => {
+                if super::ascii_only() {
+                    "+"
+                } else {
+                    "✓"
+                }
+            }
+            Phase::Error => {
+                if super::ascii_only() {
+                    "x"
+                } else {
+                    "✘"
+                }
+            }
+        }
+    }
+
+    /// Texto do preview: final se pronto, senão stream parcial + cursor.
+    #[must_use]
+    pub fn preview_text(&self) -> String {
+        if let Some(d) = &self.desc {
+            format!("# {}\n\n{}", d.title, d.body)
+        } else if self.streamed_raw.is_empty() {
+            "aguardando primeiro token…".to_owned()
+        } else {
+            format!("{}▊", self.streamed_raw)
+        }
+    }
+
+    /// Número de tokens (aprox. por chars/4).
+    #[must_use]
+    pub fn token_count(&self) -> usize {
+        self.streamed_raw.len() / 4
+    }
+
+    /// Scroll para cima/baixo com clamp simples.
+    pub fn scroll_by(&mut self, delta: i16) {
+        let next = i32::from(self.scroll) + i32::from(delta);
+        self.scroll = u16_from_i32_clamped(next, 5000);
+    }
+
+    /// Alterna aba de target.
+    pub fn next_target(&mut self) {
+        if !self.targets.is_empty() {
+            self.selected_target = (self.selected_target + 1) % self.targets.len();
+        }
+    }
+
+    /// Abre o diálogo "Criar PR(s)?" (só com descrição pronta e sem diálogo).
+    pub fn open_confirm_create(&mut self) {
+        if self.desc.is_some() && self.publish_dialog.is_none() {
+            self.publish_dialog = Some(PublishDialog::ConfirmCreate(self.create_initial));
+        }
+    }
+
+    /// Abre a edição de reviewers (valores = defaults por target).
+    pub fn open_reviewers(&mut self) {
+        let setup = self.publish_setup.clone().unwrap_or(PublishSetup {
+            reviewer_sprint: String::new(),
+            reviewer_dev: String::new(),
+        });
+        self.reviewers = self.targets.iter().map(|t| setup.default_for(t)).collect();
+        self.reviewer_idx = 0;
+        self.publish_dialog = Some(PublishDialog::Reviewers);
+        self.rebind_reviewer();
+    }
+
+    /// Resumo `target: reviewer` (vazio vira `nenhum`), como no Dart.
+    #[must_use]
+    pub fn reviewer_summary(&self) -> String {
+        self.targets
+            .iter()
+            .enumerate()
+            .map(|(i, target)| {
+                let reviewer = self.reviewers.get(i).map_or("", String::as_str);
+                let shown = if reviewer.trim().is_empty() {
+                    "nenhum"
+                } else {
+                    reviewer.trim()
+                };
+                format!("{target}: {shown}")
+            })
+            .collect::<Vec<_>>()
+            .join("; ")
+    }
+
+    /// Persiste o buffer no campo focado e foca outro campo.
+    pub fn focus_reviewer(&mut self, idx: usize) {
+        self.commit_reviewer();
+        self.reviewer_idx = idx.min(self.reviewers.len().saturating_sub(1));
+        self.rebind_reviewer();
+    }
+
+    /// Persiste o buffer de edição no campo focado.
+    pub fn commit_reviewer(&mut self) {
+        if let Some(slot) = self.reviewers.get_mut(self.reviewer_idx) {
+            slot.clone_from(&self.reviewer_edit);
+        }
+    }
+
+    /// Carrega o campo focado no buffer de edição (cursor no fim).
+    pub fn rebind_reviewer(&mut self) {
+        self.reviewer_edit = self
+            .reviewers
+            .get(self.reviewer_idx)
+            .cloned()
+            .unwrap_or_default();
+        self.reviewer_cursor = self.reviewer_edit.chars().count();
+    }
+
+    /// Digitação no campo de reviewer (retorna `true` se consumiu a tecla).
+    pub fn reviewer_edit_input(&mut self, key: crossterm::event::KeyEvent) -> bool {
+        use crossterm::event::KeyCode;
+        match key.code {
+            KeyCode::Char(c) => {
+                let byte = char_byte_index(&self.reviewer_edit, self.reviewer_cursor);
+                self.reviewer_edit.insert(byte, c);
+                self.reviewer_cursor += 1;
+            }
+            KeyCode::Backspace => {
+                if self.reviewer_cursor > 0 {
+                    let byte = char_byte_index(&self.reviewer_edit, self.reviewer_cursor);
+                    let prev = char_byte_index(&self.reviewer_edit, self.reviewer_cursor - 1);
+                    self.reviewer_edit.drain(prev..byte);
+                    self.reviewer_cursor -= 1;
+                }
+            }
+            KeyCode::Delete => {
+                let len = self.reviewer_edit.chars().count();
+                if self.reviewer_cursor < len {
+                    let byte = char_byte_index(&self.reviewer_edit, self.reviewer_cursor);
+                    let next = char_byte_index(&self.reviewer_edit, self.reviewer_cursor + 1);
+                    self.reviewer_edit.drain(byte..next);
+                }
+            }
+            KeyCode::Left => self.reviewer_cursor = self.reviewer_cursor.saturating_sub(1),
+            KeyCode::Right => {
+                self.reviewer_cursor =
+                    (self.reviewer_cursor + 1).min(self.reviewer_edit.chars().count());
+            }
+            KeyCode::Home => self.reviewer_cursor = 0,
+            KeyCode::End => self.reviewer_cursor = self.reviewer_edit.chars().count(),
+            _ => return false,
+        }
+        true
+    }
+
+    /// Marca flash de "copiado".
+    pub fn flash_copied(&mut self) {
+        self.copied_flash_until_tick = self.tick + 60; // ~2s a 30fps
+    }
+
+    /// Está no flash de copiado?
+    #[must_use]
+    pub fn is_copied_flash(&self) -> bool {
+        self.tick < self.copied_flash_until_tick
+    }
+
+    fn push_log(&mut self, line: String) {
+        if self.logs.len() >= 200 {
+            self.logs.pop_front();
+        }
+        self.logs.push_back(line);
+    }
+}
+
+/// Índice de byte do n-ésimo char (saturado no fim).
+fn char_byte_index(s: &str, char_idx: usize) -> usize {
+    s.char_indices().nth(char_idx).map_or(s.len(), |(b, _)| b)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn app() -> DescribeApp {
+        DescribeApp::new(
+            "feature/11763-x",
+            &["dev".to_owned(), "sprint/12".to_owned()],
+            "11763",
+            false,
+            Some(PublishSetup {
+                reviewer_sprint: "sprint@x.com".to_owned(),
+                reviewer_dev: "dev@x.com".to_owned(),
+            }),
+            None,
+        )
+    }
+
+    #[test]
+    fn token_should_switch_to_generating_and_update_preview() {
+        let mut a = app();
+        assert_eq!(a.phase, Phase::Boot);
+        a.on_backend(BackendEvent::Token("{\"title\":".to_owned()));
+        assert_eq!(a.phase, Phase::Generating);
+        assert!(a.preview_text().contains("title"));
+        assert!(a.streamed_raw.contains("title"));
+    }
+
+    #[test]
+    fn spinner_should_stop_when_idle() {
+        let frames: std::collections::HashSet<&str> =
+            crate::tui::spin_frames().iter().copied().collect();
+        // Ocioso: símbolo parado por fase, nunca frame animado.
+        let mut a = app();
+        a.on_backend(BackendEvent::Finished(
+            PrDescription {
+                title: "T".to_owned(),
+                body: "B".to_owned(),
+            },
+            "raw".to_owned(),
+        ));
+        assert_eq!(a.spinner(), "●");
+        a.on_backend(BackendEvent::Failed("x".to_owned()));
+        assert_eq!(a.spinner(), "✘");
+        // Ocupado: gira com o tick.
+        let mut b = app();
+        b.on_backend(BackendEvent::Token("tok".to_owned()));
+        let first = b.spinner().to_owned();
+        assert!(frames.contains(first.as_str()), "{first}");
+        b.on_tick();
+        let _ = b.spinner();
+    }
+
+    #[test]
+    fn finished_should_enter_review() {
+        let mut a = app();
+        a.on_backend(BackendEvent::Finished(
+            PrDescription {
+                title: "Atualiza fluxo".to_owned(),
+                body: "## Descrição\nX".to_owned(),
+            },
+            "raw".to_owned(),
+        ));
+        assert_eq!(a.phase, Phase::Review);
+        assert!(a.preview_text().contains("Atualiza fluxo"));
+    }
+
+    #[test]
+    fn failed_should_enter_error() {
+        let mut a = app();
+        a.on_backend(BackendEvent::Failed("timeout".to_owned()));
+        assert_eq!(a.phase, Phase::Error);
+        assert_eq!(a.error.as_deref(), Some("timeout"));
+    }
+
+    #[test]
+    fn scroll_should_clamp() {
+        let mut a = app();
+        a.scroll_by(-5);
+        assert_eq!(a.scroll, 0);
+        a.scroll_by(10);
+        assert_eq!(a.scroll, 10);
+    }
+
+    #[test]
+    fn reviewers_should_default_sprint_and_dev() {
+        let mut a = app();
+        a.open_reviewers();
+        assert_eq!(a.reviewers, vec!["dev@x.com", "sprint@x.com"]);
+        assert_eq!(
+            a.reviewer_summary(),
+            "dev: dev@x.com; sprint/12: sprint@x.com"
+        );
+    }
+
+    #[test]
+    fn reviewer_summary_should_show_nenhum_when_empty() {
+        let mut a = app();
+        a.open_reviewers();
+        a.reviewers = vec![String::new(), "  ".to_owned()];
+        assert_eq!(a.reviewer_summary(), "dev: nenhum; sprint/12: nenhum");
+    }
+
+    #[test]
+    fn published_should_enter_done_with_urls() {
+        use crate::azure::pull_requests::PublishedPr;
+        let mut a = app();
+        a.on_backend(BackendEvent::Published(vec![PublishedPr {
+            target: "dev".to_owned(),
+            id: 7,
+            url: "https://x/pr/7".to_owned(),
+        }]));
+        assert_eq!(a.phase, Phase::Done);
+        assert_eq!(a.published_urls, vec!["https://x/pr/7"]);
+        assert_eq!(a.published.len(), 1);
+    }
+}

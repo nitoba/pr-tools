@@ -1,0 +1,28 @@
+---
+source: src/tui/live.rs
+expression: terminal.backend()
+---
+"● ◆ prt 4.0.10  ·  desc  ·  revisão  ·  0s  ·  ~0 tok  ·  revisão               "
+" dev                                                                            "
+"╭ ◉ Descrição do PR ───────────────────────────────────────────────────────────╮"
+"│ # Atualiza fluxo de checkout                                               ▲ │"
+"│                                                                            █ │"
+"│                                                                            █ │"
+"│ ## Descrição                                                               █ │"
+"│                                                                            █ │"
+"│ Atualiza o fluxo de checkout para validar o carrinho.                      █ │"
+"│                                                                            █ │"
+"│ ## Checklist                                                               █ │"
+"│                                                                            ║ │"
+"│                                                                            ║ │"
+"│ ☑ Testes locais                                                            ║ │"
+"│                                                                            ║ │"
+"│ ☐ Review                                                                   ║ │"
+"│                                                                            ║ │"
+"│ ╭─ diff                                                                    ║ │"
+"│ │ + valida carrinho                                                        ▼ │"
+"╰──────────────────────────────────────────────────────────────────────────────╯"
+"████████████████████████████████████████████████████████████████████████████████"
+"revisão  100%                                                                   "
+"feature/11763-exemplo · dev · 161 chars ✓ <4000                                 "
+"enter publicar · c copiar · tab target · j/k scroll · ? ajuda · q sair          "

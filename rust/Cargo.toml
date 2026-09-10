@@ -1,0 +1,66 @@
+[package]
+name = "prt"
+version = "4.0.10"
+edition = "2024"
+rust-version = "1.85"
+description = "CLI para gerar descrições de PR e Test Cases a partir do contexto Git (Azure DevOps)"
+license = "MIT"
+
+[[bin]]
+name = "prt"
+path = "src/main.rs"
+
+[lib]
+name = "prt"
+path = "src/lib.rs"
+
+[dependencies]
+anyhow = "1"
+arboard = "3"
+base64 = "0.22"
+clap = { version = "4", features = ["derive"] }
+clap_complete = "4"
+crossterm = "0.29"
+directories = "6"
+dotenvy = "0.15"
+futures = "0.3"
+libc = "0.2"
+pulldown-cmark = "0.12"
+regex = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+unicode-width = "0.2"
+ratatui = "0.30"
+aisdk = { version = "0.5", features = ["openai", "openaicompatible"] }
+schemars = "1"
+
+[dev-dependencies]
+insta = { version = "1", features = ["yaml"] }
+pretty_assertions = "1"
+tempfile = "3"
+tokio = { version = "1", features = ["full"] }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = true
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[lints.rust]
+unsafe_code = "warn"
+missing_docs = "warn"
+
+[lints.clippy]
+all = { level = "deny", priority = 10 }
+pedantic = { level = "warn", priority = 3 }
+nursery = { level = "allow", priority = 0 }
+redundant_clone = { level = "deny", priority = 9 }
+needless_collect = { level = "warn", priority = 4 }
