@@ -60,6 +60,12 @@ pub enum AppError {
     /// Erro HTTP imprevisto.
     #[error(transparent)]
     Http(#[from] reqwest::Error),
+    /// Falha ao baixar ou instalar uma atualização.
+    #[error("atualização: {message}")]
+    Update {
+        /// Detalhe da falha.
+        message: String,
+    },
 }
 
 impl AppError {

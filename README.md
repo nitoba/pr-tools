@@ -112,6 +112,15 @@ O remote Git precisa apontar para Azure DevOps. O PAT deve ter, no mínimo, perm
 
 Use `prt --help` para consultar todos os argumentos e `prt --version` para conferir a versão instalada.
 
+## Atualizar
+
+Para baixar a versão Rust mais recente diretamente do GitHub e substituir o
+binário no mesmo caminho em que o `prt` está instalado:
+
+```bash
+prt update
+```
+
 ## Estrutura do monorepo
 
 As implementações são aplicações independentes dentro de `apps/`:
