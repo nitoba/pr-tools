@@ -22,15 +22,23 @@ jobs:
 
       - name: Install dependencies
         run: dart pub get
+        working-directory: apps/dart
 
       - name: Format
-        run: dart format --output=none --set-exit-if-changed bin lib test scripts
+        run: dart format --output=none --set-exit-if-changed bin lib test ../../scripts/build.dart
+        working-directory: apps/dart
 
       - name: Analyze
         run: dart analyze
+        working-directory: apps/dart
+
+      - name: Analyze monorepo scripts
+        run: dart analyze ../../scripts/build.dart
+        working-directory: apps/dart
 
       - name: Test
         run: dart test
+        working-directory: apps/dart
 
   rust-checks:
     runs-on: ubuntu-24.04
@@ -42,13 +50,13 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Format
-        run: cargo fmt --manifest-path rust/Cargo.toml -- --check
+        run: cargo fmt --manifest-path apps/rust/Cargo.toml -- --check
 
       - name: Clippy
-        run: cargo clippy --manifest-path rust/Cargo.toml --locked --all-targets -- -D clippy::correctness
+        run: cargo clippy --manifest-path apps/rust/Cargo.toml --locked --all-targets -- -D clippy::correctness
 
       - name: Test
-        run: cargo test --manifest-path rust/Cargo.toml --locked
+        run: cargo test --manifest-path apps/rust/Cargo.toml --locked
 
   build:
     needs: [checks, rust-checks]
@@ -84,15 +92,17 @@ jobs:
 
       - name: Install dependencies
         run: dart pub get
+        working-directory: apps/dart
 
       - name: Build ${{ matrix.target }}
-        run: dart run scripts/build.dart ${{ matrix.target }}
+        run: dart run ../../scripts/build.dart ${{ matrix.target }}
+        working-directory: apps/dart
 
       - name: Upload platform artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.asset }}
-          path: dist/${{ matrix.asset }}
+          path: apps/dart/dist/${{ matrix.asset }}
           if-no-files-found: error
 
       - name: Setup Rust
@@ -100,13 +110,13 @@ jobs:
 
       - name: Build Rust ${{ matrix.target }}
         shell: bash
-        run: ./rust/scripts/build.sh ${{ matrix.target }} --no-verify
+        run: ./scripts/build-rust.sh ${{ matrix.target }} --no-verify
 
       - name: Upload Rust platform artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.rust_asset }}
-          path: rust/dist/${{ matrix.rust_asset }}
+          path: apps/rust/dist/${{ matrix.rust_asset }}
           if-no-files-found: error
 
   release:

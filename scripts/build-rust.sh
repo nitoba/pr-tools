@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
 # Build da CLI `prt` (Rust) no monorepo `pr-tools`.
 #
-#   ./rust/scripts/build.sh [alvo] [--no-verify]
+#   ./scripts/build-rust.sh [alvo] [--no-verify]
 #
 # Alvos: linux-x64, linux-arm64, macos-arm64, windows-x64.
 # Como no Dart, o alvo precisa ser o host atual (sem cross por padrão).
-# Saída: rust/dist/prt-rust-<alvo>[.exe]
+# Saída: apps/rust/dist/prt-rust-<alvo>[.exe]
 #
 # Etapas: cargo fmt --check, clippy (-D correctness), test, build --release.
 # Use --no-verify para pular fmt/clippy/test (build puro).
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$ROOT"
+APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../apps/rust" && pwd)"
+cd "$APP_DIR"
 
 usage() {
-  echo "Uso: ./scripts/build.sh [alvo] [--no-verify]" >&2
+  echo "Uso: ./scripts/build-rust.sh [alvo] [--no-verify]" >&2
   echo "Alvos: linux-x64, linux-arm64, macos-arm64, windows-x64" >&2
   exit 2
 }
@@ -109,5 +109,5 @@ fi
 cp -f "$EXE" "$OUT"
 chmod +x "$OUT" 2>/dev/null || true
 
-echo "Binário criado em $OUT"
+echo "Binário criado em apps/rust/$OUT"
 ls -lh "$OUT"

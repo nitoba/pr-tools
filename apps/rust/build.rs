@@ -1,18 +1,21 @@
 //! Build script mínimo: expõe o hash do commit via `PRT_COMMIT`.
 //!
 //! Usado pelo `--version` (`option_env!("PRT_COMMIT")`).
-//! O crate vive em `rust/`, então o Git é consultado a partir da raiz do
+//! O crate vive em `apps/rust/`, então o Git é consultado a partir da raiz do
 //! monorepo. Sem lógica de build — só resolve o hash, com fallback `unknown`.
 
 use std::path::Path;
 use std::process::Command;
 
 fn main() {
-    println!("cargo:rerun-if-changed=../.git/HEAD");
+    println!("cargo:rerun-if-changed=../../.git/HEAD");
     let manifest_dir = std::env::var_os("CARGO_MANIFEST_DIR")
         .map(std::path::PathBuf::from)
         .unwrap_or_default();
-    let repository_root = manifest_dir.parent().unwrap_or(Path::new("."));
+    let repository_root = manifest_dir
+        .parent()
+        .and_then(Path::parent)
+        .unwrap_or(Path::new("."));
     let short = Command::new("git")
         .arg("-C")
         .arg(repository_root)

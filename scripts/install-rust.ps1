@@ -1,7 +1,7 @@
 <# Instalador interativo do `prt` Rust — Windows PowerShell.
 #
 #   $installer = Join-Path $env:TEMP 'pr-tools-install.ps1'
-#   Invoke-WebRequest 'https://raw.githubusercontent.com/nitoba/pr-tools/main/rust/scripts/install.ps1' -OutFile $installer
+#   Invoke-WebRequest 'https://raw.githubusercontent.com/nitoba/pr-tools/main/scripts/install-rust.ps1' -OutFile $installer
 #   PowerShell -ExecutionPolicy Bypass -File $installer
 #
 # Env (opcionais, têm precedência sobre as perguntas): PR_TOOLS_VERSION,

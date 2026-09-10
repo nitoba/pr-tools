@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Instalador interativo do `prt` Rust — Linux e macOS.
 #
-#   curl -fsSL https://raw.githubusercontent.com/nitoba/pr-tools/main/rust/scripts/install.sh | bash
-#   PR_TOOLS_VERSION=v4.0.10 bash rust/scripts/install.sh
+#   curl -fsSL https://raw.githubusercontent.com/nitoba/pr-tools/main/scripts/install-rust.sh | bash
+#   PR_TOOLS_VERSION=v4.0.10 bash scripts/install-rust.sh
 #
 # Env (todos opcionais, têm precedência sobre as perguntas):
 #   PR_TOOLS_VERSION      tag (v4.0.10) ou 'latest' (padrão)
@@ -89,7 +89,7 @@ case "$PLATFORM:$ARCH" in
   Linux:aarch64|Linux:arm64)   ASSET='prt-rust-linux-arm64';  PRETTY='Linux arm64' ;;
   Darwin:arm64)                ASSET='prt-rust-macos-arm64';  PRETTY='macOS arm64' ;;
   MINGW*|MSYS*|CYGWIN*|:*|Windows_NT:*)
-    fail "Windows detectado: use o instalador PowerShell (rust/scripts/install.ps1)." ;;
+    fail "Windows detectado: use o instalador PowerShell (scripts/install-rust.ps1)." ;;
   *)
     fail "Plataforma não suportada: $PLATFORM/$ARCH." ;;
 esac
