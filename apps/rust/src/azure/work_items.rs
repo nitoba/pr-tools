@@ -22,7 +22,7 @@ pub struct TestCaseInput {
     pub steps_xml: Option<String>,
     /// `AreaPath` (`System.AreaPath`).
     pub area_path: Option<String>,
-    /// ID do Work Item pai (vira link `Hierarchy-Reverse`).
+    /// ID do Work Item pai (vira link `Related`).
     pub parent_id: Option<i64>,
     /// `IterationPath` (`System.IterationPath`).
     pub iteration_path: Option<String>,
@@ -36,7 +36,7 @@ pub struct TestCaseInput {
     pub assigned_to: Option<String>,
     /// Organização Azure (`dev.azure.com/{org}`).
     ///
-    /// Necessária para montar a URL absoluta do link `Hierarchy-Reverse` do
+    /// Necessária para montar a URL absoluta do link `Related` do
     /// pai. O `AzureClient` não expõe a organização (campo privado), por isso
     /// ela viaja aqui, preenchida por quem conhece o remote (o `test_card`).
     pub organization: Option<String>,
@@ -87,7 +87,7 @@ pub fn test_case_query(project: &str) -> String {
     )
 }
 
-/// URL absoluta de um Work Item (link `Hierarchy-Reverse` do pai).
+/// URL absoluta de um Work Item (link `Related` do pai).
 ///
 /// Espelha `azureUrl(config, '/_apis/wit/workitems/$parentId')` do Dart
 /// (sem `api-version`, como lá).
@@ -157,7 +157,7 @@ fn json_num(value: f64) -> Value {
 /// `System.Description` (html), `Microsoft.VSTS.TCM.Steps` (xml),
 /// `System.AreaPath`, `System.IterationPath`, `Microsoft.VSTS.Common.Priority`,
 /// `Custom.Team`, `Custom.ProgramasAgrotrace`, `System.AssignedTo`
-/// (opcionais vazios são omitidos) + relação `Hierarchy-Reverse` com o pai
+/// (opcionais vazios são omitidos) + relação `Related` com o pai
 /// quando `parent_id > 0` e `organization` presente.
 #[must_use]
 pub fn build_create_patch(input: &TestCaseInput, parent_url: Option<&str>) -> Vec<Value> {
@@ -208,7 +208,7 @@ pub fn build_create_patch(input: &TestCaseInput, parent_url: Option<&str>) -> Ve
                 ops.push(json!({
                     "op": "add",
                     "path": "/relations/-",
-                    "value": {"rel": "System.LinkTypes.Hierarchy-Reverse", "url": url},
+                    "value": {"rel": "System.LinkTypes.Related", "url": url},
                 }));
             }
         }
@@ -342,7 +342,7 @@ mod tests {
     }
 
     #[test]
-    fn create_patch_should_include_fields_and_parent_link() {
+    fn create_patch_should_include_fields_and_related_parent_link() {
         let input = TestCaseInput {
             title: "Card".to_owned(),
             description_html: Some("<p>x</p>".to_owned()),
@@ -368,6 +368,13 @@ mod tests {
         assert!(paths.contains(&"/fields/Custom.Team"));
         assert!(!paths.contains(&"/fields/Custom.ProgramasAgrotrace"));
         assert!(paths.contains(&"/relations/-"));
+        let relation = ops
+            .iter()
+            .find(|op| op.get("path").and_then(Value::as_str) == Some("/relations/-"))
+            .and_then(|op| op.get("value"))
+            .and_then(|value| value.get("rel"))
+            .and_then(Value::as_str);
+        assert_eq!(relation, Some("System.LinkTypes.Related"));
         let priority = ops
             .iter()
             .find(|op| {

@@ -92,7 +92,7 @@ enum TestPhase {
     Revisao,
     /// Criando Test Case no Azure.
     Criando,
-    /// Criado (mostra id/URL; `u` atualiza o pai).
+    /// Criado (mostra id/URL e oferece a atualização do pai).
     Pronto,
     /// Erro (mostra mensagem até sair).
     Erro,
@@ -488,6 +488,10 @@ impl TestApp {
                     let _ = self.logs.pop_front();
                 }
                 self.logs.push_back(format!("criado #{id}"));
+                // O Dart oferece esta confirmação imediatamente após criar o
+                // Test Case. Não deixar a atualização escondida atrás de uma
+                // tecla extra evita encerrar o fluxo sem atualizar o pai.
+                self.dialog = Some(TestDialog::ConfirmTestQa(false));
             }
             TestEvent::Failed(msg) => {
                 self.phase = TestPhase::Erro;
@@ -1992,6 +1996,19 @@ mod tests {
         app.open_qa_efforts();
         assert_eq!(app.dialog, Some(TestDialog::QaEfforts));
         assert_eq!(app.qa_effort.trimmed(), "1");
+    }
+
+    #[test]
+    fn created_item_should_offer_parent_test_qa_update() {
+        let mut app = TestApp::new();
+        app.on_event(TestEvent::CreatedItem(WorkItem {
+            id: 99,
+            fields: std::collections::HashMap::new(),
+        }));
+
+        assert_eq!(app.phase, TestPhase::Pronto);
+        assert_eq!(app.created.as_ref().map(|(id, _)| *id), Some(99));
+        assert_eq!(app.dialog, Some(TestDialog::ConfirmTestQa(false)));
     }
 
     #[test]
