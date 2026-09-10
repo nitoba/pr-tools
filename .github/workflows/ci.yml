@@ -23,15 +23,45 @@ jobs:
 
       - name: Install dependencies
         run: dart pub get
+        working-directory: apps/dart
 
       - name: Format
-        run: dart format --output=none --set-exit-if-changed bin lib test scripts
+        run: dart format --output=none --set-exit-if-changed bin lib test ../../scripts/build.dart
+        working-directory: apps/dart
 
       - name: Analyze
         run: dart analyze
+        working-directory: apps/dart
+
+      - name: Analyze monorepo scripts
+        run: dart analyze ../../scripts/build.dart
+        working-directory: apps/dart
 
       - name: Test
         run: dart test
+        working-directory: apps/dart
 
       - name: Build native artifact
-        run: dart run scripts/build.dart linux-x64
+        run: dart run ../../scripts/build.dart linux-x64
+        working-directory: apps/dart
+
+  rust-checks:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Format
+        run: cargo fmt --manifest-path apps/rust/Cargo.toml -- --check
+
+      - name: Clippy
+        run: cargo clippy --manifest-path apps/rust/Cargo.toml --locked --all-targets -- -D clippy::correctness
+
+      - name: Test
+        run: cargo test --manifest-path apps/rust/Cargo.toml --locked
+
+      - name: Build native artifact
+        run: cargo build --manifest-path apps/rust/Cargo.toml --locked --all-targets

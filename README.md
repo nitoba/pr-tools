@@ -112,18 +112,53 @@ O remote Git precisa apontar para Azure DevOps. O PAT deve ter, no mínimo, perm
 
 Use `prt --help` para consultar todos os argumentos e `prt --version` para conferir a versão instalada.
 
+## Estrutura do monorepo
+
+As implementações são aplicações independentes dentro de `apps/`:
+
+```text
+apps/
+├── dart/   # implementação Dart existente
+└── rust/   # implementação Rust com Ratatui
+```
+
+A raiz contém somente a configuração compartilhada do monorepo, a automação
+em `scripts/`, a documentação e os workflows do GitHub. As duas aplicações
+usam o mesmo nome de comando (`prt`) e a mesma configuração em
+`~/.config/pr-tools`. Escolha explicitamente qual instalador usar:
+
+```bash
+# Dart (compatibilidade)
+curl -fsSL https://raw.githubusercontent.com/nitoba/pr-tools/main/scripts/install.sh | bash
+
+# Rust (TUI Ratatui)
+curl -fsSL https://raw.githubusercontent.com/nitoba/pr-tools/main/scripts/install-rust.sh | bash
+```
+
 ## Desenvolvimento
 
 ```bash
+# Dart
+cd apps/dart
 dart pub get
 dart analyze
 dart test
+cd ../..
 dart run scripts/build.dart
+
+# Rust
+cargo fmt --manifest-path apps/rust/Cargo.toml -- --check
+cargo clippy --manifest-path apps/rust/Cargo.toml --locked --all-targets -- -D clippy::correctness
+cargo test --manifest-path apps/rust/Cargo.toml --locked
+cargo build --manifest-path apps/rust/Cargo.toml --locked --all-targets
 ```
 
-`dart run scripts/build.dart` gera `dist/prt-<plataforma>` para o host atual.
-A plataforma também pode ser informada explicitamente, desde que corresponda
-ao host, por exemplo `dart run scripts/build.dart linux-x64`. A
-release compila cada binário no runner nativo correspondente. Os executáveis
+`dart run scripts/build.dart` gera `apps/dart/dist/prt-<plataforma>` para o
+host atual. A plataforma também pode ser informada explicitamente, desde que
+corresponda ao host, por exemplo `dart run scripts/build.dart linux-x64`.
+A release compila cada binário no runner nativo correspondente. Os executáveis
 externos `codex` e `opencode` continuam sendo instalados e autenticados
 separadamente na máquina do usuário.
+
+`./scripts/build-rust.sh` gera `apps/rust/dist/prt-rust-<plataforma>` para o
+host atual, depois de executar as verificações Rust por padrão.

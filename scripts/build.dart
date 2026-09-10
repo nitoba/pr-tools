@@ -15,7 +15,10 @@ Future<void> main(List<String> arguments) async {
     return;
   }
 
-  final packageRoot = File.fromUri(Platform.script).parent.parent;
+  final repositoryRoot = File.fromUri(Platform.script).parent.parent;
+  final packageRoot = Directory(
+    '${repositoryRoot.path}${Platform.pathSeparator}apps${Platform.pathSeparator}dart',
+  );
   final output = File(
     '${packageRoot.path}${Platform.pathSeparator}dist${Platform.pathSeparator}prt-$target${target == 'windows-x64' ? '.exe' : ''}',
   );

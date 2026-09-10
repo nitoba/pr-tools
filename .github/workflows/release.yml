@@ -22,18 +22,44 @@ jobs:
 
       - name: Install dependencies
         run: dart pub get
+        working-directory: apps/dart
 
       - name: Format
-        run: dart format --output=none --set-exit-if-changed bin lib test scripts
+        run: dart format --output=none --set-exit-if-changed bin lib test ../../scripts/build.dart
+        working-directory: apps/dart
 
       - name: Analyze
         run: dart analyze
+        working-directory: apps/dart
+
+      - name: Analyze monorepo scripts
+        run: dart analyze ../../scripts/build.dart
+        working-directory: apps/dart
 
       - name: Test
         run: dart test
+        working-directory: apps/dart
+
+  rust-checks:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Format
+        run: cargo fmt --manifest-path apps/rust/Cargo.toml -- --check
+
+      - name: Clippy
+        run: cargo clippy --manifest-path apps/rust/Cargo.toml --locked --all-targets -- -D clippy::correctness
+
+      - name: Test
+        run: cargo test --manifest-path apps/rust/Cargo.toml --locked
 
   build:
-    needs: checks
+    needs: [checks, rust-checks]
     strategy:
       fail-fast: false
       matrix:
@@ -41,15 +67,19 @@ jobs:
           - os: ubuntu-24.04
             target: linux-x64
             asset: prt-linux-x64
+            rust_asset: prt-rust-linux-x64
           - os: ubuntu-24.04-arm
             target: linux-arm64
             asset: prt-linux-arm64
+            rust_asset: prt-rust-linux-arm64
           - os: macos-14
             target: macos-arm64
             asset: prt-macos-arm64
+            rust_asset: prt-rust-macos-arm64
           - os: windows-latest
             target: windows-x64
             asset: prt-windows-x64.exe
+            rust_asset: prt-rust-windows-x64.exe
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
@@ -62,15 +92,31 @@ jobs:
 
       - name: Install dependencies
         run: dart pub get
+        working-directory: apps/dart
 
       - name: Build ${{ matrix.target }}
-        run: dart run scripts/build.dart ${{ matrix.target }}
+        run: dart run ../../scripts/build.dart ${{ matrix.target }}
+        working-directory: apps/dart
 
       - name: Upload platform artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.asset }}
-          path: dist/${{ matrix.asset }}
+          path: apps/dart/dist/${{ matrix.asset }}
+          if-no-files-found: error
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build Rust ${{ matrix.target }}
+        shell: bash
+        run: ./scripts/build-rust.sh ${{ matrix.target }} --no-verify
+
+      - name: Upload Rust platform artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.rust_asset }}
+          path: apps/rust/dist/${{ matrix.rust_asset }}
           if-no-files-found: error
 
   release:
