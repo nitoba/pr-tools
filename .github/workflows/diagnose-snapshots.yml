@@ -1,0 +1,80 @@
+name: Diagnose missing Rust snapshots
+
+on:
+  push:
+    branches: [codex/diagnose-tui-snapshots-20260911]
+
+permissions:
+  contents: read
+
+jobs:
+  reproduce-and-capture:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Reproduce missing baselines without accepting snapshots
+        shell: bash
+        run: |
+          set +e
+          INSTA_UPDATE=no cargo test --manifest-path apps/rust/Cargo.toml --locked > "$RUNNER_TEMP/baseline.log" 2>&1
+          status=$?
+          set -e
+          tail -30 "$RUNNER_TEMP/baseline.log"
+          test "$status" -eq 101
+          grep -q '133 passed; 22 failed' "$RUNNER_TEMP/baseline.log"
+
+      - name: Capture proposed baselines for manual review
+        shell: bash
+        run: |
+          INSTA_UPDATE=always cargo test --manifest-path apps/rust/Cargo.toml --locked > "$RUNNER_TEMP/capture.log" 2>&1 || { tail -100 "$RUNNER_TEMP/capture.log"; exit 1; }
+          tail -15 "$RUNNER_TEMP/capture.log"
+          test "$(find apps/rust/src/tui/snapshots -name '*.snap' | wc -l)" -eq 22
+
+      - name: Verify strict comparisons against captured baselines
+        shell: bash
+        run: |
+          INSTA_UPDATE=no cargo test --manifest-path apps/rust/Cargo.toml --locked > "$RUNNER_TEMP/strict.log" 2>&1 || { tail -100 "$RUNNER_TEMP/strict.log"; exit 1; }
+          grep 'test result:' "$RUNNER_TEMP/strict.log"
+
+      - name: Verify a changed baseline still fails
+        shell: bash
+        run: |
+          snapshot=apps/rust/src/tui/snapshots/prt__tui__doctor_flow__tests__doctor_checking_80x24.snap
+          cp "$snapshot" "$RUNNER_TEMP/original.snap"
+          trap 'cp "$RUNNER_TEMP/original.snap" "$snapshot"' EXIT
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('apps/rust/src/tui/snapshots/prt__tui__doctor_flow__tests__doctor_checking_80x24.snap')
+          original = path.read_text()
+          changed = original.replace('verificando ambiente', 'regressao deliberada', 1)
+          assert changed != original
+          path.write_text(changed)
+          PY
+          set +e
+          INSTA_UPDATE=no cargo test --manifest-path apps/rust/Cargo.toml --locked doctor_checking_should_keep_status_only_in_header > "$RUNNER_TEMP/negative.log" 2>&1
+          status=$?
+          set -e
+          tail -8 "$RUNNER_TEMP/negative.log"
+          test "$status" -eq 101
+          grep -q "snapshot assertion for 'doctor_checking_80x24' failed" "$RUNNER_TEMP/negative.log"
+
+      - name: Export candidate snapshots for review
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import base64, gzip, hashlib, json
+          from pathlib import Path
+          snapshots = {str(path): path.read_text() for path in sorted(Path('apps/rust/src/tui/snapshots').glob('*.snap'))}
+          assert len(snapshots) == 22
+          payload = json.dumps(snapshots, ensure_ascii=False).encode()
+          print('SNAPSHOTS_SHA256=' + hashlib.sha256(payload).hexdigest())
+          print('SNAPSHOTS_GZIP_BASE64=' + base64.b64encode(gzip.compress(payload, mtime=0)).decode())
+          for name in snapshots:
+              print(name)
+          PY
