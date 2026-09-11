@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Build da CLI `prt` (Rust) no monorepo `pr-tools`.
+# Build da CLI `prt` (Rust) no repositório `pr-tools`.
 #
 #   ./scripts/build-rust.sh [alvo] [--no-verify]
 #
 # Alvos: linux-x64, linux-arm64, macos-arm64, windows-x64.
-# Como no Dart, o alvo precisa ser o host atual (sem cross por padrão).
+# O alvo precisa ser o host atual (sem cross por padrão).
 # Saída: apps/rust/dist/prt-rust-<alvo>[.exe]
 #
 # Etapas: cargo fmt --check, clippy (-D correctness), test, build --release.

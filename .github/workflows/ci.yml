@@ -10,41 +10,6 @@ permissions:
   contents: read
 
 jobs:
-  checks:
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Setup Dart
-        uses: dart-lang/setup-dart@v1
-        with:
-          sdk: 3.13.1
-
-      - name: Install dependencies
-        run: dart pub get
-        working-directory: apps/dart
-
-      - name: Format
-        run: dart format --output=none --set-exit-if-changed bin lib test ../../scripts/build.dart
-        working-directory: apps/dart
-
-      - name: Analyze
-        run: dart analyze
-        working-directory: apps/dart
-
-      - name: Analyze monorepo scripts
-        run: dart analyze ../../scripts/build.dart
-        working-directory: apps/dart
-
-      - name: Test
-        run: dart test
-        working-directory: apps/dart
-
-      - name: Build native artifact
-        run: dart run ../../scripts/build.dart linux-x64
-        working-directory: apps/dart
-
   rust-checks:
     runs-on: ubuntu-24.04
     steps:

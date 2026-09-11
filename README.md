@@ -1,12 +1,12 @@
 # pr-tools (`prt`)
 
-CLI para gerar descrições de pull request e Test Cases a partir do contexto Git. Ela chama diretamente o Codex e o OpenCode instalados na máquina, ou usa Genkit com endpoints compatíveis com a API da OpenAI.
+CLI para gerar descrições de pull request e Test Cases a partir do contexto Git. Ela chama diretamente o Codex e o OpenCode instalados na máquina, ou usa o SDK Rust `aisdk` com endpoints compatíveis com a API da OpenAI.
 
 O fluxo é guiado: a descrição/card é exibida antes da publicação e a criação sempre exige confirmação. O acesso ao Azure DevOps é feito pela API REST, sem depender do `az` CLI.
 
 ## Instalação
 
-As releases publicam a implementação Rust principal para Linux x64/arm64, macOS arm64 e Windows x64. A implementação Dart continua disponível como compatibilidade. O instalador baixa automaticamente a versão mais recente e adiciona o diretório do executável ao PATH do usuário.
+As releases publicam a implementação Rust para Linux x64/arm64, macOS arm64 e Windows x64. O instalador baixa automaticamente a versão mais recente e adiciona o diretório do executável ao PATH do usuário.
 
 Depois da instalação, o comando disponível é `prt`.
 
@@ -121,62 +121,44 @@ binário no mesmo caminho em que o `prt` está instalado:
 prt update
 ```
 
-## Estrutura do monorepo
+## Estrutura do projeto
 
-As implementações são aplicações independentes dentro de `apps/`:
+A aplicação Rust com Ratatui fica em `apps/rust/`:
 
 ```text
 apps/
-├── dart/   # implementação Dart existente
-└── rust/   # implementação Rust principal com Ratatui
+└── rust/   # aplicação prt
 ```
 
-A raiz contém somente a configuração compartilhada do monorepo, a automação
-em `scripts/`, a documentação e os workflows do GitHub. As duas aplicações
-usam o mesmo nome de comando (`prt`) e a mesma configuração em
-`~/.config/pr-tools`. Escolha explicitamente qual instalador usar:
+A raiz contém a configuração do repositório, a automação em `scripts/`,
+a documentação e os workflows do GitHub. O comando continua sendo `prt`
+e a configuração permanece em `~/.config/pr-tools`.
 
-```bash
-# Rust (implementação principal)
-curl -fsSL https://raw.githubusercontent.com/nitoba/pr-tools/main/scripts/install.sh | bash
-
-# Dart (compatibilidade)
-curl -fsSL https://raw.githubusercontent.com/nitoba/pr-tools/main/scripts/install.sh \
-  | PR_TOOLS_FLAVOR=dart bash
-
-# Rust (alias explícito, compatível com versões anteriores)
-curl -fsSL https://raw.githubusercontent.com/nitoba/pr-tools/main/scripts/install-rust.sh | bash
-```
+Os instaladores principais são `scripts/install.sh` e `scripts/install.ps1`.
+Os aliases `scripts/install-rust.sh` e `scripts/install-rust.ps1` continuam
+disponíveis para compatibilidade com instalações existentes.
 
 ## Desenvolvimento
 
 ```bash
-# Dart
-cd apps/dart
-dart pub get
-dart analyze
-dart test
-cd ../..
-dart run scripts/build.dart
-
-# Rust
 cargo fmt --manifest-path apps/rust/Cargo.toml -- --check
 cargo clippy --manifest-path apps/rust/Cargo.toml --locked --all-targets -- -D clippy::correctness
 cargo test --manifest-path apps/rust/Cargo.toml --locked
 cargo build --manifest-path apps/rust/Cargo.toml --locked --all-targets
 ```
 
-`dart run scripts/build.dart` gera `apps/dart/dist/prt-<plataforma>` para o
-host atual. A plataforma também pode ser informada explicitamente, desde que
-corresponda ao host, por exemplo `dart run scripts/build.dart linux-x64`.
-A release compila cada binário no runner nativo correspondente. Os executáveis
-externos `codex` e `opencode` continuam sendo instalados e autenticados
-separadamente na máquina do usuário.
-
 `./scripts/build-rust.sh` gera `apps/rust/dist/prt-rust-<plataforma>` para o
-host atual, depois de executar as verificações Rust por padrão. Nas releases,
-esse binário também é publicado como `prt-<plataforma>` (nome principal),
-enquanto o Dart usa `prt-dart-<plataforma>`.
+host atual, depois de executar as verificações Rust por padrão. A plataforma
+pode ser informada explicitamente, desde que corresponda ao host, por exemplo
+`./scripts/build-rust.sh linux-x64`.
+
+A release compila cada binário no runner nativo correspondente e publica o
+mesmo executável como `prt-<plataforma>` (nome principal) e
+`prt-rust-<plataforma>` (alias de compatibilidade). No Windows, os nomes têm
+a extensão `.exe`.
+
+Os executáveis externos `codex` e `opencode` continuam sendo instalados e
+autenticados separadamente na máquina do usuário.
 
 ### Snapshots da TUI Rust
 

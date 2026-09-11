@@ -5,8 +5,7 @@
 #   PowerShell -ExecutionPolicy Bypass -File $installer
 #
 # Env (opcionais, têm precedência sobre as perguntas): PR_TOOLS_VERSION,
-# PR_TOOLS_REPOSITORY, PR_TOOLS_INSTALL_DIR, PR_TOOLS_BINARY, PR_TOOLS_GITHUB_TOKEN,
-# PR_TOOLS_FLAVOR (rust, padrão, ou dart).
+# PR_TOOLS_REPOSITORY, PR_TOOLS_INSTALL_DIR, PR_TOOLS_BINARY, PR_TOOLS_GITHUB_TOKEN.
 # Params: -Yes (não pergunta nada), -Version, -InstallDir, -Repository.
 #>
 [CmdletBinding()]
@@ -18,13 +17,6 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-
-$flavor = if ($env:PR_TOOLS_FLAVOR) { $env:PR_TOOLS_FLAVOR } else { 'rust' }
-$assetPrefix = switch ($flavor) {
-  'rust' { 'prt' }
-  'dart' { 'prt-dart' }
-  default { throw "Implementação inválida: $flavor (use rust ou dart)." }
-}
 
 function Write-Step { param([string]$Text) Write-Host "→ $Text" -ForegroundColor Cyan }
 function Write-Ok { param([string]$Text) Write-Host "✔ $Text" -ForegroundColor Green }
@@ -76,7 +68,7 @@ $arch = $env:PROCESSOR_ARCHITECTURE
 if ($arch -notmatch '^(AMD64|ARM64)$') {
   Fail "Arquitetura não suportada: $arch (suportado: x64)."
 }
-$assetName = "$assetPrefix-windows-x64.exe"
+$assetName = 'prt-windows-x64.exe'
 Write-Step "Sistema detectado: Windows $arch ($assetName)"
 
 if (-not $Version) {
