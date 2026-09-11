@@ -8,6 +8,7 @@
 
 use serde_json::Value;
 use std::fmt::Write as _;
+use std::time::Duration;
 use tracing::info;
 
 use crate::ai::{self, PrDescription};
@@ -18,6 +19,9 @@ use crate::cli::CliOptions;
 use crate::config::{self, Config};
 use crate::error::{AppError, Result};
 use crate::git::{self, ChangeContext};
+
+/// Limite das operações Azure acionadas pela recuperação da TUI.
+const TUI_AZURE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Valida `examples` (0-5, default 2).
 ///
@@ -395,6 +399,90 @@ pub struct TestSettings {
     pub program: String,
 }
 
+/// Campo editável da revisão da TUI.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TestSettingsField {
+    /// `System.AreaPath`.
+    AreaPath,
+    /// `System.AssignedTo`.
+    AssignedTo,
+    /// `System.IterationPath`.
+    IterationPath,
+    /// `Microsoft.VSTS.Common.Priority`.
+    Priority,
+    /// `Custom.Team`.
+    Team,
+    /// `Custom.ProgramasAgrotrace`.
+    Program,
+}
+
+impl TestSettingsField {
+    /// Índice usado pela ordem dos campos na TUI.
+    #[must_use]
+    pub const fn index(self) -> usize {
+        match self {
+            Self::AreaPath => 0,
+            Self::AssignedTo => 1,
+            Self::IterationPath => 2,
+            Self::Priority => 3,
+            Self::Team => 4,
+            Self::Program => 5,
+        }
+    }
+
+    /// Nome amigável mostrado ao usuário.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::AreaPath => "AreaPath",
+            Self::AssignedTo => "responsável (AssignedTo)",
+            Self::IterationPath => "IterationPath",
+            Self::Priority => "prioridade",
+            Self::Team => "Custom.Team",
+            Self::Program => "Custom.ProgramasAgrotrace",
+        }
+    }
+}
+
+/// Classificação de uma falha de criação.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CreateFailureKind {
+    /// O Azure respondeu recusando a operação; o card não deve ter sido criado.
+    Confirmed,
+    /// A resposta não permite saber se o Azure criou o card.
+    OutcomeUnknown,
+}
+
+/// Falha de criação pronta para a TUI apresentar e recuperar.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CreateFailure {
+    /// Mensagem acionável e sem o payload JSON bruto.
+    pub message: String,
+    /// Se é seguro assumir que não houve criação.
+    pub kind: CreateFailureKind,
+    /// Campo que o Azure apontou, quando identificável.
+    pub field: Option<TestSettingsField>,
+}
+
+/// Possível Test Case criado antes de uma resposta perdida.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TestCaseCandidate {
+    /// ID do Work Item.
+    pub id: i64,
+    /// Link navegável para o Work Item.
+    pub url: String,
+    /// Título exato retornado pelo Azure.
+    pub title: String,
+    /// Data de criação, quando o Azure a retornou.
+    pub created_at: String,
+    /// Se possui a relação esperada com o Work Item pai.
+    pub parent_matches: bool,
+    /// Quantidade de campos enviados que também coincidem.
+    pub matching_fields: usize,
+    /// Quantidade de campos não vazios comparáveis.
+    pub comparable_fields: usize,
+}
+
 impl TestSettings {
     /// Resolve precedência CLI > config, com `IterationPath` herdado do pai e
     /// prioridade default 2 (espelha `_settings` do command Dart; sem os
@@ -444,6 +532,303 @@ impl TestSettings {
             team,
             program,
         })
+    }
+}
+
+/// Classifica e explica uma falha ocorrida ao criar um Test Case.
+///
+/// Erros de transporte, timeout, limitação e respostas 5xx são tratados como
+/// resultado incerto: o Azure pode ter criado o item antes de perder a resposta.
+#[must_use]
+pub fn classify_create_error(error: &AppError) -> CreateFailure {
+    let (kind, detail, field) = match error {
+        AppError::Http(_) => (
+            CreateFailureKind::OutcomeUnknown,
+            "não foi possível confirmar se o Azure DevOps criou o Test Case por causa de uma falha de rede".to_owned(),
+            None,
+        ),
+        AppError::Azure { status, message } => {
+            let detail = azure_error_detail(message);
+            let field = test_settings_field(message);
+            let kind = if *status < 300 || *status == 408 || *status == 429 || *status >= 500 {
+                CreateFailureKind::OutcomeUnknown
+            } else {
+                CreateFailureKind::Confirmed
+            };
+            let text = match *status {
+                401 | 403 => format!(
+                    "Azure DevOps recusou a criação por falta de permissão ou PAT inválido (HTTP {status}); verifique o PAT e o acesso de criação de Test Cases no projeto"
+                ),
+                408 | 429 => format!(
+                    "não foi possível confirmar a criação do Test Case (HTTP {status}); verifique o Azure DevOps antes de reenviar"
+                ),
+                500..=599 => format!(
+                    "não foi possível confirmar a criação do Test Case porque o Azure DevOps falhou (HTTP {status}); verifique o Azure DevOps antes de reenviar"
+                ),
+                200..=299 => format!(
+                    "o Azure DevOps respondeu sucesso, mas não foi possível confirmar a criação do Test Case (HTTP {status}); verifique antes de reenviar"
+                ),
+                _ => format!("Azure DevOps recusou a criação (HTTP {status})"),
+            };
+            (kind, append_detail(text, detail.as_str()), field)
+        }
+        _ => (
+            CreateFailureKind::Confirmed,
+            error.to_string(),
+            test_settings_field(&error.to_string()),
+        ),
+    };
+    let message = match field {
+        Some(field) if matches!(kind, CreateFailureKind::Confirmed) => {
+            format!("campo {}: {detail}", field.label())
+        }
+        _ => detail,
+    };
+    CreateFailure {
+        message,
+        kind,
+        field,
+    }
+}
+
+/// Explica uma falha ao atualizar o Work Item pai.
+#[must_use]
+pub fn describe_parent_update_error(error: &AppError) -> String {
+    match error {
+        AppError::Http(_) => {
+            "falha de rede ao atualizar o Work Item pai; o Test Case continua criado e é seguro tentar novamente".to_owned()
+        }
+        AppError::Azure { status, .. } if *status == 401 || *status == 403 => format!(
+            "sem permissão para atualizar o Work Item pai (HTTP {status}); verifique o PAT e o acesso de edição no projeto. O Test Case continua criado"
+        ),
+        AppError::Azure { status, message } => format!(
+            "{}; o Test Case continua criado e é seguro tentar novamente",
+            append_detail(
+                format!("falha ao atualizar o Work Item pai no Azure DevOps (HTTP {status})"),
+                azure_error_detail(message).as_str(),
+            )
+        ),
+        _ => format!(
+            "falha ao atualizar o Work Item pai: {error}; o Test Case continua criado e é seguro tentar novamente"
+        ),
+    }
+}
+
+/// Procura candidatos que possam ter sido criados antes de um timeout.
+///
+/// A comparação combina título exato, relação com o pai e os campos enviados.
+/// A exclusão continua sendo uma decisão exclusiva da TUI, nunca desta função.
+///
+/// # Errors
+///
+/// Propaga a falha da consulta WIQL; os carregamentos individuais são
+/// best-effort em [`work_items::find_test_case_candidates`].
+pub async fn find_create_candidates(
+    prep: &TestCardPrep,
+    title: &str,
+    settings: &TestSettings,
+) -> Result<Vec<TestCaseCandidate>> {
+    let client = current_azure_client(prep)?;
+    let Some(remote) = prep.context.remote.as_ref() else {
+        return Err(AppError::Git {
+            message: "o comando test requer um remote git do azure devops".to_owned(),
+        });
+    };
+    let items = work_items::find_test_case_candidates(&client, &remote.project, title).await?;
+    let mut candidates = items
+        .into_iter()
+        .map(|item| {
+            let parent_matches = item.relations.iter().any(|relation| {
+                relation.rel == "System.LinkTypes.Related"
+                    && relation_id(&relation.url) == Some(prep.parent.id)
+            });
+            let (matching_fields, comparable_fields) = matching_settings_fields(&item, settings);
+            TestCaseCandidate {
+                id: item.id,
+                url: candidate_url(prep, item.id),
+                title: item.title().to_owned(),
+                created_at: work_item_field(&item, "System.CreatedDate").to_owned(),
+                parent_matches,
+                matching_fields,
+                comparable_fields,
+            }
+        })
+        .collect::<Vec<_>>();
+    candidates.sort_by(|left, right| {
+        right
+            .parent_matches
+            .cmp(&left.parent_matches)
+            .then_with(|| right.matching_fields.cmp(&left.matching_fields))
+            .then_with(|| right.created_at.cmp(&left.created_at))
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    Ok(candidates)
+}
+
+/// Exclui um candidato pela API reversível da lixeira.
+///
+/// A confirmação visual e a escolha do ID acontecem na TUI antes desta função.
+///
+/// # Errors
+///
+/// Propaga falhas de configuração, autenticação e transporte.
+pub async fn delete_candidate(prep: &TestCardPrep, id: i64) -> Result<()> {
+    if id <= 0 {
+        return Err(AppError::cli("id de Test Case inválido para exclusão"));
+    }
+    let client = current_azure_client(prep)?;
+    let Some(remote) = prep.context.remote.as_ref() else {
+        return Err(AppError::Git {
+            message: "o comando test requer um remote git do azure devops".to_owned(),
+        });
+    };
+    work_items::delete_work_item(&client, &remote.project, id).await
+}
+
+/// Cria um cliente Azure com o PAT atualmente salvo, não com o snapshot inicial.
+fn current_azure_client(prep: &TestCardPrep) -> Result<azure::AzureClient> {
+    let config = config::load_config()?;
+    azure::client_for_with_timeout(
+        prep.context.remote.as_ref(),
+        config.azure_pat.trim(),
+        TUI_AZURE_TIMEOUT,
+    )
+}
+
+fn relation_id(url: &str) -> Option<i64> {
+    url.split('?')
+        .next()
+        .unwrap_or(url)
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .and_then(|value| value.parse::<i64>().ok())
+}
+
+fn candidate_url(prep: &TestCardPrep, id: i64) -> String {
+    match prep.context.remote.as_ref() {
+        Some(remote) => format!(
+            "https://dev.azure.com/{}/{}/_workitems/edit/{id}",
+            remote.organization, remote.project
+        ),
+        None => format!("workitem:{id}"),
+    }
+}
+
+fn matching_settings_fields(item: &WorkItem, settings: &TestSettings) -> (usize, usize) {
+    let priority = settings.priority.to_string();
+    let expected = [
+        ("System.AreaPath", settings.area_path.as_str()),
+        ("System.AssignedTo", settings.assigned_to.as_str()),
+        ("System.IterationPath", settings.iteration_path.as_str()),
+        ("Microsoft.VSTS.Common.Priority", priority.as_str()),
+        ("Custom.Team", settings.team.as_str()),
+        ("Custom.ProgramasAgrotrace", settings.program.as_str()),
+    ];
+    let mut matching = 0;
+    let mut comparable = 0;
+    for (field, expected) in expected {
+        if expected.trim().is_empty() {
+            continue;
+        }
+        comparable += 1;
+        if item.fields.get(field).is_some_and(|actual| {
+            work_item_value_text(actual)
+                .is_some_and(|actual| values_match(expected, actual.as_str()))
+        }) {
+            matching += 1;
+        }
+    }
+    (matching, comparable)
+}
+
+fn work_item_value_text(value: &Value) -> Option<String> {
+    if let Some(text) = value.as_str() {
+        return Some(text.to_owned());
+    }
+    if let Some(number) = value.as_f64() {
+        return Some(if number.fract() == 0.0 {
+            format!("{number:.0}")
+        } else {
+            number.to_string()
+        });
+    }
+    value.as_object().and_then(|object| {
+        ["uniqueName", "displayName"]
+            .iter()
+            .find_map(|key| object.get(*key).and_then(Value::as_str).map(str::to_owned))
+    })
+}
+
+fn values_match(expected: &str, actual: &str) -> bool {
+    let expected = expected.trim().replace(',', ".");
+    let actual = actual.trim().replace(',', ".");
+    expected == actual
+        || expected
+            .parse::<f64>()
+            .ok()
+            .zip(actual.parse::<f64>().ok())
+            .is_some_and(|(left, right)| (left - right).abs() < f64::EPSILON)
+}
+
+fn append_detail(message: String, detail: &str) -> String {
+    if detail.is_empty() {
+        message
+    } else {
+        format!("{message}: {detail}")
+    }
+}
+
+fn azure_error_detail(raw: &str) -> String {
+    let detail = serde_json::from_str::<Value>(raw)
+        .ok()
+        .and_then(|value| first_error_message(&value))
+        .unwrap_or_else(|| raw.to_owned());
+    detail
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(240)
+        .collect()
+}
+
+fn first_error_message(value: &Value) -> Option<String> {
+    match value {
+        Value::Object(object) => {
+            for key in ["message", "Message", "errorMessage"] {
+                if let Some(message) = object.get(key).and_then(Value::as_str) {
+                    if !message.trim().is_empty() {
+                        return Some(message.to_owned());
+                    }
+                }
+            }
+            object.values().find_map(first_error_message)
+        }
+        Value::Array(values) => values.iter().find_map(first_error_message),
+        _ => None,
+    }
+}
+
+fn test_settings_field(raw: &str) -> Option<TestSettingsField> {
+    let lower = raw.to_ascii_lowercase();
+    if lower.contains("custom.programasagrotrace")
+        || lower.contains("programasagrotrace")
+        || lower.contains("programa")
+    {
+        Some(TestSettingsField::Program)
+    } else if lower.contains("custom.team") || lower.contains("custom_team") {
+        Some(TestSettingsField::Team)
+    } else if lower.contains("system.areapath") || lower.contains("area path") {
+        Some(TestSettingsField::AreaPath)
+    } else if lower.contains("system.assignedto") || lower.contains("assigned to") {
+        Some(TestSettingsField::AssignedTo)
+    } else if lower.contains("system.iterationpath") || lower.contains("iteration path") {
+        Some(TestSettingsField::IterationPath)
+    } else if lower.contains("microsoft.vsts.common.priority") || lower.contains("priority") {
+        Some(TestSettingsField::Priority)
+    } else {
+        None
     }
 }
 
@@ -521,13 +906,59 @@ fn empty_to_none(value: &str) -> Option<String> {
 /// # Errors
 ///
 /// Retorna [`AppError::Cli`] se título/corpo vazios; [`AppError::Git`] sem
-/// remote; propaga [`AppError::Azure`] em falha HTTP (ver pendência de
-/// transporte em `azure::work_items`).
+/// remote; propaga [`AppError::Azure`] em falha HTTP.
 pub async fn create(
     prep: &TestCardPrep,
     settings: &TestSettings,
     title: &str,
     body: &str,
+) -> Result<WorkItem> {
+    create_with_pat_and_timeout(
+        prep,
+        settings,
+        title,
+        body,
+        prep.config.azure_pat.as_str(),
+        None,
+    )
+    .await
+}
+
+/// Cria o Test Case usando a configuração atual, para a recuperação da TUI.
+///
+/// Diferentemente de [`create`], relê o PAT antes de cada envio. A separação
+/// preserva o comportamento dos consumidores não interativos, que continuam
+/// usando o snapshot de configuração da preparação.
+///
+/// # Errors
+///
+/// Propaga os mesmos erros de [`create`].
+pub async fn create_with_current_config(
+    prep: &TestCardPrep,
+    settings: &TestSettings,
+    title: &str,
+    body: &str,
+) -> Result<WorkItem> {
+    validate_card(title, body)?;
+    let config = config::load_config()?;
+    create_with_pat_and_timeout(
+        prep,
+        settings,
+        title,
+        body,
+        config.azure_pat.as_str(),
+        Some(TUI_AZURE_TIMEOUT),
+    )
+    .await
+}
+
+async fn create_with_pat_and_timeout(
+    prep: &TestCardPrep,
+    settings: &TestSettings,
+    title: &str,
+    body: &str,
+    pat: &str,
+    timeout: Option<Duration>,
 ) -> Result<WorkItem> {
     validate_card(title, body)?;
     let Some(remote) = prep.context.remote.as_ref() else {
@@ -535,7 +966,10 @@ pub async fn create(
             message: "o comando test requer um remote git do azure devops".to_owned(),
         });
     };
-    let client = azure::client_for(Some(remote), prep.config.azure_pat.trim())?;
+    let client = match timeout {
+        Some(timeout) => azure::client_for_with_timeout(Some(remote), pat, timeout)?,
+        None => azure::client_for(Some(remote), pat)?,
+    };
     let input = build_test_case_input(settings, &remote.organization, prep.parent.id, title, body);
     work_items::create_test_case(&client, &remote.project, &input).await
 }
@@ -552,6 +986,20 @@ pub async fn update_parent(
     real_effort: Option<&str>,
 ) -> Result<()> {
     let client = azure::client_for(prep.context.remote.as_ref(), prep.config.azure_pat.trim())?;
+    work_items::update_parent_to_test_qa(&client, prep.parent.id, effort, real_effort).await
+}
+
+/// Atualiza o pai usando o PAT atualmente salvo, para a recuperação da TUI.
+///
+/// # Errors
+///
+/// Propaga os mesmos erros de [`update_parent`].
+pub async fn update_parent_with_current_config(
+    prep: &TestCardPrep,
+    effort: Option<&str>,
+    real_effort: Option<&str>,
+) -> Result<()> {
+    let client = current_azure_client(prep)?;
     work_items::update_parent_to_test_qa(&client, prep.parent.id, effort, real_effort).await
 }
 
@@ -1009,6 +1457,86 @@ mod tests {
         let err =
             TestSettings::from_cli_or_config(&options, &Config::default(), &parent).unwrap_err();
         assert!(err.to_string().contains("--priority"));
+    }
+
+    #[test]
+    fn create_error_should_focus_remote_validation_field() {
+        let error = AppError::Azure {
+            status: 400,
+            message: serde_json::json!({
+                "message": "The field Custom.Team is required."
+            })
+            .to_string(),
+        };
+        let failure = classify_create_error(&error);
+        assert_eq!(failure.kind, CreateFailureKind::Confirmed);
+        assert_eq!(failure.field, Some(TestSettingsField::Team));
+        assert!(failure.message.contains("Custom.Team"));
+    }
+
+    #[test]
+    fn create_auth_error_should_explain_pat_and_project_permission() {
+        let failure = classify_create_error(&AppError::Azure {
+            status: 401,
+            message: "Unauthorized".to_owned(),
+        });
+        assert_eq!(failure.kind, CreateFailureKind::Confirmed);
+        assert!(failure.message.contains("PAT"));
+        assert!(failure.message.contains("projeto"));
+    }
+
+    #[test]
+    fn create_server_error_should_require_duplicate_check_before_retry() {
+        let failure = classify_create_error(&AppError::Azure {
+            status: 504,
+            message: "gateway timeout".to_owned(),
+        });
+        assert_eq!(failure.kind, CreateFailureKind::OutcomeUnknown);
+        assert!(failure.message.contains("confirmar"));
+        assert!(failure.message.contains("reenviar"));
+    }
+
+    #[test]
+    fn malformed_success_response_should_require_duplicate_check_before_retry() {
+        let failure = classify_create_error(&AppError::Azure {
+            status: 201,
+            message: "resposta vazia do Azure DevOps".to_owned(),
+        });
+        assert_eq!(failure.kind, CreateFailureKind::OutcomeUnknown);
+        assert!(failure.message.contains("respondeu sucesso"));
+    }
+
+    #[test]
+    fn parent_update_error_should_preserve_created_test_case_message() {
+        let message = describe_parent_update_error(&AppError::Azure {
+            status: 403,
+            message: "forbidden".to_owned(),
+        });
+        assert!(message.contains("permissão"));
+        assert!(message.contains("continua criado"));
+    }
+
+    #[test]
+    fn candidate_field_values_should_compare_numbers_and_identity_objects() {
+        let item: WorkItem = serde_json::from_value(serde_json::json!({
+            "id": 10,
+            "fields": {
+                "System.AreaPath": "Proj\\Time",
+                "System.AssignedTo": {"uniqueName": "qa@example.com"},
+                "Microsoft.VSTS.Common.Priority": 2,
+                "Custom.Team": "QA"
+            }
+        }))
+        .unwrap();
+        let settings = TestSettings {
+            area_path: "Proj\\Time".to_owned(),
+            assigned_to: "qa@example.com".to_owned(),
+            iteration_path: String::new(),
+            priority: 2.0,
+            team: "QA".to_owned(),
+            program: String::new(),
+        };
+        assert_eq!(matching_settings_fields(&item, &settings), (4, 4));
     }
 
     #[test]

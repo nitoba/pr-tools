@@ -5,7 +5,8 @@
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
+use std::time::Duration;
 
 use crate::error::{AppError, Result};
 use crate::git::RepositoryRemote;
@@ -19,6 +20,7 @@ pub struct AzureClient {
     inner: reqwest::Client,
     organization: String,
     pat: String,
+    request_timeout: Option<Duration>,
 }
 
 /// Decodifica corpo JSON do Azure com erro acionável.
@@ -55,10 +57,28 @@ impl AzureClient {
     /// Cria cliente para a organização do remote.
     #[must_use]
     pub fn new(organization: &str, pat: &str) -> Self {
+        Self::build(organization, pat, None)
+    }
+
+    /// Cria cliente com timeout por requisição.
+    #[must_use]
+    pub fn new_with_timeout(organization: &str, pat: &str, timeout: Duration) -> Self {
+        Self::build(organization, pat, Some(timeout))
+    }
+
+    fn build(organization: &str, pat: &str, request_timeout: Option<Duration>) -> Self {
         Self {
             inner: reqwest::Client::new(),
             organization: organization.to_owned(),
             pat: pat.trim().to_owned(),
+            request_timeout,
+        }
+    }
+
+    fn apply_timeout(&self, builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        match self.request_timeout {
+            Some(timeout) => builder.timeout(timeout),
+            None => builder,
         }
     }
 
@@ -67,10 +87,12 @@ impl AzureClient {
     }
 
     fn url(&self, path: &str) -> String {
+        let separator = if path.contains('?') { '&' } else { '?' };
         format!(
-            "https://dev.azure.com/{}/{}?api-version=7.1",
+            "https://dev.azure.com/{}/{}{}api-version=7.1",
             self.organization,
-            path.trim_start_matches('/')
+            path.trim_start_matches('/'),
+            separator,
         )
     }
 
@@ -81,8 +103,7 @@ impl AzureClient {
     /// Retorna [`AppError::Azure`] em status >= 300 ou falha de transporte.
     pub async fn get<T: for<'de> Deserialize<'de>>(&self, path: &str) -> Result<T> {
         let res = self
-            .inner
-            .get(self.url(path))
+            .apply_timeout(self.inner.get(self.url(path)))
             .header(ACCEPT, "application/json")
             .header(AUTHORIZATION, self.auth_header())
             .send()
@@ -105,8 +126,7 @@ impl AzureClient {
     /// Retorna [`AppError::Azure`] em status >= 300 ou falha de transporte.
     pub async fn get_abs<T: for<'de> Deserialize<'de>>(&self, url: &str) -> Result<T> {
         let res = self
-            .inner
-            .get(url)
+            .apply_timeout(self.inner.get(url))
             .header(ACCEPT, "application/json")
             .header(AUTHORIZATION, self.auth_header())
             .send()
@@ -172,13 +192,38 @@ impl AzureClient {
         self.request(builder, body).await
     }
 
+    /// Executa um `DELETE` que não precisa de corpo de resposta.
+    ///
+    /// # Errors
+    ///
+    /// Retorna [`AppError::Azure`] quando o Azure devolve status HTTP >= 300
+    /// ou [`AppError::Http`] em falha de transporte.
+    pub async fn delete(&self, path: &str) -> Result<()> {
+        let res = self
+            .apply_timeout(self.inner.delete(self.url(path)))
+            .header(ACCEPT, "application/json")
+            .header(AUTHORIZATION, self.auth_header())
+            .send()
+            .await?;
+        let status = res.status().as_u16();
+        if status >= 300 {
+            let body = res.text().await.unwrap_or_default();
+            return Err(AppError::Azure {
+                status,
+                message: body.chars().take(500).collect(),
+            });
+        }
+        Ok(())
+    }
+
     /// Envia corpo JSON com auth + accept padrão e decodifica a resposta.
     async fn request<B: Serialize, T: for<'de> Deserialize<'de>>(
         &self,
         builder: reqwest::RequestBuilder,
         body: &B,
     ) -> Result<T> {
-        let res = builder
+        let res = self
+            .apply_timeout(builder)
             .header(ACCEPT, "application/json")
             .header(AUTHORIZATION, self.auth_header())
             .json(body)
@@ -215,6 +260,29 @@ pub fn client_for(remote: Option<&RepositoryRemote>, pat: &str) -> Result<AzureC
     Ok(AzureClient::new(&r.organization, pat))
 }
 
+/// Constrói cliente autenticado com timeout por requisição.
+///
+/// # Errors
+///
+/// Retorna os mesmos erros de [`client_for`].
+pub fn client_for_with_timeout(
+    remote: Option<&RepositoryRemote>,
+    pat: &str,
+    timeout: Duration,
+) -> Result<AzureClient> {
+    if pat.trim().is_empty() {
+        return Err(AppError::Config {
+            message: "azure pat não configurado (execute `prt init`)".to_owned(),
+        });
+    }
+    let Some(r) = remote else {
+        return Err(AppError::Git {
+            message: "remote azure devops não encontrado".to_owned(),
+        });
+    };
+    Ok(AzureClient::new_with_timeout(&r.organization, pat, timeout))
+}
+
 /// Work item mínimo.
 #[derive(Debug, Clone, Deserialize)]
 pub struct WorkItem {
@@ -223,6 +291,27 @@ pub struct WorkItem {
     /// Campos (título, tipo, etc).
     #[serde(default)]
     pub fields: std::collections::HashMap<String, serde_json::Value>,
+    /// Relações com outros work items, quando solicitadas à API.
+    #[serde(default, deserialize_with = "deserialize_relations")]
+    pub relations: Vec<WorkItemRelation>,
+}
+
+/// Relação retornada pela API de Work Items.
+#[derive(Debug, Clone, Deserialize)]
+pub struct WorkItemRelation {
+    /// Tipo da relação (`System.LinkTypes.Related`, por exemplo).
+    pub rel: String,
+    /// URL do recurso relacionado.
+    pub url: String,
+}
+
+fn deserialize_relations<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Vec<WorkItemRelation>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Option::<Vec<WorkItemRelation>>::deserialize(deserializer).map(Option::unwrap_or_default)
 }
 
 impl WorkItem {
@@ -254,6 +343,17 @@ pub async fn get_work_item(client: &AzureClient, id: &str) -> Result<WorkItem> {
     client.get(&format!("_apis/wit/workitems/{id}")).await
 }
 
+/// Busca um work item incluindo suas relações.
+///
+/// # Errors
+///
+/// Propaga [`AppError::Azure`] e [`AppError::Http`] do cliente.
+pub async fn get_work_item_with_relations(client: &AzureClient, id: &str) -> Result<WorkItem> {
+    client
+        .get(&format!("_apis/wit/workitems/{id}?$expand=relations"))
+        .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -270,6 +370,15 @@ mod tests {
     }
 
     #[test]
+    fn request_timeout_should_be_opt_in_for_tui_clients() {
+        assert_eq!(AzureClient::new("org", "token").request_timeout, None);
+        assert_eq!(
+            AzureClient::new_with_timeout("org", "token", Duration::from_secs(30)).request_timeout,
+            Some(Duration::from_secs(30))
+        );
+    }
+
+    #[test]
     fn work_item_should_read_title() {
         let wi: WorkItem = serde_json::from_value(serde_json::json!({
             "id": 11763,
@@ -278,6 +387,14 @@ mod tests {
         .unwrap();
         assert_eq!(wi.title(), "Minha task");
         assert_eq!(wi.work_item_type(), "Task");
+        assert!(wi.relations.is_empty());
+
+        let wi: WorkItem = serde_json::from_value(serde_json::json!({
+            "id": 11764,
+            "relations": null,
+        }))
+        .unwrap();
+        assert!(wi.relations.is_empty());
     }
 
     #[test]

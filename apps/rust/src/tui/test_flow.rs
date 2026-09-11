@@ -32,7 +32,10 @@ use super::shimmer::{shimmer_bar, shimmer_text};
 use super::{app_layout, border_type, centered_buttons, modal_frame, spin_frames, theme};
 use crate::azure::WorkItem;
 use crate::cli::CliOptions;
-use crate::features::test_card::{self, TestCardPrep, TestSettings};
+use crate::features::test_card::{
+    self, CreateFailure, CreateFailureKind, TestCardPrep, TestCaseCandidate, TestSettings,
+    TestSettingsField,
+};
 
 /// Resultado final do fluxo de teste para o `main`.
 #[derive(Debug)]
@@ -76,7 +79,20 @@ enum TestEvent {
     },
     /// Criação concluída no Azure.
     CreatedItem(WorkItem),
-    /// Falha terminal (prepare/generate/create).
+    /// Falha recuperável na criação, preservando a revisão em tela.
+    CreateFailed(CreateFailure),
+    /// Resultado da busca por cards possivelmente criados antes de um timeout.
+    CandidatesLoaded {
+        /// Candidatos encontrados.
+        candidates: Vec<TestCaseCandidate>,
+        /// Falha opcional da busca.
+        error: Option<String>,
+    },
+    /// Exclusão confirmada de um candidato.
+    CandidateDeleted(i64),
+    /// Falha ao excluir um candidato.
+    CandidateDeleteFailed(String),
+    /// Falha terminal de preparação ou geração.
     Failed(String),
 }
 
@@ -94,7 +110,7 @@ enum TestPhase {
     Criando,
     /// Criado (mostra id/URL e oferece a atualização do pai).
     Pronto,
-    /// Erro (mostra mensagem até sair).
+    /// Erro terminal (mostra mensagem até sair).
     Erro,
 }
 
@@ -138,6 +154,32 @@ enum TestDialog {
     ConfirmTestQa(bool),
     /// Campos de esforço (Effort + Real Effort).
     QaEfforts,
+    /// Ações disponíveis depois de um resultado incerto da criação.
+    CreateRecovery(usize),
+    /// Candidatos retornados pela busca de duplicidade.
+    CandidateList { selected: usize },
+    /// Confirmação da exclusão de um candidato.
+    DeleteCandidate { selected: usize, yes: bool },
+}
+
+/// Atividade da consulta/exclusão de candidatos.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CandidateActivity {
+    /// Nenhuma operação remota em andamento.
+    Idle,
+    /// Consultando possíveis cards.
+    Loading,
+    /// Movendo um candidato para a lixeira.
+    Deleting,
+}
+
+/// Disponibilidade das ações após resultado incerto da criação.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CreateRecoveryState {
+    /// Não há envio pendente para recuperar.
+    Unavailable,
+    /// A última tentativa pode ter criado um item.
+    Available,
 }
 
 /// Rótulo do campo de settings por índice.
@@ -284,6 +326,18 @@ struct TestApp {
     panel: Panel,
     /// Erro de validação/falha p/ exibir.
     error: Option<String>,
+    /// Campo apontado pelo último erro remoto, quando identificado.
+    error_field: Option<TestSettingsField>,
+    /// A última configuração realmente enviada ao Azure.
+    last_create_settings: Option<TestSettings>,
+    /// Mantém disponíveis as ações de recuperação após resultado incerto.
+    create_recovery: CreateRecoveryState,
+    /// Candidatos encontrados após uma resposta perdida.
+    candidates: Vec<TestCaseCandidate>,
+    /// Atividade remota sobre candidatos.
+    candidate_activity: CandidateActivity,
+    /// Mensagem da busca/exclusão de candidatos.
+    candidate_message: Option<String>,
     /// Criado (id + url).
     created: Option<(i64, String)>,
     /// Pai já atualizado p/ Test QA?
@@ -326,6 +380,12 @@ impl TestApp {
             field_focus: 4,
             panel: Panel::Preview,
             error: None,
+            error_field: None,
+            last_create_settings: None,
+            create_recovery: CreateRecoveryState::Unavailable,
+            candidates: Vec::new(),
+            candidate_activity: CandidateActivity::Idle,
+            candidate_message: None,
             created: None,
             parent_updated: false,
             parent_msg: None,
@@ -420,12 +480,7 @@ impl TestApp {
     /// Aplica evento do backend.
     fn on_event(&mut self, ev: TestEvent) {
         match ev {
-            TestEvent::Log(line) => {
-                if self.logs.len() >= 200 {
-                    let _ = self.logs.pop_front();
-                }
-                self.logs.push_back(line);
-            }
+            TestEvent::Log(line) => self.push_log(line),
             TestEvent::Token(chunk) => {
                 self.streamed_raw.push_str(chunk.as_str());
                 if self.phase == TestPhase::Preparando {
@@ -451,58 +506,160 @@ impl TestApp {
                 title,
                 body,
                 initial,
-            } => {
-                for (i, val) in initial.into_iter().enumerate() {
-                    if let Some(slot) = self.fields.get_mut(i) {
-                        *slot = LineEditor::new(val);
-                    }
-                }
-                self.title = title;
-                self.body = body;
-                self.prep = Some(*prep);
-                self.phase = TestPhase::Revisao;
-                "revisão".clone_into(&mut self.phase_label);
-                self.progress = 1.0;
-                "pronto p/ revisão".clone_into(&mut self.progress_label);
-                self.scroll = 0;
-                self.panel = Panel::Preview;
-                if self.logs.len() >= 200 {
-                    let _ = self.logs.pop_front();
-                }
-                self.logs.push_back(
-                    "card pronto — revise, ajuste settings (tab) e crie (enter)".to_owned(),
-                );
+            } => self.on_generated(*prep, title, body, initial),
+            TestEvent::CreatedItem(item) => self.on_created_item(&item),
+            TestEvent::CreateFailed(failure) => self.on_create_failed(&failure),
+            TestEvent::CandidatesLoaded { candidates, error } => {
+                self.on_candidates_loaded(candidates, error);
             }
-            TestEvent::CreatedItem(item) => {
-                let id = item.id;
-                let url = match self.prep.as_ref() {
-                    Some(p) => test_case_url(p, id),
-                    None => format!("workitem:{id}"),
-                };
-                self.created = Some((id, url));
-                self.phase = TestPhase::Pronto;
-                "test case criado".clone_into(&mut self.phase_label);
-                self.progress = 1.0;
-                "criado".clone_into(&mut self.progress_label);
-                if self.logs.len() >= 200 {
-                    let _ = self.logs.pop_front();
-                }
-                self.logs.push_back(format!("criado #{id}"));
-                // O Dart oferece esta confirmação imediatamente após criar o
-                // Test Case. Não deixar a atualização escondida atrás de uma
-                // tecla extra evita encerrar o fluxo sem atualizar o pai.
-                self.dialog = Some(TestDialog::ConfirmTestQa(false));
+            TestEvent::CandidateDeleted(id) => self.on_candidate_deleted(id),
+            TestEvent::CandidateDeleteFailed(message) => {
+                self.candidate_activity = CandidateActivity::Idle;
+                self.candidate_message = Some(message);
             }
-            TestEvent::Failed(msg) => {
-                self.phase = TestPhase::Erro;
-                "erro".clone_into(&mut self.phase_label);
-                self.error = Some(msg.clone());
-                if self.logs.len() >= 200 {
-                    let _ = self.logs.pop_front();
-                }
-                self.logs.push_back(format!("erro: {msg}"));
+            TestEvent::Failed(msg) => self.on_terminal_failure(msg.as_str()),
+        }
+    }
+
+    fn push_log(&mut self, line: String) {
+        if self.logs.len() >= 200 {
+            let _ = self.logs.pop_front();
+        }
+        self.logs.push_back(line);
+    }
+
+    fn on_generated(
+        &mut self,
+        prep: TestCardPrep,
+        title: String,
+        body: String,
+        initial: [String; 6],
+    ) {
+        for (i, val) in initial.into_iter().enumerate() {
+            if let Some(slot) = self.fields.get_mut(i) {
+                *slot = LineEditor::new(val);
             }
         }
+        self.title = title;
+        self.body = body;
+        self.prep = Some(prep);
+        self.phase = TestPhase::Revisao;
+        "revisão".clone_into(&mut self.phase_label);
+        self.error = None;
+        self.error_field = None;
+        self.create_recovery = CreateRecoveryState::Unavailable;
+        self.progress = 1.0;
+        "pronto p/ revisão".clone_into(&mut self.progress_label);
+        self.scroll = 0;
+        self.panel = Panel::Preview;
+        self.push_log("card pronto — revise, ajuste settings (tab) e crie (enter)".to_owned());
+    }
+
+    fn on_created_item(&mut self, item: &WorkItem) {
+        let id = item.id;
+        let url = match self.prep.as_ref() {
+            Some(p) => test_case_url(p, id),
+            None => format!("workitem:{id}"),
+        };
+        self.created = Some((id, url));
+        self.phase = TestPhase::Pronto;
+        self.error = None;
+        self.error_field = None;
+        self.create_recovery = CreateRecoveryState::Unavailable;
+        self.candidate_activity = CandidateActivity::Idle;
+        self.candidates.clear();
+        self.candidate_message = None;
+        "test case criado".clone_into(&mut self.phase_label);
+        self.progress = 1.0;
+        "criado".clone_into(&mut self.progress_label);
+        self.push_log(format!("criado #{id}"));
+        // A confirmação do pai aparece imediatamente para não encerrar o
+        // fluxo antes que o usuário decida sobre a atualização.
+        self.dialog = Some(TestDialog::ConfirmTestQa(false));
+    }
+
+    fn on_create_failed(&mut self, failure: &CreateFailure) {
+        self.phase = TestPhase::Revisao;
+        "revisão — falha no envio".clone_into(&mut self.phase_label);
+        "envio falhou — ajuste e tente novamente".clone_into(&mut self.progress_label);
+        self.error = Some(failure.message.clone());
+        self.error_field = failure.field;
+        self.create_recovery = if matches!(failure.kind, CreateFailureKind::OutcomeUnknown) {
+            CreateRecoveryState::Available
+        } else {
+            CreateRecoveryState::Unavailable
+        };
+        self.panel = Panel::Settings;
+        if let Some(field) = failure.field {
+            self.field_focus = field.index();
+        }
+        self.candidates.clear();
+        self.candidate_activity = CandidateActivity::Idle;
+        self.candidate_message = None;
+        self.dialog = if matches!(failure.kind, CreateFailureKind::OutcomeUnknown) {
+            Some(TestDialog::CreateRecovery(0))
+        } else {
+            None
+        };
+        self.push_log(format!("falha ao criar: {}", failure.message));
+    }
+
+    fn on_candidates_loaded(&mut self, candidates: Vec<TestCaseCandidate>, error: Option<String>) {
+        self.candidate_activity = CandidateActivity::Idle;
+        self.candidate_message = error;
+        if self.candidate_message.is_none() {
+            self.candidates = candidates;
+        }
+        if let Some(TestDialog::CandidateList { selected }) = self.dialog {
+            self.dialog = Some(TestDialog::CandidateList {
+                selected: selected.min(self.candidates.len().saturating_sub(1)),
+            });
+        }
+    }
+
+    fn on_candidate_deleted(&mut self, id: i64) {
+        self.candidate_activity = CandidateActivity::Idle;
+        self.candidates.retain(|candidate| candidate.id != id);
+        self.candidate_message = Some(format!(
+            "Test Case #{id} movido para a lixeira do Azure DevOps"
+        ));
+        if let Some(TestDialog::CandidateList { selected }) = self.dialog {
+            self.dialog = Some(TestDialog::CandidateList {
+                selected: selected.min(self.candidates.len().saturating_sub(1)),
+            });
+        }
+    }
+
+    fn adopt_candidate(&mut self, selected: usize) -> bool {
+        let Some(candidate) = self.candidates.get(selected).cloned() else {
+            return false;
+        };
+        self.created = Some((candidate.id, candidate.url));
+        self.phase = TestPhase::Pronto;
+        "test case encontrado".clone_into(&mut self.phase_label);
+        self.progress = 1.0;
+        "candidato selecionado".clone_into(&mut self.progress_label);
+        self.error = None;
+        self.error_field = None;
+        self.create_recovery = CreateRecoveryState::Unavailable;
+        self.candidate_activity = CandidateActivity::Idle;
+        self.candidates.clear();
+        self.candidate_message = None;
+        self.push_log(format!(
+            "candidato #{} selecionado como criado",
+            candidate.id
+        ));
+        self.dialog = Some(TestDialog::ConfirmTestQa(false));
+        true
+    }
+
+    fn on_terminal_failure(&mut self, msg: &str) {
+        self.phase = TestPhase::Erro;
+        "erro".clone_into(&mut self.phase_label);
+        self.error = Some(msg.to_owned());
+        self.error_field = None;
+        self.create_recovery = CreateRecoveryState::Unavailable;
+        self.push_log(format!("erro: {msg}"));
     }
 
     /// Valida os 6 campos e monta [`TestSettings`] (erros em PT-BR).
@@ -540,15 +697,20 @@ impl TestApp {
 impl TestApp {
     /// Abre os esforços do Test QA pré-preenchidos (declarado do pai ou "1").
     fn open_qa_efforts(&mut self) {
-        let (effort, real) = match self.prep.as_ref() {
-            Some(p) => parent_effort_defaults(&p.parent),
-            None => ("1".to_owned(), "1".to_owned()),
-        };
-        self.qa_effort = LineEditor::new(effort);
-        self.qa_real = LineEditor::new(real);
+        // Reabrir após uma falha deve preservar o que o usuário digitou, em
+        // vez de restaurar silenciosamente os defaults do Work Item pai.
+        if self.qa_effort.value.is_empty() && self.qa_real.value.is_empty() {
+            let (effort, real) = match self.prep.as_ref() {
+                Some(p) => parent_effort_defaults(&p.parent),
+                None => ("1".to_owned(), "1".to_owned()),
+            };
+            self.qa_effort = LineEditor::new(effort);
+            self.qa_real = LineEditor::new(real);
+        }
         self.qa_focus = 0;
         self.dialog = Some(TestDialog::QaEfforts);
         self.error = None;
+        self.error_field = None;
     }
 
     /// Valida os esforços (não-vazios, decimais ≥ 0).
@@ -748,13 +910,58 @@ async fn backend_create(
 ) {
     let _ = tx.send(TestEvent::PhaseLabel("criando test case…".to_owned()));
     let _ = tx.send(TestEvent::Progress(0.5, "enviando ao azure".to_owned()));
-    match test_card::create(&prep, &settings, title.as_str(), body.as_str()).await {
+    match test_card::create_with_current_config(&prep, &settings, title.as_str(), body.as_str())
+        .await
+    {
         Ok(item) => {
             let _ = tx.send(TestEvent::Progress(1.0, "criado".to_owned()));
             let _ = tx.send(TestEvent::CreatedItem(item));
         }
         Err(e) => {
-            let _ = tx.send(TestEvent::Failed(e.to_string()));
+            let _ = tx.send(TestEvent::CreateFailed(test_card::classify_create_error(
+                &e,
+            )));
+        }
+    }
+}
+
+/// Executa a consulta de duplicidade fora do loop de renderização.
+async fn backend_find_candidates(
+    prep: TestCardPrep,
+    title: String,
+    settings: TestSettings,
+    tx: mpsc::UnboundedSender<TestEvent>,
+) {
+    match test_card::find_create_candidates(&prep, title.as_str(), &settings).await {
+        Ok(candidates) => {
+            let _ = tx.send(TestEvent::CandidatesLoaded {
+                candidates,
+                error: None,
+            });
+        }
+        Err(error) => {
+            let _ = tx.send(TestEvent::CandidatesLoaded {
+                candidates: Vec::new(),
+                error: Some(format!("não foi possível consultar candidatos: {error}")),
+            });
+        }
+    }
+}
+
+/// Executa a exclusão reversível fora do loop de renderização.
+async fn backend_delete_candidate(
+    prep: TestCardPrep,
+    id: i64,
+    tx: mpsc::UnboundedSender<TestEvent>,
+) {
+    match test_card::delete_candidate(&prep, id).await {
+        Ok(()) => {
+            let _ = tx.send(TestEvent::CandidateDeleted(id));
+        }
+        Err(error) => {
+            let _ = tx.send(TestEvent::CandidateDeleteFailed(format!(
+                "não foi possível excluir o Test Case #{id}: {error}"
+            )));
         }
     }
 }
@@ -933,17 +1140,19 @@ fn render_progress(app: &TestApp, area: Rect, buf: &mut Buffer) {
         );
     }
     if area.height >= 3 {
-        Paragraph::new(app.last_log().to_owned())
-            .style(theme().muted)
-            .render(
-                Rect {
-                    x: area.x,
-                    y: area.y.saturating_add(2),
-                    width: area.width,
-                    height: 1,
-                },
-                buf,
-            );
+        let (status, style) = app.error.as_ref().map_or_else(
+            || (app.last_log().to_owned(), theme().muted),
+            |error| (format!("✘ {error}"), theme().error),
+        );
+        Paragraph::new(status).style(style).render(
+            Rect {
+                x: area.x,
+                y: area.y.saturating_add(2),
+                width: area.width,
+                height: 1,
+            },
+            buf,
+        );
     }
 }
 
@@ -1047,11 +1256,34 @@ fn render_settings(app: &TestApp, area: Rect, buf: &mut Buffer) {
     if inner.width == 0 || inner.height == 0 {
         return;
     }
+    let lines = settings_lines(app, inner, focused_panel);
+    Paragraph::new(Text::from(lines))
+        .wrap(Wrap { trim: false })
+        .scroll((0, 0))
+        .render(inner, buf);
+}
+
+/// Monta apenas os campos visíveis do formulário, mantendo o foco na janela.
+fn settings_lines(app: &TestApp, inner: Rect, focused_panel: bool) -> Vec<Line<'static>> {
+    let visible_count = (usize::from(inner.height).saturating_add(2) / 3).max(1);
+    let max_start = FIELD_COUNT.saturating_sub(visible_count);
+    let start = app
+        .field_focus
+        .saturating_sub(visible_count.saturating_sub(1))
+        .min(max_start);
+    let end = (start + visible_count).min(FIELD_COUNT);
     let mut lines: Vec<Line> = Vec::new();
-    for (i, slot) in app.fields.iter().enumerate() {
+    if start > 0 {
+        lines.push(Line::from(Span::styled(
+            "↑ mais campos acima",
+            theme().muted,
+        )));
+    }
+    for (i, slot) in app.fields.iter().enumerate().skip(start).take(end - start) {
         let focused = focused_panel && app.field_focus % FIELD_COUNT == i;
         let label = field_label(i);
         let marker = if focused { "▸ " } else { "  " };
+        let field_error = app.error_field.is_some_and(|field| field.index() == i);
         let label_style = if focused {
             Style::new().add_modifier(Modifier::BOLD)
         } else {
@@ -1059,8 +1291,16 @@ fn render_settings(app: &TestApp, area: Rect, buf: &mut Buffer) {
         };
         lines.push(Line::from(vec![
             Span::styled(
-                marker,
-                if focused {
+                if field_error && focused {
+                    "✘▸ "
+                } else if field_error {
+                    "✘ "
+                } else {
+                    marker
+                },
+                if field_error {
+                    theme().error
+                } else if focused {
                     theme().accent
                 } else {
                     theme().muted
@@ -1083,11 +1323,11 @@ fn render_settings(app: &TestApp, area: Rect, buf: &mut Buffer) {
         }
         lines.push(Line::from(""));
     }
-    if let Some(e) = app.error.as_ref() {
-        lines.push(Line::from(vec![
-            Span::styled("✘ ", theme().error),
-            Span::styled(e.clone(), theme().error),
-        ]));
+    if end < FIELD_COUNT {
+        lines.push(Line::from(Span::styled(
+            "↓ mais campos abaixo",
+            theme().muted,
+        )));
     }
     if let Some(m) = app.parent_msg.as_ref() {
         lines.push(Line::from(Span::styled(m.clone(), theme().muted)));
@@ -1095,10 +1335,7 @@ fn render_settings(app: &TestApp, area: Rect, buf: &mut Buffer) {
     if app.is_copied_flash() {
         lines.push(Line::from(Span::styled("✓ copiado!", theme().success)));
     }
-    Paragraph::new(Text::from(lines))
-        .wrap(Wrap { trim: false })
-        .scroll((0, 0))
-        .render(inner, buf);
+    lines
 }
 
 /// Diálogos modais do fluxo (despacha p/ um modal por vez).
@@ -1117,6 +1354,13 @@ fn render_dialog(app: &TestApp, dialog: TestDialog, area: Rect, buf: &mut Buffer
             );
         }
         TestDialog::QaEfforts => render_qa_efforts_dialog(app, area, buf),
+        TestDialog::CreateRecovery(choice) => render_create_recovery_dialog(choice, area, buf),
+        TestDialog::CandidateList { selected } => {
+            render_candidate_list_dialog(app, selected, area, buf);
+        }
+        TestDialog::DeleteCandidate { selected, yes } => {
+            render_delete_candidate_dialog(app, selected, yes, area, buf);
+        }
     }
 }
 
@@ -1142,6 +1386,166 @@ fn render_yes_no_dialog(area: Rect, buf: &mut Buffer, title: &str, question: &st
     ])
     .wrap(Wrap { trim: false })
     .render(inner, buf);
+}
+
+/// Ações do popup exibido quando o resultado da criação é incerto.
+const RECOVERY_ACTIONS: [&str; 4] = [
+    "editar settings",
+    "verificar possíveis cards",
+    "reenviar mesmo assim",
+    "sair",
+];
+
+/// Renderiza as ações de recuperação sem fechar a revisão subjacente.
+fn render_create_recovery_dialog(choice: usize, area: Rect, buf: &mut Buffer) {
+    let inner = modal_frame(
+        area,
+        buf,
+        " Recuperar envio ",
+        theme().warning,
+        72,
+        RECOVERY_ACTIONS.len() + 5,
+    );
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+    let mut lines = vec![
+        Line::from(Span::styled(
+            "A resposta do Azure não confirmou se o card foi criado.",
+            theme().warning,
+        )),
+        Line::from(Span::styled(
+            "Verifique antes de reenviar para evitar duplicidade.",
+            theme().muted,
+        )),
+        Line::from(""),
+    ];
+    for (index, action) in RECOVERY_ACTIONS.iter().enumerate() {
+        let marker = if index == choice { "▸" } else { " " };
+        let style = if index == choice {
+            Style::new().add_modifier(Modifier::REVERSED | Modifier::BOLD)
+        } else {
+            Style::new()
+        };
+        lines.push(Line::from(Span::styled(
+            format!("{marker} {action}"),
+            style,
+        )));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "↑/↓ escolher · enter confirmar · esc editar",
+        theme().muted,
+    )));
+    Paragraph::new(lines)
+        .wrap(Wrap { trim: false })
+        .render(inner, buf);
+}
+
+/// Renderiza candidatos com título exato e indicação de correspondência.
+fn render_candidate_list_dialog(app: &TestApp, selected: usize, area: Rect, buf: &mut Buffer) {
+    let visible = app.candidates.len().min(6);
+    let empty_hint =
+        usize::from(app.candidates.is_empty() && app.candidate_activity == CandidateActivity::Idle);
+    let content_height =
+        3 + visible * 2 + empty_hint + usize::from(app.candidate_message.is_some());
+    let inner = modal_frame(
+        area,
+        buf,
+        " Verificar possíveis cards ",
+        theme().accent,
+        86,
+        content_height,
+    );
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+    let mut lines = vec![Line::from(Span::styled(
+        if app.candidate_activity == CandidateActivity::Loading {
+            "consultando Test Cases recentes…"
+        } else if app.candidate_activity == CandidateActivity::Deleting {
+            "excluindo candidato…"
+        } else {
+            "a busca usa título exato e relação com o Work Item pai"
+        },
+        theme().muted,
+    ))];
+    if app.candidates.is_empty() && app.candidate_activity == CandidateActivity::Idle {
+        lines.push(Line::from(Span::styled(
+            "nenhum candidato encontrado; o retry ainda pode duplicar um card",
+            theme().warning,
+        )));
+    }
+    let start = selected
+        .saturating_sub(visible.saturating_sub(1))
+        .min(app.candidates.len().saturating_sub(visible));
+    for (index, candidate) in app.candidates.iter().enumerate().skip(start).take(visible) {
+        let is_selected = index == selected;
+        let marker = if is_selected { "▸" } else { " " };
+        let parent = if candidate.parent_matches {
+            "pai ✓"
+        } else {
+            "pai ?"
+        };
+        let fields = if candidate.comparable_fields == 0 {
+            "campos —".to_owned()
+        } else {
+            format!(
+                "campos {}/{}",
+                candidate.matching_fields, candidate.comparable_fields
+            )
+        };
+        let style = if is_selected {
+            Style::new().add_modifier(Modifier::REVERSED | Modifier::BOLD)
+        } else {
+            Style::new()
+        };
+        let created = if candidate.created_at.is_empty() {
+            String::new()
+        } else {
+            format!(" · {}", candidate.created_at)
+        };
+        lines.push(Line::from(Span::styled(
+            format!(
+                "{marker} #{}  {}  · {parent} · {fields}{created}",
+                candidate.id, candidate.title,
+            ),
+            style,
+        )));
+        lines.push(Line::from(Span::styled(
+            format!("    {}", candidate.url),
+            theme().muted,
+        )));
+    }
+    if let Some(message) = app.candidate_message.as_ref() {
+        lines.push(Line::from(Span::styled(message.clone(), theme().warning)));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "enter usar selecionado · d excluir · r atualizar · esc voltar",
+        theme().muted,
+    )));
+    Paragraph::new(lines)
+        .wrap(Wrap { trim: false })
+        .render(inner, buf);
+}
+
+/// Confirma a exclusão reversível de um candidato específico.
+fn render_delete_candidate_dialog(
+    app: &TestApp,
+    selected: usize,
+    yes: bool,
+    area: Rect,
+    buf: &mut Buffer,
+) {
+    let Some(candidate) = app.candidates.get(selected) else {
+        return;
+    };
+    let question = format!(
+        "Mover o Test Case #{} ({}) para a lixeira?",
+        candidate.id, candidate.title
+    );
+    render_yes_no_dialog(area, buf, " Excluir candidato ", question.as_str(), yes);
 }
 
 /// Modal de esforços do Test QA (Effort + Real Effort).
@@ -1243,8 +1647,13 @@ fn render_done(app: &TestApp, area: Rect, buf: &mut Buffer) {
             theme().success,
         )));
     } else {
+        let action = if app.parent_msg.is_some() {
+            "tentar atualizar pai novamente"
+        } else {
+            "atualizar pai p/ Test QA"
+        };
         lines.push(Line::from(vec![
-            Span::styled("▸ [ enter ] atualizar pai p/ Test QA", theme().accent),
+            Span::styled(format!("▸ [ enter ] {action}"), theme().accent),
             Span::styled("   ·   c copia body", theme().muted),
         ]));
     }
@@ -1374,13 +1783,28 @@ fn render_footer(app: &TestApp, area: Rect, buf: &mut Buffer) {
         Some(TestDialog::QaEfforts) => {
             "digite o número · tab troca campo · enter confirma · esc volta"
         }
+        Some(TestDialog::CreateRecovery(_)) => {
+            "e editar · v verificar cards · r reenviar · enter escolher · esc editar"
+        }
+        Some(TestDialog::CandidateList { .. }) => {
+            "↑/↓ selecionar · d excluir · r atualizar · esc voltar"
+        }
+        Some(TestDialog::DeleteCandidate { .. }) => {
+            "←/→ alternar · y sim · n não · enter confirmar · esc cancelar"
+        }
         None => match app.phase {
             TestPhase::Preparando | TestPhase::Gerando => "j/k rolar preview · q/esc abortar",
             TestPhase::Criando => "criando… aguarde · q/esc abortar",
             TestPhase::Revisao => match app.panel {
                 Panel::Preview => "tab settings · enter continuar · c copia · j/k rola · q sai",
                 Panel::Settings => {
-                    "digite p/ editar · ↑/↓ campo · tab preview · enter continuar · esc volta"
+                    if app.create_recovery == CreateRecoveryState::Available {
+                        "digite p/ editar · ↑/↓ campo · enter retry · esc opções · q sai"
+                    } else if app.error.is_some() {
+                        "digite p/ editar · ↑/↓ campo · enter reenviar · tab preview · q sai"
+                    } else {
+                        "digite p/ editar · ↑/↓ campo · tab preview · enter continuar · esc volta"
+                    }
                 }
             },
             TestPhase::Pronto => "enter Test QA · c copia · outra tecla sai",
@@ -1582,6 +2006,188 @@ async fn handle_test_dialog_key(
         TestDialog::ConfirmCreate(yes) => Ok(handle_confirm_create_key(app, tx, yes, key)),
         TestDialog::ConfirmTestQa(yes) => Ok(handle_confirm_qa_key(app, yes, key)),
         TestDialog::QaEfforts => handle_qa_efforts_key(app, terminal, key).await,
+        TestDialog::CreateRecovery(choice) => Ok(handle_create_recovery_key(app, tx, choice, key)),
+        TestDialog::CandidateList { selected } => {
+            Ok(handle_candidate_list_key(app, tx, selected, key))
+        }
+        TestDialog::DeleteCandidate { selected, yes } => {
+            Ok(handle_delete_candidate_key(app, tx, selected, yes, key))
+        }
+    }
+}
+
+/// Tecla no popup de recuperação de um envio incerto.
+fn handle_create_recovery_key(
+    app: &mut TestApp,
+    tx: &mpsc::UnboundedSender<TestEvent>,
+    choice: usize,
+    key: event::KeyEvent,
+) -> TestKeyAction {
+    if key.kind != KeyEventKind::Press {
+        return TestKeyAction::Continue(false);
+    }
+    let selected = choice.min(RECOVERY_ACTIONS.len().saturating_sub(1));
+    let move_choice = |down: bool| -> usize {
+        let count = RECOVERY_ACTIONS.len();
+        if down {
+            (selected + 1) % count
+        } else if selected == 0 {
+            count - 1
+        } else {
+            selected - 1
+        }
+    };
+    match key.code {
+        KeyCode::Char('e') | KeyCode::Esc => {
+            app.dialog = None;
+            app.panel = Panel::Settings;
+            TestKeyAction::Continue(true)
+        }
+        KeyCode::Char('v') => {
+            start_candidate_search(app, tx);
+            TestKeyAction::Continue(true)
+        }
+        KeyCode::Char('r') => {
+            app.dialog = None;
+            start_create(app, tx);
+            TestKeyAction::Continue(true)
+        }
+        KeyCode::Char('q') => {
+            app.dialog = None;
+            TestKeyAction::Done(TestFlowOutcome::Reviewed)
+        }
+        KeyCode::Up | KeyCode::Left => {
+            app.dialog = Some(TestDialog::CreateRecovery(move_choice(false)));
+            TestKeyAction::Continue(true)
+        }
+        KeyCode::Down | KeyCode::Right => {
+            app.dialog = Some(TestDialog::CreateRecovery(move_choice(true)));
+            TestKeyAction::Continue(true)
+        }
+        KeyCode::Enter => match selected {
+            0 => {
+                app.dialog = None;
+                app.panel = Panel::Settings;
+                TestKeyAction::Continue(true)
+            }
+            1 => {
+                start_candidate_search(app, tx);
+                TestKeyAction::Continue(true)
+            }
+            2 => {
+                app.dialog = None;
+                start_create(app, tx);
+                TestKeyAction::Continue(true)
+            }
+            _ => {
+                app.dialog = None;
+                TestKeyAction::Done(TestFlowOutcome::Reviewed)
+            }
+        },
+        _ => TestKeyAction::Continue(false),
+    }
+}
+
+/// Tecla na lista de candidatos encontrados no Azure.
+fn handle_candidate_list_key(
+    app: &mut TestApp,
+    tx: &mpsc::UnboundedSender<TestEvent>,
+    selected: usize,
+    key: event::KeyEvent,
+) -> TestKeyAction {
+    if key.kind != KeyEventKind::Press || app.candidate_activity != CandidateActivity::Idle {
+        return TestKeyAction::Continue(false);
+    }
+    match key.code {
+        KeyCode::Esc => {
+            app.dialog = Some(TestDialog::CreateRecovery(0));
+            TestKeyAction::Continue(true)
+        }
+        KeyCode::Char('r') => {
+            start_candidate_search(app, tx);
+            TestKeyAction::Continue(true)
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            let next = selected.saturating_sub(1);
+            app.dialog = Some(TestDialog::CandidateList { selected: next });
+            TestKeyAction::Continue(true)
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            let next = (selected + 1).min(app.candidates.len().saturating_sub(1));
+            app.dialog = Some(TestDialog::CandidateList { selected: next });
+            TestKeyAction::Continue(true)
+        }
+        KeyCode::Enter => {
+            if app.adopt_candidate(selected) {
+                TestKeyAction::Continue(true)
+            } else {
+                TestKeyAction::Continue(false)
+            }
+        }
+        KeyCode::Char('d') => {
+            if app.candidates.get(selected).is_some() {
+                app.dialog = Some(TestDialog::DeleteCandidate {
+                    selected,
+                    yes: false,
+                });
+                TestKeyAction::Continue(true)
+            } else {
+                TestKeyAction::Continue(false)
+            }
+        }
+        _ => TestKeyAction::Continue(false),
+    }
+}
+
+/// Tecla de confirmação da exclusão de um candidato.
+fn handle_delete_candidate_key(
+    app: &mut TestApp,
+    tx: &mpsc::UnboundedSender<TestEvent>,
+    selected: usize,
+    yes: bool,
+    key: event::KeyEvent,
+) -> TestKeyAction {
+    if key.kind != KeyEventKind::Press {
+        return TestKeyAction::Continue(false);
+    }
+    let set_confirmation = |app: &mut TestApp, value: bool| {
+        app.dialog = Some(TestDialog::DeleteCandidate {
+            selected,
+            yes: value,
+        });
+    };
+    match key.code {
+        KeyCode::Left | KeyCode::Right => {
+            set_confirmation(app, !yes);
+            TestKeyAction::Continue(true)
+        }
+        KeyCode::Char('y') => {
+            set_confirmation(app, true);
+            TestKeyAction::Continue(true)
+        }
+        KeyCode::Enter if yes => {
+            let Some(candidate) = app.candidates.get(selected) else {
+                app.dialog = Some(TestDialog::CandidateList { selected: 0 });
+                return TestKeyAction::Continue(true);
+            };
+            let id = candidate.id;
+            app.candidate_activity = CandidateActivity::Deleting;
+            app.candidate_message = None;
+            app.dialog = Some(TestDialog::CandidateList { selected });
+            if let Some(prep) = app.prep.clone() {
+                let tx = tx.clone();
+                tokio::spawn(async move { backend_delete_candidate(prep, id, tx).await });
+            } else {
+                app.candidate_activity = CandidateActivity::Idle;
+                app.candidate_message = Some("sem contexto para excluir o candidato".to_owned());
+            }
+            TestKeyAction::Continue(true)
+        }
+        KeyCode::Char('n') | KeyCode::Esc | KeyCode::Enter => {
+            app.dialog = Some(TestDialog::CandidateList { selected });
+            TestKeyAction::Continue(true)
+        }
+        _ => TestKeyAction::Continue(false),
     }
 }
 
@@ -1685,6 +2291,7 @@ async fn handle_qa_efforts_key(
             };
             if editor.handle_key(key) {
                 app.error = None;
+                app.error_field = None;
                 Ok(TestKeyAction::Continue(true))
             } else {
                 Ok(TestKeyAction::Continue(false))
@@ -1795,7 +2402,11 @@ fn handle_review_settings_key(app: &mut TestApp, key: event::KeyEvent) -> TestKe
         }
         KeyCode::Esc => {
             if key.kind == KeyEventKind::Press && !ctrl_alt {
-                app.panel = Panel::Preview;
+                if app.create_recovery == CreateRecoveryState::Available {
+                    app.dialog = Some(TestDialog::CreateRecovery(0));
+                } else {
+                    app.panel = Panel::Preview;
+                }
                 TestKeyAction::Continue(true)
             } else {
                 TestKeyAction::Continue(false)
@@ -1839,6 +2450,7 @@ fn handle_review_settings_key(app: &mut TestApp, key: event::KeyEvent) -> TestKe
             };
             if consumed {
                 app.error = None;
+                app.error_field = None;
                 TestKeyAction::Continue(true)
             } else {
                 TestKeyAction::Continue(false)
@@ -1906,21 +2518,67 @@ fn start_create(app: &mut TestApp, tx: &mpsc::UnboundedSender<TestEvent>) {
             if let Some(prep) = app.prep.clone() {
                 let title = app.title.clone();
                 let body = app.body.clone();
+                app.last_create_settings = Some(settings.clone());
+                app.create_recovery = CreateRecoveryState::Unavailable;
                 app.phase = TestPhase::Criando;
                 "criando test case…".clone_into(&mut app.phase_label);
                 app.progress = 0.3;
                 "enviando…".clone_into(&mut app.progress_label);
                 app.error = None;
+                app.error_field = None;
+                app.candidates.clear();
+                app.candidate_message = None;
                 let tx2 = tx.clone();
                 tokio::spawn(backend_create(prep, settings, title, body, tx2));
             } else {
+                app.panel = Panel::Settings;
                 app.error = Some("sem contexto p/ criar (prepare falhou)".to_owned());
             }
         }
         Err(msg) => {
+            app.panel = Panel::Settings;
+            app.error_field = settings_field_for_error(msg.as_str());
+            if let Some(field) = app.error_field {
+                app.field_focus = field.index();
+            }
             app.error = Some(msg);
         }
     }
+}
+
+/// Associa uma falha de validação local ao campo editável correspondente.
+fn settings_field_for_error(message: &str) -> Option<TestSettingsField> {
+    let lower = message.to_ascii_lowercase();
+    if lower.contains("team") {
+        Some(TestSettingsField::Team)
+    } else if lower.contains("programa") {
+        Some(TestSettingsField::Program)
+    } else if lower.contains("responsável") || lower.contains("assigned") {
+        Some(TestSettingsField::AssignedTo)
+    } else if lower.contains("prioridade") {
+        Some(TestSettingsField::Priority)
+    } else {
+        None
+    }
+}
+
+/// Inicia a consulta de possíveis cards criados antes de uma resposta perdida.
+fn start_candidate_search(app: &mut TestApp, tx: &mpsc::UnboundedSender<TestEvent>) {
+    let (Some(prep), Some(settings)) = (app.prep.clone(), app.last_create_settings.clone()) else {
+        app.candidate_message =
+            Some("sem contexto da última tentativa para consultar o Azure".to_owned());
+        app.dialog = Some(TestDialog::CandidateList { selected: 0 });
+        return;
+    };
+    app.candidates.clear();
+    app.candidate_activity = CandidateActivity::Loading;
+    app.candidate_message = None;
+    app.dialog = Some(TestDialog::CandidateList { selected: 0 });
+    let title = app.title.clone();
+    let tx = tx.clone();
+    tokio::spawn(async move {
+        backend_find_candidates(prep, title, settings, tx).await;
+    });
 }
 
 /// Executa o update do pai p/ Test QA com esforços já validados.
@@ -1934,14 +2592,19 @@ async fn run_qa_update(
     terminal.draw(|f| f.render_widget(&*app, f.area()))?;
     match app.prep.clone() {
         Some(prep) => {
-            match test_card::update_parent(&prep, Some(effort.as_str()), Some(real.as_str())).await
+            match test_card::update_parent_with_current_config(
+                &prep,
+                Some(effort.as_str()),
+                Some(real.as_str()),
+            )
+            .await
             {
                 Ok(()) => {
                     app.parent_updated = true;
                     app.parent_msg = Some("pai atualizado p/ Test QA ✓".to_owned());
                 }
                 Err(e) => {
-                    app.parent_msg = Some(format!("falha ao atualizar pai: {e}"));
+                    app.parent_msg = Some(test_card::describe_parent_update_error(&e));
                 }
             }
         }
@@ -2004,11 +2667,130 @@ mod tests {
         app.on_event(TestEvent::CreatedItem(WorkItem {
             id: 99,
             fields: std::collections::HashMap::new(),
+            relations: Vec::new(),
         }));
 
         assert_eq!(app.phase, TestPhase::Pronto);
         assert_eq!(app.created.as_ref().map(|(id, _)| *id), Some(99));
         assert_eq!(app.dialog, Some(TestDialog::ConfirmTestQa(false)));
+    }
+
+    #[test]
+    fn create_failure_should_keep_review_and_focus_settings_field() {
+        let mut app = review_app();
+        app.fields[4] = LineEditor::new("QA".to_owned());
+        app.fields[5] = LineEditor::new("Agrotrace".to_owned());
+        app.on_event(TestEvent::CreateFailed(CreateFailure {
+            message: "campo Custom.Team: valor inválido".to_owned(),
+            kind: CreateFailureKind::Confirmed,
+            field: Some(TestSettingsField::Team),
+        }));
+
+        assert_eq!(app.phase, TestPhase::Revisao);
+        assert_eq!(app.panel, Panel::Settings);
+        assert_eq!(app.field_focus, TestSettingsField::Team.index());
+        assert_eq!(app.fields[4].value, "QA");
+        assert!(app.dialog.is_none());
+    }
+
+    #[test]
+    fn unknown_create_failure_should_open_recovery_actions() {
+        let mut app = review_app();
+        app.on_event(TestEvent::CreateFailed(CreateFailure {
+            message: "não foi possível confirmar a criação".to_owned(),
+            kind: CreateFailureKind::OutcomeUnknown,
+            field: None,
+        }));
+
+        assert_eq!(app.phase, TestPhase::Revisao);
+        assert_eq!(app.dialog, Some(TestDialog::CreateRecovery(0)));
+        assert_eq!(app.panel, Panel::Settings);
+    }
+
+    #[test]
+    fn local_settings_validation_should_focus_matching_field() {
+        assert_eq!(
+            settings_field_for_error("team é obrigatório"),
+            Some(TestSettingsField::Team)
+        );
+        assert_eq!(
+            settings_field_for_error("programa é obrigatório"),
+            Some(TestSettingsField::Program)
+        );
+        assert_eq!(
+            settings_field_for_error("responsável: informe um email válido"),
+            Some(TestSettingsField::AssignedTo)
+        );
+        assert_eq!(settings_field_for_error("erro desconhecido"), None);
+    }
+
+    #[test]
+    fn delete_candidate_requires_explicit_selection_and_confirmation() {
+        let mut app = review_app();
+        app.dialog = Some(TestDialog::CandidateList { selected: 0 });
+        app.candidates.push(TestCaseCandidate {
+            id: 77,
+            url: "https://dev.azure.com/org/proj/_workitems/edit/77".to_owned(),
+            title: "Card exemplo".to_owned(),
+            created_at: "2026-09-11T12:00:00Z".to_owned(),
+            parent_matches: true,
+            matching_fields: 6,
+            comparable_fields: 6,
+        });
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let action = handle_candidate_list_key(
+            &mut app,
+            &tx,
+            0,
+            event::KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE),
+        );
+        assert!(matches!(action, TestKeyAction::Continue(true)));
+        assert_eq!(
+            app.dialog,
+            Some(TestDialog::DeleteCandidate {
+                selected: 0,
+                yes: false,
+            })
+        );
+
+        let action = handle_delete_candidate_key(
+            &mut app,
+            &tx,
+            0,
+            false,
+            event::KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        );
+        assert!(matches!(action, TestKeyAction::Continue(true)));
+        assert_eq!(app.dialog, Some(TestDialog::CandidateList { selected: 0 }));
+        assert_eq!(app.candidates.len(), 1);
+    }
+
+    #[test]
+    fn selected_candidate_should_be_adopted_without_recreating_it() {
+        let mut app = review_app();
+        app.dialog = Some(TestDialog::CandidateList { selected: 0 });
+        app.candidates.push(TestCaseCandidate {
+            id: 88,
+            url: "https://dev.azure.com/org/proj/_workitems/edit/88".to_owned(),
+            title: "Card exemplo".to_owned(),
+            created_at: String::new(),
+            parent_matches: true,
+            matching_fields: 6,
+            comparable_fields: 6,
+        });
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let action = handle_candidate_list_key(
+            &mut app,
+            &tx,
+            0,
+            event::KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        );
+
+        assert!(matches!(action, TestKeyAction::Continue(true)));
+        assert_eq!(app.phase, TestPhase::Pronto);
+        assert_eq!(app.created.as_ref().map(|(id, _)| *id), Some(88));
+        assert_eq!(app.dialog, Some(TestDialog::ConfirmTestQa(false)));
+        assert!(app.candidates.is_empty());
     }
 
     #[test]
@@ -2030,6 +2812,52 @@ mod tests {
         let mut terminal = Terminal::new(backend)?;
         terminal.draw(|f| f.render_widget(&app, f.area()))?;
         insta::assert_snapshot!("test_qa_efforts_100x30", terminal.backend());
+        Ok(())
+    }
+
+    #[test]
+    fn test_create_recovery_100x30() -> anyhow::Result<()> {
+        let mut app = review_app();
+        app.error = Some(
+            "não foi possível confirmar se o Azure criou o Test Case; verifique antes de reenviar"
+                .to_owned(),
+        );
+        app.dialog = Some(TestDialog::CreateRecovery(0));
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend)?;
+        terminal.draw(|f| f.render_widget(&app, f.area()))?;
+        insta::assert_snapshot!("test_create_recovery_100x30", terminal.backend());
+        Ok(())
+    }
+
+    #[test]
+    fn test_candidate_list_100x30() -> anyhow::Result<()> {
+        let mut app = review_app();
+        app.candidates = vec![
+            TestCaseCandidate {
+                id: 77,
+                url: "https://dev.azure.com/org/proj/_workitems/edit/77".to_owned(),
+                title: "Card exemplo".to_owned(),
+                created_at: "2026-09-11T12:00:00Z".to_owned(),
+                parent_matches: true,
+                matching_fields: 6,
+                comparable_fields: 6,
+            },
+            TestCaseCandidate {
+                id: 78,
+                url: "https://dev.azure.com/org/proj/_workitems/edit/78".to_owned(),
+                title: "Card exemplo".to_owned(),
+                created_at: "2026-09-11T11:00:00Z".to_owned(),
+                parent_matches: false,
+                matching_fields: 2,
+                comparable_fields: 6,
+            },
+        ];
+        app.dialog = Some(TestDialog::CandidateList { selected: 0 });
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend)?;
+        terminal.draw(|f| f.render_widget(&app, f.area()))?;
+        insta::assert_snapshot!("test_candidate_list_100x30", terminal.backend());
         Ok(())
     }
 }

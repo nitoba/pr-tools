@@ -87,6 +87,19 @@ pub fn test_case_query(project: &str) -> String {
     )
 }
 
+/// Monta a WIQL de candidatos recentes com o mesmo título.
+#[must_use]
+pub fn test_case_candidates_query(project: &str, title: &str) -> String {
+    format!(
+        "SELECT TOP 20 [System.Id],[System.Title] FROM WorkItems WHERE \
+         [System.WorkItemType]='Test Case' AND [System.TeamProject]='{}' AND \
+         [System.Title]='{}' AND [System.CreatedDate] >= @Today - 1 \
+         ORDER BY [System.CreatedDate] DESC",
+        project.replace('\'', "''"),
+        title.replace('\'', "''"),
+    )
+}
+
 /// URL absoluta de um Work Item (link `Related` do pai).
 ///
 /// Espelha `azureUrl(config, '/_apis/wit/workitems/$parentId')` do Dart
@@ -137,6 +150,31 @@ pub async fn get_test_case_examples(
         }
     }
     Ok(examples)
+}
+
+/// Busca Test Cases com título exato, incluindo relações para validação do pai.
+///
+/// Falhas ao carregar um candidato individual são ignoradas: a busca continua
+/// com os demais IDs retornados pela WIQL, como na consulta de exemplos.
+///
+/// # Errors
+///
+/// Propaga falhas da consulta WIQL.
+pub async fn find_test_case_candidates(
+    client: &AzureClient,
+    project: &str,
+    title: &str,
+) -> Result<Vec<WorkItem>> {
+    let ids = query_wiql(client, project, &test_case_candidates_query(project, title)).await?;
+    let mut candidates = Vec::new();
+    for id in ids {
+        if let Ok(item) = super::get_work_item_with_relations(client, &id.to_string()).await {
+            if item.title() == title {
+                candidates.push(item);
+            }
+        }
+    }
+    Ok(candidates)
 }
 
 /// Serializa número preservando inteiro quando possível (espelha o `num` do
@@ -316,6 +354,22 @@ pub async fn update_parent_to_test_qa(
     Ok(())
 }
 
+/// Move um Work Item para a lixeira do Azure DevOps.
+///
+/// O endpoint padrão é reversível pela lixeira; não usa `destroy=true`.
+///
+/// # Errors
+///
+/// Propaga falhas HTTP do cliente.
+pub async fn delete_work_item(client: &AzureClient, project: &str, id: i64) -> Result<()> {
+    client
+        .delete(&format!(
+            "{}/_apis/wit/workitems/{id}",
+            encode_segment(project)
+        ))
+        .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -331,6 +385,16 @@ mod tests {
     #[test]
     fn wiql_should_escape_single_quotes() {
         assert!(test_case_query("Proj'A").contains("[System.TeamProject]='Proj''A'"));
+    }
+
+    #[test]
+    fn candidate_query_should_match_title_and_limit_recent_items() {
+        let query = test_case_candidates_query("Proj'A", "Card 'de teste'");
+        assert!(query.contains("SELECT TOP 20"));
+        assert!(query.contains("[System.TeamProject]='Proj''A'"));
+        assert!(query.contains("[System.Title]='Card ''de teste'"));
+        assert!(query.contains("[System.CreatedDate] >= @Today - 1"));
+        assert!(query.contains("ORDER BY [System.CreatedDate] DESC"));
     }
 
     #[test]
