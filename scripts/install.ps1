@@ -31,6 +31,24 @@ function Write-Ok { param([string]$Text) Write-Host "✔ $Text" -ForegroundColor
 function Write-Info { param([string]$Text) Write-Host $Text -ForegroundColor DarkGray }
 function Fail { param([string]$Text) Write-Host "✘ $Text" -ForegroundColor Red; exit 1 }
 
+function Remove-TemporaryFile {
+  param([string]$Path)
+  if (-not $Path) { return }
+
+  for ($attempt = 1; $attempt -le 5; $attempt++) {
+    try {
+      Remove-Item -LiteralPath $Path -Force -ErrorAction Stop
+      return
+    } catch {
+      if ($attempt -lt 5) {
+        Start-Sleep -Milliseconds 500
+      }
+    }
+  }
+
+  Write-Host "! Não foi possível remover o arquivo temporário; remova-o depois: $Path" -ForegroundColor Yellow
+}
+
 function Read-Answer {
   param([string]$Question, [string]$Default)
   if ($Yes) { return $Default }
@@ -144,7 +162,7 @@ try {
 Write-Step "Instalando em $targetPath"
 New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
 Copy-Item -LiteralPath $binaryPath -Destination $targetPath -Force
-if ($temporaryPath) { Remove-Item -LiteralPath $temporaryPath -Force }
+Remove-TemporaryFile $temporaryPath
 Write-Ok "prt instalado em $targetPath"
 
 # ---------- PATH ----------
