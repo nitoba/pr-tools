@@ -6,6 +6,15 @@ on:
 
 permissions:
   contents: read
+  actions: read
+
+env:
+  CARGO_TERM_COLOR: never
+  BASE: 2eabd586f880808e766b145b6b76d77e05ece868
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
   rust-audit:
@@ -13,28 +22,197 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
-      - name: Package audit sources (exclude Dart)
-        run: |
-          git rev-parse HEAD
-          git ls-files | grep -vE '(^apps/dart/|\.dart$|dart-result-effect-refactor)' > /tmp/audit-files.txt
-          tar -czf /tmp/rust-audit-source.tar.gz -T /tmp/audit-files.txt
-      - uses: actions/upload-artifact@v4
         with:
-          name: rust-audit-source
-          path: /tmp/rust-audit-source.tar.gz
-          retention-days: 3
-      - uses: dtolnay/rust-toolchain@stable
+          ref: 2eabd586f880808e766b145b6b76d77e05ece868
+      - uses: dtolnay/rust-toolchain@1.98.1
         with:
           components: rustfmt, clippy
-      - name: Toolchain
+      - name: Record baseline resolution and toolchain
         run: |
-          rustc --version
-          cargo --version
-      - name: Rust format
-        run: cargo fmt --manifest-path apps/rust/Cargo.toml -- --check
-      - name: Rust lint
-        run: cargo clippy --manifest-path apps/rust/Cargo.toml --locked --all-targets -- -D clippy::correctness
-      - name: Rust tests
-        run: cargo test --manifest-path apps/rust/Cargo.toml --locked
-      - name: Rust build
-        run: cargo build --manifest-path apps/rust/Cargo.toml --locked --all-targets
+          mkdir -p "$RUNNER_TEMP/evidence"
+          { rustc --version; cargo --version; git rev-parse HEAD; } | tee "$RUNNER_TEMP/evidence/toolchain.txt"
+          cargo metadata --manifest-path apps/rust/Cargo.toml --locked --format-version 1 > "$RUNNER_TEMP/evidence/metadata-before.json"
+      - name: Apply reviewed Rust-only cleanup
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re, subprocess
+          def edit(path, old, new):
+              p = Path(path)
+              text = p.read_text()
+              assert text.count(old) == 1, (path, text.count(old))
+              p.write_text(text.replace(old, new, 1))
+          pr = 'apps/rust/src/azure/pull_requests.rs'
+          wi = 'apps/rust/src/azure/work_items.rs'
+          shared = 'apps/rust/src/azure/mod.rs'
+          pattern = r'fn encode_segment\(value: &str\) -> String \{.*?\n\}'
+          body = re.search(pattern, Path(pr).read_text(), re.S).group()
+          assert body == re.search(pattern, Path(wi).read_text(), re.S).group()
+          for path in (pr, wi):
+              block = re.search(r'/// Percent-encode de um segmento.*?\n\}\n\n', Path(path).read_text(), re.S).group()
+              edit(path, block, '')
+              edit(path, 'use std::fmt::Write as _;\n', '')
+          edit(pr, 'use serde::Deserialize;\n\n\n', 'use serde::Deserialize;\n\n')
+          edit(pr, 'use crate::azure::AzureClient;', 'use crate::azure::{AzureClient, encode_segment};')
+          edit(wi, 'use crate::azure::{AzureClient, WorkItem};', 'use crate::azure::{AzureClient, WorkItem, encode_segment};')
+          edit(shared, 'use std::time::Duration;', 'use std::fmt::Write as _;\nuse std::time::Duration;')
+          edit(shared, 'pub mod work_items;\n', 'pub mod work_items;\n\n/// Percent-encode de um segmento de path: tudo fora de `[A-Za-z0-9-_.~]` vira `%XX`.\n' + body + '\n')
+          edit('apps/rust/src/process.rs', '    #[test]\n    fn keeps_original_command_first() {\n        assert_eq!(\n            command_candidates("codex").first().map(String::as_str),\n            Some("codex")\n        );\n    }\n\n', '')
+          edit('apps/rust/src/main.rs', '        prt::cli::Command::Update => run_update().await,', '        prt::cli::Command::Update => prt::features::update::run()\n            .await\n            .map_err(anyhow::Error::new),')
+          edit('apps/rust/src/main.rs', 'async fn run_update() -> anyhow::Result<()> {\n    prt::features::update::run()\n        .await\n        .map_err(anyhow::Error::new)\n}\n\n', '')
+          edit('apps/rust/src/ai/mod.rs', '    // Tenta parse direto, senão extrai title/body via regex simples.\n', '')
+          edit('apps/rust/Cargo.toml', 'tempfile = "3"\ntokio = { version = "1", features = ["full"] }', 'tempfile = "3"')
+          expected = {
+              'apps/rust/Cargo.toml': '90baeda7b92f5755cdc841c29ad87c29895a8cfe',
+              'apps/rust/src/ai/mod.rs': '205ffbaa08eff81d3542a7e0877ded3410ff6553',
+              'apps/rust/src/azure/mod.rs': '6334a1b7d172eb4761142cfd95e5822b841798e1',
+              pr: 'a06ed65dd199e33776e9bea0767bb95250e77ff4',
+              wi: '13a94fbd7d4b93e755deda083337ff3e6afca58d',
+              'apps/rust/src/main.rs': '68f2a27c9b904fbc92b1fee5b28c7084280303a7',
+              'apps/rust/src/process.rs': 'ef01abb8db456580d4235d1b7bf63e75d68a08ab',
+          }
+          for path, sha in expected.items():
+              assert subprocess.check_output(['git', 'hash-object', path], text=True).strip() == sha, path
+          print('PASS: all seven edited files match the locally reviewed content hashes')
+          PY
+      - name: Format and check patch scope
+        run: |
+          cargo fmt --manifest-path apps/rust/Cargo.toml
+          cargo fmt --manifest-path apps/rust/Cargo.toml -- --check 2>&1 | tee "$RUNNER_TEMP/evidence/fmt.log"
+          git diff --check
+          git diff --exit-code -- .github apps/dart scripts apps/rust/Cargo.lock apps/rust/src/tui
+          test "$(git diff --name-only | wc -l)" -eq 7
+          git diff --stat | tee "$RUNNER_TEMP/evidence/diff-stat.txt"
+      - name: Verify dependency resolution and encoder identity
+        run: |
+          cargo metadata --manifest-path apps/rust/Cargo.toml --locked --format-version 1 > "$RUNNER_TEMP/evidence/metadata-after.json"
+          python - <<'PY' | tee "$RUNNER_TEMP/evidence/safety-checks.log"
+          import json, os, re, subprocess
+          from pathlib import Path
+          evidence = Path(os.environ['RUNNER_TEMP'])/'evidence'
+          before = json.loads((evidence/'metadata-before.json').read_text())
+          after = json.loads((evidence/'metadata-after.json').read_text())
+          def graph(meta):
+              return sorted((n['id'], sorted(n['dependencies']), sorted(n['features'])) for n in meta['resolve']['nodes'])
+          assert graph(before) == graph(after)
+          print('PASS: resolved packages, dependency adjacency and enabled features unchanged')
+          pattern = r'fn encode_segment\(value: &str\) -> String \{.*?\n\}'
+          old_bodies = [re.search(pattern, subprocess.check_output(['git','show','HEAD:apps/rust/src/azure/'+name+'.rs'], text=True), re.S).group() for name in ('pull_requests', 'work_items')]
+          new_body = re.search(pattern, Path('apps/rust/src/azure/mod.rs').read_text(), re.S).group()
+          assert old_bodies[0] == old_bodies[1] == new_body
+          print('PASS: both old encoder bodies and shared private implementation are byte-identical')
+          for p in Path('apps/rust').rglob('*.rs'):
+              if 'target' in p.parts: continue
+              old = subprocess.check_output(['git','show','HEAD:'+p.as_posix()], text=True)
+              public = lambda text: [s for s in text.splitlines() if re.search(r'\bpub\b', s)]
+              assert public(old) == public(p.read_text()), str(p)
+          print('PASS: all public declaration lines unchanged')
+          PY
+          git diff --exit-code -- apps/rust/Cargo.lock
+      - name: Focused Rust tests
+        run: |
+          for filter in azure:: ai:: process:: features::update:: cli::; do
+            echo "FOCUSED FILTER: $filter"
+            cargo test --manifest-path apps/rust/Cargo.toml --locked --lib "$filter" 2>&1 | tee "$RUNNER_TEMP/evidence/focused-${filter//:/_}.log"
+          done
+      - name: Clippy
+        run: cargo clippy --manifest-path apps/rust/Cargo.toml --locked --all-targets -- -D clippy::correctness 2>&1 | tee "$RUNNER_TEMP/evidence/clippy.log"
+      - name: Full Rust suite
+        run: cargo test --manifest-path apps/rust/Cargo.toml --locked 2>&1 | tee "$RUNNER_TEMP/evidence/tests.log"
+      - name: Build all Rust targets
+        run: cargo build --manifest-path apps/rust/Cargo.toml --locked --all-targets 2>&1 | tee "$RUNNER_TEMP/evidence/build.log"
+      - name: Export exact tested patch and tree
+        run: |
+          git diff --check
+          git diff --exit-code -- .github apps/dart scripts apps/rust/Cargo.lock apps/rust/src/tui
+          test "$(git diff --name-only | wc -l)" -eq 7
+          git diff --full-index -- apps/rust > "$RUNNER_TEMP/evidence/rust-cleanup.patch"
+          git add apps/rust
+          git write-tree | tee "$RUNNER_TEMP/evidence/tested-tree.txt"
+          sha256sum "$RUNNER_TEMP/evidence/rust-cleanup.patch" | tee "$RUNNER_TEMP/evidence/patch-sha256.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rust-cleanup-evidence
+          path: ${{ runner.temp }}/evidence
+          retention-days: 14
+
+  process-platforms:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: 2eabd586f880808e766b145b6b76d77e05ece868
+      - uses: dtolnay/rust-toolchain@1.98.1
+      - name: Prove retained process assertions on this platform
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import hashlib, os, subprocess
+          directory = Path(os.environ['RUNNER_TEMP'])/'process-proof'
+          directory.mkdir()
+          old = Path('apps/rust/src/process.rs').read_text()
+          block = '    #[test]\n    fn keeps_original_command_first() {\n        assert_eq!(\n            command_candidates("codex").first().map(String::as_str),\n            Some("codex")\n        );\n    }\n\n'
+          assert old.count(block) == 1
+          new = old.replace(block, '')
+          data = new.encode()
+          assert hashlib.sha1(b'blob '+str(len(data)).encode()+b'\0'+data).hexdigest() == 'ef01abb8db456580d4235d1b7bf63e75d68a08ab'
+          log = []
+          for name, source, expected in [('baseline',old,0), ('retained',new,0), ('mutant',new.replace('program.to_owned()', '"wrong".to_owned()'),101)]:
+              src = directory/(name+'.rs')
+              src.write_text(source)
+              exe = directory/(name+'.exe')
+              subprocess.run(['rustc','--edition=2024','--test',str(src),'-o',str(exe)],check=True)
+              result = subprocess.run([str(exe),'--nocapture'],capture_output=True,text=True)
+              output = result.stdout + result.stderr
+              print(name + ':\n' + output)
+              log.append(name+':\n'+output)
+              assert result.returncode == expected, (name,result.returncode,expected)
+              if name == 'mutant':
+                  assert 'left == right' in output
+                  assert '1 failed' in output
+          log.append('PASS: baseline and retained tests pass; wrong-first-command mutation is rejected by retained test')
+          (directory/'results.log').write_text('\n'.join(log))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: process-proof-${{ matrix.os }}
+          path: ${{ runner.temp }}/process-proof/results.log
+          retention-days: 14
+
+  publish-cleanup:
+    needs: [rust-audit, process-platforms]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: 2eabd586f880808e766b145b6b76d77e05ece868
+      - uses: actions/download-artifact@v4
+        with:
+          name: rust-cleanup-evidence
+          path: ${{ runner.temp }}/evidence
+      - name: Publish only the verified Rust cleanup on a new branch
+        run: |
+          git switch -c cleanup/rust-low-value-code-20260911
+          git apply --check "$RUNNER_TEMP/evidence/rust-cleanup.patch"
+          git apply "$RUNNER_TEMP/evidence/rust-cleanup.patch"
+          git diff --check
+          git diff --exit-code -- .github apps/dart scripts apps/rust/Cargo.lock apps/rust/src/tui
+          test "$(git diff --name-only | wc -l)" -eq 7
+          git add apps/rust
+          test "$(git write-tree)" = "$(cat "$RUNNER_TEMP/evidence/tested-tree.txt")"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'refactor(rust): remove redundant helpers and test ceremony'
+          git push origin HEAD:refs/heads/cleanup/rust-low-value-code-20260911
+          git rev-parse HEAD
+          git show --stat --oneline HEAD
