@@ -9,37 +9,6 @@ permissions:
   contents: read
 
 jobs:
-  checks:
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Setup Dart
-        uses: dart-lang/setup-dart@v1
-        with:
-          sdk: 3.13.1
-
-      - name: Install dependencies
-        run: dart pub get
-        working-directory: apps/dart
-
-      - name: Format
-        run: dart format --output=none --set-exit-if-changed bin lib test ../../scripts/build.dart
-        working-directory: apps/dart
-
-      - name: Analyze
-        run: dart analyze
-        working-directory: apps/dart
-
-      - name: Analyze monorepo scripts
-        run: dart analyze ../../scripts/build.dart
-        working-directory: apps/dart
-
-      - name: Test
-        run: dart test
-        working-directory: apps/dart
-
   rust-checks:
     runs-on: ubuntu-24.04
     steps:
@@ -59,7 +28,7 @@ jobs:
         run: cargo test --manifest-path apps/rust/Cargo.toml --locked
 
   build:
-    needs: [checks, rust-checks]
+    needs: rust-checks
     strategy:
       fail-fast: false
       matrix:
@@ -67,54 +36,23 @@ jobs:
           - os: ubuntu-24.04
             target: linux-x64
             primary_asset: prt-linux-x64
-            dart_source: prt-linux-x64
-            dart_asset: prt-dart-linux-x64
             rust_asset: prt-rust-linux-x64
           - os: ubuntu-24.04-arm
             target: linux-arm64
             primary_asset: prt-linux-arm64
-            dart_source: prt-linux-arm64
-            dart_asset: prt-dart-linux-arm64
             rust_asset: prt-rust-linux-arm64
           - os: macos-14
             target: macos-arm64
             primary_asset: prt-macos-arm64
-            dart_source: prt-macos-arm64
-            dart_asset: prt-dart-macos-arm64
             rust_asset: prt-rust-macos-arm64
           - os: windows-latest
             target: windows-x64
             primary_asset: prt-windows-x64.exe
-            dart_source: prt-windows-x64.exe
-            dart_asset: prt-dart-windows-x64.exe
             rust_asset: prt-rust-windows-x64.exe
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
-
-      - name: Setup Dart
-        uses: dart-lang/setup-dart@v1
-        with:
-          sdk: 3.13.1
-
-      - name: Install dependencies
-        run: dart pub get
-        working-directory: apps/dart
-
-      - name: Build Dart compatibility ${{ matrix.target }}
-        shell: bash
-        run: |
-          dart run ../../scripts/build.dart ${{ matrix.target }}
-          mv "dist/${{ matrix.dart_source }}" "dist/${{ matrix.dart_asset }}"
-        working-directory: apps/dart
-
-      - name: Upload Dart compatibility artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.dart_asset }}
-          path: apps/dart/dist/${{ matrix.dart_asset }}
-          if-no-files-found: error
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable

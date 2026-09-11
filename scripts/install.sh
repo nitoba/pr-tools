@@ -4,16 +4,12 @@
 #   curl -fsSL https://raw.githubusercontent.com/nitoba/pr-tools/main/scripts/install.sh | bash
 #   PR_TOOLS_VERSION=v4.0.11 bash scripts/install.sh
 #
-# Para instalar a implementação Dart de compatibilidade, use:
-#   PR_TOOLS_FLAVOR=dart bash scripts/install.sh
-#
 # Env (todos opcionais, têm precedência sobre as perguntas):
 #   PR_TOOLS_VERSION      tag (v4.0.11) ou 'latest' (padrão)
 #   PR_TOOLS_REPOSITORY   owner/repo (padrão: nitoba/pr-tools)
 #   PR_TOOLS_INSTALL_DIR  diretório de instalação (padrão: ~/.local/bin)
 #   PR_TOOLS_BINARY       usa um binário local em vez de baixar do GitHub
 #   PR_TOOLS_GITHUB_TOKEN token para API/downloads privados ou rate-limit maior
-#   PR_TOOLS_FLAVOR       implementação: rust (padrão) ou dart
 #
 # Flags: --yes/-y (não pergunta nada), --version X, --dir PATH, --help.
 set -euo pipefail
@@ -66,13 +62,6 @@ VERSION="${PR_TOOLS_VERSION:-latest}"
 REPOSITORY="${PR_TOOLS_REPOSITORY:-nitoba/pr-tools}"
 INSTALL_DIR="${PR_TOOLS_INSTALL_DIR:-}"
 LOCAL_BINARY="${PR_TOOLS_BINARY:-}"
-FLAVOR="${PR_TOOLS_FLAVOR:-rust}"
-
-case "$FLAVOR" in
-  rust) ASSET_PREFIX='prt' ;;
-  dart) ASSET_PREFIX='prt-dart' ;;
-  *) fail "Implementação inválida: $FLAVOR (use rust ou dart)." ;;
-esac
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -96,9 +85,9 @@ banner
 PLATFORM="$(uname -s)"
 ARCH="$(uname -m)"
 case "$PLATFORM:$ARCH" in
-  Linux:x86_64|Linux:amd64)    ASSET="${ASSET_PREFIX}-linux-x64";   PRETTY='Linux x64' ;;
-  Linux:aarch64|Linux:arm64)   ASSET="${ASSET_PREFIX}-linux-arm64";  PRETTY='Linux arm64' ;;
-  Darwin:arm64)                ASSET="${ASSET_PREFIX}-macos-arm64";  PRETTY='macOS arm64' ;;
+  Linux:x86_64|Linux:amd64)    ASSET='prt-linux-x64';   PRETTY='Linux x64' ;;
+  Linux:aarch64|Linux:arm64)   ASSET='prt-linux-arm64';  PRETTY='Linux arm64' ;;
+  Darwin:arm64)                ASSET='prt-macos-arm64';  PRETTY='macOS arm64' ;;
   MINGW*|MSYS*|CYGWIN*|:*|Windows_NT:*)
     fail "Windows detectado: use o instalador PowerShell (scripts/install.ps1)." ;;
   *)

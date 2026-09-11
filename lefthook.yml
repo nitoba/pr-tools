@@ -1,15 +1,12 @@
 pre-commit:
   commands:
     format:
-      glob: "**/*.dart"
-      run: dart format {staged_files}
-      stage_fixed: true
+      glob: "**/*.rs"
+      run: cargo fmt --manifest-path apps/rust/Cargo.toml -- --check
     analyze:
-      run: cd apps/dart && dart analyze
+      run: cargo clippy --manifest-path apps/rust/Cargo.toml --locked --all-targets -- -D clippy::correctness
 
 pre-push:
   commands:
-    dart-test:
-      run: cd apps/dart && dart test
     rust-test:
       run: cargo test --manifest-path apps/rust/Cargo.toml --locked
