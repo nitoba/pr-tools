@@ -6,9 +6,8 @@
 
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::fmt::Write as _;
 
-use crate::azure::{AzureClient, WorkItem};
+use crate::azure::{AzureClient, WorkItem, encode_segment};
 use crate::error::{AppError, Result};
 
 /// Entrada para criação de Test Case (espelha `CreateTestCaseInput` do Dart).
@@ -55,23 +54,6 @@ struct WiqlResponse {
     /// Itens.
     #[serde(default, rename = "workItems")]
     items: Vec<WiqlRef>,
-}
-
-/// Percent-encode de um segmento de path (espelha `pathSegment` do Dart).
-///
-/// Duplicado aqui e em `pull_requests.rs` porque `src/azure/mod.rs` — o único
-/// lugar natural de compartilhamento — está sob responsabilidade de outro
-/// agente e não pode ser editado.
-fn encode_segment(value: &str) -> String {
-    let mut out = String::with_capacity(value.len());
-    for byte in value.bytes() {
-        if matches!(byte, b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~') {
-            out.push(byte as char);
-        } else {
-            let _ = write!(out, "%{byte:02X}");
-        }
-    }
-    out
 }
 
 /// Monta a WIQL de Test Cases mais recentes (espelha `queryTestCaseIds`).

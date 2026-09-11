@@ -135,7 +135,6 @@ fn parse_json_object(text: &str) -> Option<PrDescription> {
     }
     let end = end?;
     let slice = text.get(start..=end)?;
-    // Tenta parse direto, senão extrai title/body via regex simples.
     if let Ok(v) = serde_json::from_str::<serde_json::Value>(slice) {
         let title = v
             .get("title")

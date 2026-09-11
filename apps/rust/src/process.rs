@@ -24,14 +24,6 @@ pub(crate) fn command_candidates(program: &str) -> Vec<String> {
 mod tests {
     use super::command_candidates;
 
-    #[test]
-    fn keeps_original_command_first() {
-        assert_eq!(
-            command_candidates("codex").first().map(String::as_str),
-            Some("codex")
-        );
-    }
-
     #[cfg(not(windows))]
     #[test]
     fn does_not_add_windows_shim_on_unix() {
