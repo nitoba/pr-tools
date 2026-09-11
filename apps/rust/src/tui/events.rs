@@ -1,7 +1,8 @@
 //! Eventos do backend → TUI (`mpsc`), sem segurar lock através de `.await`.
 
 use crate::ai::PrDescription;
-use crate::azure::pull_requests::PublishedPr;
+use crate::azure::pull_requests::{PublishedPr, PullRequestCandidate};
+use crate::features::describe::PublishFailure;
 
 /// Evento emitido pela tarefa de geração para a UI.
 #[derive(Debug)]
@@ -20,6 +21,17 @@ pub enum BackendEvent {
     Published(Vec<PublishedPr>),
     /// Um PR foi criado durante uma publicação multi-target.
     PublishedOne(PublishedPr),
+    /// Um target entrou em processamento.
+    PublishingTarget(String),
+    /// Falha recuperável durante a publicação.
+    PublishFailed(PublishFailure),
+    /// Resultado da busca de possíveis PRs já criados.
+    CandidatesLoaded {
+        /// Candidatos encontrados.
+        candidates: Vec<PullRequestCandidate>,
+        /// Falha opcional da consulta.
+        error: Option<String>,
+    },
     /// Falha terminal.
     Failed(String),
 }

@@ -11,6 +11,8 @@ use super::events::BackendEvent;
 use super::shimmer::{tick_frame_index, u16_from_i32_clamped};
 use super::spin_frames;
 use crate::ai::PrDescription;
+use crate::azure::pull_requests::{PublishedPr, PullRequestCandidate};
+use crate::features::describe::{PublishFailure, PublishFailureKind};
 
 /// Frames do spinner (efeito de atividade).
 ///
@@ -66,6 +68,22 @@ pub enum PublishDialog {
     Reviewers,
     /// "Criar com estes reviewers?" — bool = Sim selecionado?
     ConfirmPublish(bool),
+    /// Ações após uma falha de publicação: retry, busca ou voltar.
+    PublishRecovery(usize),
+    /// Possíveis PRs retornados pela busca de duplicidade.
+    CandidateList {
+        /// Índice do candidato focado.
+        selected: usize,
+    },
+}
+
+/// Atividade da consulta de possíveis PRs já criados.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CandidateActivity {
+    /// Nenhuma consulta remota em andamento.
+    Idle,
+    /// Consultando PRs recentes.
+    Loading,
 }
 
 /// Estado completo da tela `desc`.
@@ -128,7 +146,17 @@ pub struct DescribeApp {
     /// Cursor (índice de char) no buffer.
     pub reviewer_cursor: usize,
     /// PRs publicados (target, id, url).
-    pub published: Vec<crate::azure::pull_requests::PublishedPr>,
+    pub published: Vec<PublishedPr>,
+    /// Target atualmente em processamento.
+    pub current_publish_target: Option<String>,
+    /// Falha de publicação recuperável exibida na revisão.
+    pub publish_failure: Option<PublishFailure>,
+    /// Possíveis PRs encontrados após resultado incerto.
+    pub candidates: Vec<PullRequestCandidate>,
+    /// Atividade da busca de candidatos.
+    pub(crate) candidate_activity: CandidateActivity,
+    /// Mensagem da busca de candidatos.
+    pub candidate_message: Option<String>,
 }
 
 impl DescribeApp {
@@ -172,6 +200,11 @@ impl DescribeApp {
             reviewer_edit: String::new(),
             reviewer_cursor: 0,
             published: Vec::new(),
+            current_publish_target: None,
+            publish_failure: None,
+            candidates: Vec::new(),
+            candidate_activity: CandidateActivity::Idle,
+            candidate_message: None,
         }
     }
 
@@ -234,6 +267,11 @@ impl DescribeApp {
                     }
                 }
                 self.published_urls = self.published.iter().map(|p| p.url.clone()).collect();
+                self.current_publish_target = None;
+                self.publish_failure = None;
+                self.candidate_activity = CandidateActivity::Idle;
+                self.candidates.clear();
+                self.candidate_message = None;
             }
             BackendEvent::PublishedOne(item) => {
                 if !self.published.iter().any(|current| current.id == item.id) {
@@ -241,6 +279,20 @@ impl DescribeApp {
                     self.published_urls.push(item.url.clone());
                     self.published.push(item);
                 }
+                self.current_publish_target = None;
+            }
+            BackendEvent::PublishingTarget(target) => {
+                self.current_publish_target = Some(target.clone());
+                self.phase = Phase::Publishing;
+                self.phase_label = format!("publicando {target}…");
+                self.progress_label = format!("criando PR {target}");
+                self.push_log(format!("criando PR {target}"));
+            }
+            BackendEvent::PublishFailed(failure) => {
+                self.on_publish_failed(&failure);
+            }
+            BackendEvent::CandidatesLoaded { candidates, error } => {
+                self.on_candidates_loaded(candidates, error);
             }
             BackendEvent::Failed(msg) => {
                 self.error_step = self.step_index();
@@ -362,11 +414,13 @@ impl DescribeApp {
 
     /// Abre a edição de reviewers (valores = defaults por target).
     pub fn open_reviewers(&mut self) {
-        let setup = self.publish_setup.clone().unwrap_or(PublishSetup {
-            reviewer_sprint: String::new(),
-            reviewer_dev: String::new(),
-        });
-        self.reviewers = self.targets.iter().map(|t| setup.default_for(t)).collect();
+        if self.reviewers.len() != self.targets.len() {
+            let setup = self.publish_setup.clone().unwrap_or(PublishSetup {
+                reviewer_sprint: String::new(),
+                reviewer_dev: String::new(),
+            });
+            self.reviewers = self.targets.iter().map(|t| setup.default_for(t)).collect();
+        }
         self.reviewer_idx = 0;
         self.publish_dialog = Some(PublishDialog::Reviewers);
         self.rebind_reviewer();
@@ -468,6 +522,94 @@ impl DescribeApp {
             self.logs.pop_front();
         }
         self.logs.push_back(line);
+    }
+
+    fn on_publish_failed(&mut self, failure: &PublishFailure) {
+        self.phase = Phase::Review;
+        "revisão — falha na publicação".clone_into(&mut self.phase_label);
+        "publicação falhou — escolha uma ação".clone_into(&mut self.progress_label);
+        self.error = Some(failure.message.clone());
+        self.publish_failure = Some(failure.clone());
+        self.current_publish_target = None;
+        self.candidates.clear();
+        self.candidate_activity = CandidateActivity::Idle;
+        self.candidate_message = None;
+        self.publish_dialog = Some(PublishDialog::PublishRecovery(usize::from(matches!(
+            failure.kind,
+            PublishFailureKind::OutcomeUnknown
+        ))));
+        self.push_log(format!("falha ao publicar: {}", failure.message));
+    }
+
+    /// Targets que ainda não têm PR confirmado/adotado nesta sessão.
+    #[must_use]
+    pub fn remaining_publish_targets(&self) -> Vec<String> {
+        self.targets
+            .iter()
+            .filter(|target| !self.published.iter().any(|item| &item.target == *target))
+            .cloned()
+            .collect()
+    }
+
+    /// Recebe o resultado da busca de possíveis PRs.
+    pub fn on_candidates_loaded(
+        &mut self,
+        candidates: Vec<PullRequestCandidate>,
+        error: Option<String>,
+    ) {
+        self.candidate_activity = CandidateActivity::Idle;
+        self.candidate_message = error;
+        if self.candidate_message.is_none() {
+            self.candidates = candidates;
+            self.candidates.truncate(8);
+        }
+        if let Some(PublishDialog::CandidateList { selected }) = self.publish_dialog {
+            self.publish_dialog = Some(PublishDialog::CandidateList {
+                selected: selected.min(self.candidates.len().saturating_sub(1)),
+            });
+        }
+    }
+
+    /// Adota explicitamente um PR encontrado para o target selecionado.
+    pub fn adopt_candidate(&mut self, selected: usize) -> bool {
+        let Some(candidate) = self.candidates.get(selected).cloned() else {
+            return false;
+        };
+        if !self
+            .published
+            .iter()
+            .any(|item| item.id == candidate.id || item.target == candidate.target)
+        {
+            self.published.push(PublishedPr {
+                target: candidate.target.clone(),
+                id: candidate.id,
+                url: candidate.url.clone(),
+            });
+        }
+        self.published_urls = self.published.iter().map(|item| item.url.clone()).collect();
+        self.candidates.clear();
+        self.candidate_message = None;
+        self.candidate_activity = CandidateActivity::Idle;
+        self.publish_failure = None;
+        self.error = None;
+        self.current_publish_target = None;
+        self.push_log(format!(
+            "PR #{} do target {} adotado",
+            candidate.id, candidate.target
+        ));
+        if self.remaining_publish_targets().is_empty() {
+            self.phase = Phase::Done;
+            "publicado".clone_into(&mut self.phase_label);
+            self.progress = 1.0;
+            "todos os targets concluídos".clone_into(&mut self.progress_label);
+            self.publish_dialog = None;
+        } else {
+            self.phase = Phase::Review;
+            "revisão — PR adotado".clone_into(&mut self.phase_label);
+            "selecione o próximo target".clone_into(&mut self.progress_label);
+            self.publish_dialog = Some(PublishDialog::PublishRecovery(0));
+        }
+        true
     }
 }
 
@@ -612,6 +754,15 @@ mod tests {
     }
 
     #[test]
+    fn reopening_reviewers_after_failure_should_preserve_current_values() {
+        let mut a = app();
+        a.open_reviewers();
+        a.reviewers[0] = "changed@x.com".to_owned();
+        a.open_reviewers();
+        assert_eq!(a.reviewers[0], "changed@x.com");
+    }
+
+    #[test]
     fn published_should_enter_done_with_urls() {
         use crate::azure::pull_requests::PublishedPr;
         let mut a = app();
@@ -641,5 +792,51 @@ mod tests {
         assert_eq!(a.published.len(), 1);
         assert_eq!(a.published_urls, vec!["https://x/pr/7"]);
         assert!(a.logs.iter().any(|line| line.contains("PR dev criado")));
+    }
+
+    #[test]
+    fn publish_failure_should_preserve_partial_success_and_open_recovery() {
+        let mut a = app();
+        a.on_backend(BackendEvent::PublishedOne(PublishedPr {
+            target: "dev".to_owned(),
+            id: 7,
+            url: "https://x/pr/7".to_owned(),
+        }));
+        a.on_backend(BackendEvent::PublishFailed(PublishFailure {
+            message: "target sprint/12: resposta incerta".to_owned(),
+            kind: PublishFailureKind::OutcomeUnknown,
+            target: Some("sprint/12".to_owned()),
+        }));
+
+        assert_eq!(a.phase, Phase::Review);
+        assert_eq!(a.published.len(), 1);
+        assert_eq!(a.remaining_publish_targets(), vec!["sprint/12"]);
+        assert_eq!(a.publish_dialog, Some(PublishDialog::PublishRecovery(1)));
+    }
+
+    #[test]
+    fn adopted_candidate_should_complete_pending_target_without_recreating_it() {
+        let mut a = app();
+        a.on_backend(BackendEvent::PublishedOne(PublishedPr {
+            target: "dev".to_owned(),
+            id: 7,
+            url: "https://x/pr/7".to_owned(),
+        }));
+        a.candidates.push(PullRequestCandidate {
+            target: "sprint/12".to_owned(),
+            id: 8,
+            url: "https://x/pr/8".to_owned(),
+            title: "T".to_owned(),
+            source_ref: "refs/heads/feature/11763-x".to_owned(),
+            target_ref: "refs/heads/sprint/12".to_owned(),
+            created_at: "2026-09-11T20:00:00Z".to_owned(),
+            work_item_matches: true,
+        });
+
+        assert!(a.adopt_candidate(0));
+        assert_eq!(a.phase, Phase::Done);
+        assert_eq!(a.published.len(), 2);
+        assert_eq!(a.published[1].id, 8);
+        assert!(a.remaining_publish_targets().is_empty());
     }
 }

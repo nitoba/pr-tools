@@ -93,6 +93,67 @@ struct ChangesList {
     entries: Vec<PullRequestChange>,
 }
 
+/// Item resumido retornado pela listagem de Pull Requests.
+#[derive(Debug, Clone, Deserialize)]
+struct PullRequestListItem {
+    /// ID do PR.
+    #[serde(default, rename = "pullRequestId")]
+    pull_request_id: i64,
+    /// Título.
+    #[serde(default, deserialize_with = "string_or_empty")]
+    title: String,
+    /// Branch de origem.
+    #[serde(
+        default,
+        deserialize_with = "string_or_empty",
+        rename = "sourceRefName"
+    )]
+    source_ref_name: String,
+    /// Branch de destino.
+    #[serde(
+        default,
+        deserialize_with = "string_or_empty",
+        rename = "targetRefName"
+    )]
+    target_ref_name: String,
+    /// URL da API.
+    #[serde(default, deserialize_with = "string_or_empty")]
+    url: String,
+    /// URL navegável.
+    #[serde(default, deserialize_with = "string_or_empty", rename = "webUrl")]
+    web_url: String,
+    /// Data de criação.
+    #[serde(default, deserialize_with = "string_or_empty", rename = "creationDate")]
+    creation_date: String,
+    /// Links retornados pelo Azure, incluindo o link web navegável.
+    #[serde(default, rename = "_links")]
+    links: PullRequestLinks,
+}
+
+/// Links parciais de um Pull Request.
+#[derive(Debug, Clone, Default, Deserialize)]
+struct PullRequestLinks {
+    /// Link web.
+    #[serde(default)]
+    web: PullRequestLink,
+}
+
+/// Um link HTTP retornado pelo Azure.
+#[derive(Debug, Clone, Default, Deserialize)]
+struct PullRequestLink {
+    /// URL do link.
+    #[serde(default, deserialize_with = "string_or_empty")]
+    href: String,
+}
+
+/// Resposta da listagem de Pull Requests.
+#[derive(Debug, Deserialize)]
+struct PullRequestList {
+    /// PRs encontrados.
+    #[serde(default)]
+    value: Vec<PullRequestListItem>,
+}
+
 /// Desserializa texto opcional tratando `null`/ausente como `""`.
 ///
 /// Espelha `_string` do Dart (que retorna `""` para `null`).
@@ -266,6 +327,107 @@ impl CreatedPullRequest {
     }
 }
 
+/// Possível PR criado antes de uma resposta perdida.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PullRequestCandidate {
+    /// Target do PR.
+    pub target: String,
+    /// ID do PR.
+    pub id: i64,
+    /// Link navegável.
+    pub url: String,
+    /// Título exato retornado pelo Azure.
+    pub title: String,
+    /// Branch de origem retornada pelo Azure.
+    pub source_ref: String,
+    /// Branch de destino retornada pelo Azure.
+    pub target_ref: String,
+    /// Data de criação, quando retornada.
+    pub created_at: String,
+    /// Se o Work Item esperado está vinculado.
+    pub work_item_matches: bool,
+}
+
+/// Busca PRs recentes com origem, destino e título exatos.
+///
+/// A listagem é limitada a 50 itens pelo servidor. A validação final é feita
+/// localmente porque a API não oferece um filtro consistente por título em
+/// todas as versões. A relação com o Work Item é best-effort por candidato.
+///
+/// # Errors
+///
+/// Propaga falhas da listagem principal; falhas ao consultar relações
+/// individuais deixam o candidato disponível com `work_item_matches = false`.
+pub async fn find_recent_pull_request_candidates(
+    client: &AzureClient,
+    project: &str,
+    repository: &str,
+    title: &str,
+    source_ref: &str,
+    target_ref: &str,
+    work_item_id: &str,
+) -> Result<Vec<PullRequestCandidate>> {
+    let response: PullRequestList = client
+        .get(&format!(
+            "{}/_apis/git/repositories/{}/pullrequests?searchCriteria.sourceRefName={}&searchCriteria.targetRefName={}&searchCriteria.status=all&$top=50",
+            encode_segment(project),
+            encode_segment(repository),
+            encode_segment(source_ref),
+            encode_segment(target_ref),
+        ))
+        .await?;
+    let mut candidates = Vec::new();
+    for item in response.value {
+        if item.pull_request_id <= 0
+            || item.title != title
+            || item.source_ref_name != source_ref
+            || item.target_ref_name != target_ref
+        {
+            continue;
+        }
+        let work_item_matches = if work_item_id.trim().is_empty() {
+            true
+        } else {
+            get_pull_request_work_item_ids(client, project, repository, item.pull_request_id)
+                .await
+                .is_ok_and(|ids| {
+                    work_item_id
+                        .trim()
+                        .parse::<i64>()
+                        .is_ok_and(|expected| ids.contains(&expected))
+                })
+        };
+        let url = if !item.links.web.href.is_empty() {
+            item.links.web.href.clone()
+        } else if item.web_url.is_empty() {
+            item.url.clone()
+        } else {
+            item.web_url.clone()
+        };
+        candidates.push(PullRequestCandidate {
+            target: target_ref
+                .strip_prefix("refs/heads/")
+                .unwrap_or(target_ref)
+                .to_owned(),
+            id: item.pull_request_id,
+            url,
+            title: item.title,
+            source_ref: item.source_ref_name,
+            target_ref: item.target_ref_name,
+            created_at: item.creation_date,
+            work_item_matches,
+        });
+    }
+    candidates.sort_by(|left, right| {
+        right
+            .work_item_matches
+            .cmp(&left.work_item_matches)
+            .then_with(|| right.created_at.cmp(&left.created_at))
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    Ok(candidates)
+}
+
 /// Entrada de criação de PR (espelha `CreatePullRequestInput` do Dart).
 #[derive(Debug, Clone)]
 pub struct CreatePrInput {
@@ -383,6 +545,8 @@ pub struct PublishInput<'a> {
     /// Permite que uma UI mostre progresso real e preserve sucessos parciais
     /// quando um target posterior falhar.
     pub on_published: Option<&'a (dyn Fn(&PublishedPr) + Sync)>,
+    /// Notifica a UI antes de qualquer chamada remota para um target.
+    pub on_target_started: Option<&'a (dyn Fn(&str) + Sync)>,
 }
 
 /// Publica a descrição em todos os targets (espelha o publisher Dart).
@@ -417,6 +581,9 @@ pub async fn publish_pull_requests(
     let mut resolved: HashMap<String, String> = HashMap::new();
     let mut published = Vec::with_capacity(input.targets.len());
     for target in input.targets {
+        if let Some(on_target_started) = input.on_target_started {
+            on_target_started(target);
+        }
         let reviewer = (input.reviewer_for)(target).trim().to_owned();
         let mut reviewer_ids = Vec::new();
         if !reviewer.is_empty() {
@@ -633,5 +800,27 @@ mod tests {
             web_url: String::new(),
         };
         assert_eq!(fallback.web_link(), "https://api");
+    }
+
+    #[test]
+    fn recent_pull_request_list_should_deserialize_candidate_fields() {
+        let list: PullRequestList = serde_json::from_value(serde_json::json!({
+            "value": [{
+                "pullRequestId": 42,
+                "title": "Atualiza fluxo",
+                "sourceRefName": "refs/heads/feature/1",
+                "targetRefName": "refs/heads/dev",
+                "url": "https://api/pr/42",
+                "webUrl": "https://web/pr/42",
+                "creationDate": "2026-09-11T20:00:00Z",
+                "_links": {"web": {"href": "https://web/pr/42"}}
+            }]
+        }))
+        .unwrap();
+        assert_eq!(list.value.len(), 1);
+        assert_eq!(list.value[0].pull_request_id, 42);
+        assert_eq!(list.value[0].web_url, "https://web/pr/42");
+        assert_eq!(list.value[0].links.web.href, "https://web/pr/42");
+        assert_eq!(list.value[0].creation_date, "2026-09-11T20:00:00Z");
     }
 }

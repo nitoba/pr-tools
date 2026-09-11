@@ -6,6 +6,7 @@
 //! backend a 30fps e desenha [`DescribeApp`] via `Widget for &App`.
 
 use std::io::{IsTerminal, Stdout};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
@@ -22,15 +23,15 @@ use ratatui::{
 };
 use tokio::sync::mpsc;
 
-use super::describe_app::{DescribeApp, Phase, PublishDialog, PublishSetup};
+use super::describe_app::{CandidateActivity, DescribeApp, Phase, PublishDialog, PublishSetup};
 use super::events::{BackendEvent, LiveOutcome};
 use super::shimmer::{f64_from_usize, filled_cells, percent_u16};
 use super::{ascii_only, border_type, centered_buttons, modal_frame, theme};
 use crate::ai;
 use crate::azure::AzureClient;
 use crate::azure::pull_requests::{PublishedPr, publish_pull_requests};
-use crate::config::Config;
-use crate::features::describe::DescribePrep;
+use crate::config::{self, Config};
+use crate::features::describe::{self, DescribePrep};
 use crate::git::RepositoryRemote;
 
 /// Resultado do backend antes de normalizar (raw acumulado).
@@ -227,8 +228,6 @@ struct PublishBase {
     remote: Option<RepositoryRemote>,
     /// Branch de origem.
     branch: String,
-    /// Targets.
-    targets: Vec<String>,
     /// Work Item (vazio = sem vínculo).
     work_item_id: String,
 }
@@ -242,6 +241,8 @@ async fn publish_task(
     title: String,
     body: String,
     reviewers: Vec<String>,
+    targets: Vec<String>,
+    recovery: bool,
     tx: mpsc::UnboundedSender<BackendEvent>,
 ) {
     let _ = tx.send(BackendEvent::Phase("publicando…".to_owned()));
@@ -251,7 +252,22 @@ async fn publish_task(
         ));
         return;
     };
-    let client = AzureClient::new(&remote.organization, &base.pat);
+    let (pat, timeout) = if recovery {
+        match config::load_config() {
+            Ok(config) => (config.azure_pat, Some(describe::TUI_AZURE_TIMEOUT)),
+            Err(error) => {
+                let failure = describe::classify_publish_error(&error, None);
+                let _ = tx.send(BackendEvent::PublishFailed(failure));
+                return;
+            }
+        }
+    } else {
+        (base.pat.clone(), None)
+    };
+    let client = match timeout {
+        Some(timeout) => AzureClient::new_with_timeout(&remote.organization, &pat, timeout),
+        None => AzureClient::new(&remote.organization, &pat),
+    };
     let _ = tx.send(BackendEvent::Progress(
         0.1,
         "resolvendo repositório…".to_owned(),
@@ -261,9 +277,11 @@ async fn publish_task(
     } else {
         vec![base.work_item_id.trim().to_owned()]
     };
-    let targets = base.targets.clone();
     let total = f64_from_usize(targets.len().max(1));
     let tx_target = tx.clone();
+    let tx_started = tx.clone();
+    let active_target = Arc::new(Mutex::new(None::<String>));
+    let active_target_callback = Arc::clone(&active_target);
     let on_published = |item: &PublishedPr| {
         let completed = targets
             .iter()
@@ -274,6 +292,12 @@ async fn publish_task(
             format!("PR {} criado", item.target),
         ));
         let _ = tx_target.send(BackendEvent::PublishedOne(item.clone()));
+    };
+    let on_target_started = |target: &str| {
+        if let Ok(mut active) = active_target_callback.lock() {
+            *active = Some(target.to_owned());
+        }
+        let _ = tx_started.send(BackendEvent::PublishingTarget(target.to_owned()));
     };
     // Resolve reviewers uma vez aqui (o publisher também cacheia; o log
     // mostra o que está acontecendo por target).
@@ -296,6 +320,7 @@ async fn publish_task(
                 .unwrap_or_default()
         },
         on_published: Some(&on_published),
+        on_target_started: Some(&on_target_started),
     };
     let result = publish_pull_requests(&client, &input).await;
     match result {
@@ -303,7 +328,47 @@ async fn publish_task(
             let _ = tx.send(BackendEvent::Published(published));
         }
         Err(e) => {
-            let _ = tx.send(BackendEvent::Failed(format!("falha ao publicar PRs: {e}")));
+            let target = active_target.lock().ok().and_then(|active| active.clone());
+            let failure = describe::classify_publish_error(&e, target.as_deref());
+            let _ = tx.send(BackendEvent::PublishFailed(failure));
+        }
+    }
+}
+
+/// Executa a consulta de possíveis PRs fora do loop de renderização.
+async fn backend_find_candidates(
+    base: PublishBase,
+    title: String,
+    target: String,
+    tx: mpsc::UnboundedSender<BackendEvent>,
+) {
+    let Some(remote) = base.remote.as_ref() else {
+        let _ = tx.send(BackendEvent::CandidatesLoaded {
+            candidates: Vec::new(),
+            error: Some("remote Azure DevOps não encontrado".to_owned()),
+        });
+        return;
+    };
+    match describe::find_publish_candidates(
+        remote,
+        &base.branch,
+        &base.work_item_id,
+        &title,
+        &target,
+    )
+    .await
+    {
+        Ok(candidates) => {
+            let _ = tx.send(BackendEvent::CandidatesLoaded {
+                candidates,
+                error: None,
+            });
+        }
+        Err(error) => {
+            let _ = tx.send(BackendEvent::CandidatesLoaded {
+                candidates: Vec::new(),
+                error: Some(format!("não foi possível consultar PRs recentes: {error}")),
+            });
         }
     }
 }
@@ -314,8 +379,19 @@ fn start_publish(
     base: &PublishBase,
     tx: &mpsc::UnboundedSender<BackendEvent>,
     desc: &crate::ai::PrDescription,
+    recovery: bool,
 ) {
     app.commit_reviewer();
+    if recovery {
+        // A recuperação deve refletir alterações feitas no `prt init` desde a
+        // tentativa anterior, sem alterar o snapshot usado no primeiro envio.
+        if let Ok(config) = config::load_config() {
+            app.publish_setup = Some(PublishSetup {
+                reviewer_sprint: config.reviewer_sprint,
+                reviewer_dev: config.reviewer_dev,
+            });
+        }
+    }
     // Vazio volta ao default (como no Dart: vazio = padrão).
     if let Some(setup) = app.publish_setup.clone() {
         for (i, target) in app.targets.iter().enumerate() {
@@ -327,6 +403,16 @@ fn start_publish(
         }
     }
     let reviewers = app.reviewers.clone();
+    let targets = app.remaining_publish_targets();
+    if targets.is_empty() {
+        app.phase = Phase::Done;
+        "publicado".clone_into(&mut app.phase_label);
+        app.progress = 1.0;
+        "todos os targets concluídos".clone_into(&mut app.progress_label);
+        app.publish_failure = None;
+        app.publish_dialog = None;
+        return;
+    }
     app.publish_dialog = None;
     app.phase = Phase::Publishing;
     "publicando…".clone_into(&mut app.phase_label);
@@ -336,7 +422,9 @@ fn start_publish(
     let title = desc.title.clone();
     let body = desc.body.clone();
     let tx = tx.clone();
-    tokio::spawn(publish_task(base, title, body, reviewers, tx));
+    tokio::spawn(publish_task(
+        base, title, body, reviewers, targets, recovery, tx,
+    ));
 }
 
 /// Desenha um frame completo a partir do estado — reage a cada token/log.
@@ -657,7 +745,23 @@ fn render_description(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
     if let Some(description) = &app.desc {
         use super::markdown::{markdown_text, title_line};
         use ratatui::text::Text;
-        let mut lines: Vec<Line> = vec![title_line(&description.title), Line::from("")];
+        let mut lines: Vec<Line> = Vec::new();
+        if let Some(error) = &app.error {
+            lines.push(Line::from(Span::styled(
+                format!("{} {error}", if ascii_only() { "x" } else { "✘" }),
+                theme().error,
+            )));
+            lines.push(Line::from(Span::styled(
+                if app.publish_failure.is_some() {
+                    "A descrição foi preservada; ajuste os reviewers ou recupere o PR abaixo."
+                } else {
+                    ""
+                },
+                theme().muted,
+            )));
+            lines.push(Line::from(""));
+        }
+        lines.extend([title_line(&description.title), Line::from("")]);
         if ascii_only() {
             // O renderer Markdown usa molduras/checkboxes Unicode; em
             // TERM=dumb mantemos o texto literal e a navegação intacta.
@@ -1005,6 +1109,20 @@ fn render_footer(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
                 "digite o reviewer · tab/↓↑ trocar campo · enter avançar · esc voltar"
             }
         }
+        Some(PublishDialog::PublishRecovery(_)) => {
+            if ascii_only() {
+                "up/down escolher - enter confirmar - esc voltar"
+            } else {
+                "↑/↓ escolher · enter confirmar · esc voltar"
+            }
+        }
+        Some(PublishDialog::CandidateList { .. }) => {
+            if ascii_only() {
+                "up/down escolher - enter adotar - esc voltar"
+            } else {
+                "↑/↓ escolher · enter adotar · esc voltar"
+            }
+        }
         None => match app.phase {
             Phase::Review => {
                 if ascii_only() {
@@ -1082,7 +1200,7 @@ fn render_help(area: Rect, buf: &mut Buffer) {
                 "erros",
                 theme().accent.add_modifier(Modifier::BOLD),
             )),
-            Line::from("r - retornar erro ao comando (so na tela de erro)"),
+            Line::from("r - retry na falha de publicacao ou retornar erro terminal"),
             Line::from(""),
             Line::from(Span::styled(
                 "enter confirma - esc sempre volta um nivel",
@@ -1112,7 +1230,7 @@ fn render_help(area: Rect, buf: &mut Buffer) {
                 "erros",
                 theme().accent.add_modifier(Modifier::BOLD),
             )),
-            Line::from("r — retornar erro ao comando (só na tela de erro)"),
+            Line::from("r — retry na falha de publicação ou retornar erro terminal"),
             Line::from(""),
             Line::from(Span::styled(
                 "enter confirma · esc sempre volta um nível",
@@ -1133,7 +1251,152 @@ fn render_publish_dialog(app: &DescribeApp, dialog: PublishDialog, area: Rect, b
         PublishDialog::ConfirmCreate(yes) => render_confirm_create(app, yes, area, buf),
         PublishDialog::Reviewers => render_reviewers_dialog(app, area, buf),
         PublishDialog::ConfirmPublish(yes) => render_confirm_publish(app, yes, area, buf),
+        PublishDialog::PublishRecovery(selected) => {
+            render_publish_recovery(app, selected, area, buf);
+        }
+        PublishDialog::CandidateList { selected } => {
+            render_candidate_list(app, selected, area, buf);
+        }
     }
+}
+
+fn render_publish_recovery(app: &DescribeApp, selected: usize, area: Rect, buf: &mut Buffer) {
+    let inner = modal_frame(area, buf, " Recuperar publicação ", theme().warning, 76, 11);
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+    let unknown = app.publish_failure.as_ref().is_some_and(|failure| {
+        matches!(
+            failure.kind,
+            crate::features::describe::PublishFailureKind::OutcomeUnknown
+        )
+    });
+    let failed_target = app
+        .publish_failure
+        .as_ref()
+        .and_then(|failure| failure.target.as_deref())
+        .unwrap_or("target não identificado");
+    let options = [
+        "reenviar targets pendentes",
+        "buscar PR possivelmente criado",
+        "editar reviewers",
+        "voltar à revisão",
+    ];
+    let mut lines = vec![
+        Line::from(Span::styled(
+            format!("Falha durante a publicação ({failed_target})"),
+            Style::new().add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::styled(
+            if unknown {
+                "O resultado é incerto; confirme se já existe um PR antes de reenviar."
+            } else {
+                "O Azure recusou a operação; revise os reviewers ou tente novamente."
+            },
+            theme().muted,
+        )),
+        Line::from(""),
+    ];
+    for (index, option) in options.iter().enumerate() {
+        let marker = if index == selected { ">" } else { " " };
+        let style = if index == selected {
+            theme().accent.add_modifier(Modifier::BOLD)
+        } else {
+            theme().muted
+        };
+        lines.push(Line::from(Span::styled(
+            format!("{marker} {option}"),
+            style,
+        )));
+    }
+    lines.extend([
+        Line::from(""),
+        Line::from(Span::styled(
+            format!(
+                "PRs preservados nesta sessão: {} · targets pendentes: {}",
+                app.published.len(),
+                app.remaining_publish_targets().len()
+            ),
+            theme().muted,
+        )),
+        Line::from(Span::styled(
+            if ascii_only() {
+                "up/down escolher - enter confirmar - esc voltar"
+            } else {
+                "↑/↓ escolher · enter confirmar · esc voltar"
+            },
+            theme().muted,
+        )),
+    ]);
+    Paragraph::new(lines)
+        .wrap(Wrap { trim: false })
+        .render(inner, buf);
+}
+
+fn render_candidate_list(app: &DescribeApp, selected: usize, area: Rect, buf: &mut Buffer) {
+    let height = 7 + app.candidates.len().min(8);
+    let inner = modal_frame(
+        area,
+        buf,
+        " PRs possivelmente criados ",
+        theme().warning,
+        90,
+        height,
+    );
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+    let mut lines = vec![Line::from(Span::styled(
+        if app.candidate_activity == CandidateActivity::Loading {
+            "consultando PRs recentes…"
+        } else {
+            "Adote um PR somente se confirmar que ele corresponde a esta publicação."
+        },
+        theme().muted,
+    ))];
+    if let Some(message) = &app.candidate_message {
+        lines.push(Line::from(Span::styled(message.clone(), theme().error)));
+    }
+    if app.candidates.is_empty() && app.candidate_activity != CandidateActivity::Loading {
+        lines.push(Line::from(Span::styled(
+            "nenhum candidato compatível foi encontrado",
+            theme().muted,
+        )));
+    }
+    for (index, candidate) in app.candidates.iter().take(8).enumerate() {
+        let marker = if index == selected { ">" } else { " " };
+        let match_mark = if candidate.work_item_matches {
+            "✓"
+        } else {
+            "?"
+        };
+        let style = if index == selected {
+            theme().accent.add_modifier(Modifier::BOLD)
+        } else {
+            Style::new()
+        };
+        lines.push(Line::from(Span::styled(
+            format!(
+                "{marker} {}  #{}  [{}] {}",
+                candidate.target, candidate.id, match_mark, candidate.url
+            ),
+            style,
+        )));
+    }
+    lines.extend([
+        Line::from(""),
+        Line::from(Span::styled(
+            if ascii_only() {
+                "enter adotar - up/down escolher - esc voltar"
+            } else {
+                "enter adotar · ↑/↓ escolher · esc voltar"
+            },
+            theme().muted,
+        )),
+    ]);
+    Paragraph::new(lines)
+        .wrap(Wrap { trim: false })
+        .render(inner, buf);
 }
 
 fn render_confirm_create(app: &DescribeApp, yes: bool, area: Rect, buf: &mut Buffer) {
@@ -1373,7 +1636,6 @@ fn make_publish_parts(prep: &DescribePrep) -> (Option<PublishSetup>, Option<Stri
         pat,
         remote: prep.context.remote.clone(),
         branch: prep.context.branch.clone(),
-        targets: prep.targets.clone(),
         work_item_id: prep.work_item_id.clone(),
     };
     (publish_setup, publish_blocked, publish_base)
@@ -1393,6 +1655,30 @@ fn drain_backend(rx: &mut mpsc::UnboundedReceiver<BackendEvent>, app: &mut Descr
 fn on_nav_key(app: &mut DescribeApp, key: crossterm::event::KeyEvent) -> bool {
     use crossterm::event::KeyCode;
     match (key.code, app.publish_dialog) {
+        (KeyCode::Char('j') | KeyCode::Down, Some(PublishDialog::PublishRecovery(selected))) => {
+            app.publish_dialog = Some(PublishDialog::PublishRecovery((selected + 1) % 4));
+            true
+        }
+        (KeyCode::Char('k') | KeyCode::Up, Some(PublishDialog::PublishRecovery(selected))) => {
+            app.publish_dialog = Some(PublishDialog::PublishRecovery((selected + 3) % 4));
+            true
+        }
+        (KeyCode::Char('j') | KeyCode::Down, Some(PublishDialog::CandidateList { selected })) => {
+            if !app.candidates.is_empty() {
+                app.publish_dialog = Some(PublishDialog::CandidateList {
+                    selected: (selected + 1) % app.candidates.len(),
+                });
+            }
+            true
+        }
+        (KeyCode::Char('k') | KeyCode::Up, Some(PublishDialog::CandidateList { selected })) => {
+            if !app.candidates.is_empty() {
+                app.publish_dialog = Some(PublishDialog::CandidateList {
+                    selected: (selected + app.candidates.len() - 1) % app.candidates.len(),
+                });
+            }
+            true
+        }
         (KeyCode::Char('j'), _) if app.publish_dialog == Some(PublishDialog::Reviewers) => {
             // No editor, `j` digita (emails contêm a letra).
             app.reviewer_edit_input(key);
@@ -1468,6 +1754,41 @@ fn on_copy_key(app: &mut DescribeApp, key: crossterm::event::KeyEvent) -> bool {
     false
 }
 
+/// Target usado na consulta de duplicidade: o target que falhou, ou o
+/// primeiro ainda pendente quando a falha ocorreu antes de iniciar um target.
+fn candidate_target(app: &DescribeApp) -> Option<String> {
+    app.publish_failure
+        .as_ref()
+        .and_then(|failure| failure.target.clone())
+        .or_else(|| app.remaining_publish_targets().into_iter().next())
+}
+
+/// Inicia a busca de PRs possivelmente criados antes de uma resposta perdida.
+fn start_candidate_search(
+    app: &mut DescribeApp,
+    base: &PublishBase,
+    tx: &mpsc::UnboundedSender<BackendEvent>,
+) {
+    let Some(target) = candidate_target(app) else {
+        app.candidate_message = Some("não há target pendente para consultar".to_owned());
+        return;
+    };
+    let Some(desc) = app.desc.clone() else {
+        return;
+    };
+    app.candidate_activity = CandidateActivity::Loading;
+    app.candidate_message = None;
+    app.candidates.clear();
+    app.publish_dialog = Some(PublishDialog::CandidateList { selected: 0 });
+    app.phase_label = format!("buscando PRs recentes ({target})…");
+    "consultando possível duplicidade".clone_into(&mut app.progress_label);
+    app.logs
+        .push_back(format!("buscando PRs recentes do target {target}"));
+    let base = base.clone();
+    let tx = tx.clone();
+    tokio::spawn(backend_find_candidates(base, desc.title, target, tx));
+}
+
 /// `Enter` — avança o fluxo de publicação conforme o diálogo aberto.
 fn on_enter_key(
     app: &mut DescribeApp,
@@ -1478,6 +1799,16 @@ fn on_enter_key(
         None => {
             // Revisão → inicia o fluxo de publicação.
             if app.phase == Phase::Review && app.desc.is_some() {
+                if app.publish_failure.is_some() {
+                    let selected = app.publish_failure.as_ref().map_or(0, |failure| {
+                        usize::from(matches!(
+                            failure.kind,
+                            describe::PublishFailureKind::OutcomeUnknown
+                        ))
+                    });
+                    app.publish_dialog = Some(PublishDialog::PublishRecovery(selected));
+                    return true;
+                }
                 match &app.publish_blocked {
                     Some(reason) => {
                         app.logs
@@ -1520,11 +1851,29 @@ fn on_enter_key(
         Some(PublishDialog::ConfirmPublish(yes)) => {
             if yes {
                 if let Some(desc) = app.desc.clone() {
-                    start_publish(app, publish_base, tx, &desc);
+                    let recovery = app.publish_failure.is_some();
+                    start_publish(app, publish_base, tx, &desc, recovery);
                 }
             } else {
                 app.publish_dialog = None;
             }
+            true
+        }
+        Some(PublishDialog::PublishRecovery(selected)) => {
+            match selected {
+                0 => {
+                    if let Some(desc) = app.desc.clone() {
+                        start_publish(app, publish_base, tx, &desc, true);
+                    }
+                }
+                1 => start_candidate_search(app, publish_base, tx),
+                2 => app.open_reviewers(),
+                _ => app.publish_dialog = None,
+            }
+            true
+        }
+        Some(PublishDialog::CandidateList { selected }) => {
+            app.adopt_candidate(selected);
             true
         }
     }
@@ -1558,7 +1907,18 @@ fn on_confirm_key(
         }
         (KeyCode::Char('y'), Some(PublishDialog::ConfirmPublish(_))) => {
             if let Some(desc) = app.desc.clone() {
-                start_publish(app, publish_base, tx, &desc);
+                let recovery = app.publish_failure.is_some();
+                start_publish(app, publish_base, tx, &desc, recovery);
+            }
+            true
+        }
+        (KeyCode::Char('a'), Some(PublishDialog::CandidateList { selected })) => {
+            app.adopt_candidate(selected);
+            true
+        }
+        (KeyCode::Char('r'), Some(PublishDialog::PublishRecovery(_))) => {
+            if let Some(desc) = app.desc.clone() {
+                start_publish(app, publish_base, tx, &desc, true);
             }
             true
         }
@@ -1587,13 +1947,39 @@ fn on_confirm_key(
 
 /// Resultado ao sair da tela: uma descrição pronta preserva os PRs criados.
 fn quit_outcome(app: &DescribeApp) -> LiveOutcome {
-    match app.desc.clone() {
-        Some(desc) if matches!(app.phase, Phase::Review | Phase::Done) => LiveOutcome::Done {
+    let Some(desc) = app.desc.clone() else {
+        return LiveOutcome::Aborted;
+    };
+    if app.phase == Phase::Done {
+        return LiveOutcome::Done {
             desc,
             published: app.published.clone(),
-        },
-        _ => LiveOutcome::Aborted,
+        };
     }
+    if app.phase == Phase::Review {
+        if let Some(failure) = &app.publish_failure {
+            let partial = if app.published.is_empty() {
+                "nenhum PR foi confirmado"
+            } else {
+                "os PRs já confirmados foram preservados"
+            };
+            return LiveOutcome::Failed(format!(
+                "publicação incompleta: {}; {partial}",
+                failure.message
+            ));
+        }
+        if !app.published.is_empty() && !app.remaining_publish_targets().is_empty() {
+            return LiveOutcome::Failed(
+                "publicação incompleta: há targets pendentes; os PRs já confirmados foram preservados"
+                    .to_owned(),
+            );
+        }
+        return LiveOutcome::Done {
+            desc,
+            published: app.published.clone(),
+        };
+    }
+    LiveOutcome::Aborted
 }
 
 /// Despacha uma tecla já filtrada por `kind`; retorna `Ok(Some(outcome))`
@@ -1939,6 +2325,33 @@ mod tests {
             }
             LiveOutcome::Aborted | LiveOutcome::Failed(_) => {
                 panic!("PR publicado não pode sair como cancelamento")
+            }
+        }
+    }
+
+    #[test]
+    fn leaving_after_incomplete_publish_should_return_failure() {
+        let mut app = review_app();
+        app.on_backend(BackendEvent::PublishedOne(PublishedPr {
+            target: "dev".to_owned(),
+            id: 42,
+            url: "https://dev.azure.com/example/pr/42".to_owned(),
+        }));
+        app.on_backend(BackendEvent::PublishFailed(
+            crate::features::describe::PublishFailure {
+                message: "target sprint/12: resposta incerta".to_owned(),
+                kind: crate::features::describe::PublishFailureKind::OutcomeUnknown,
+                target: Some("sprint/12".to_owned()),
+            },
+        ));
+
+        match quit_outcome(&app) {
+            LiveOutcome::Failed(message) => {
+                assert!(message.contains("publicação incompleta"));
+                assert!(message.contains("preservados"));
+            }
+            LiveOutcome::Done { .. } | LiveOutcome::Aborted => {
+                panic!("publicação incompleta não pode sair como sucesso")
             }
         }
     }
