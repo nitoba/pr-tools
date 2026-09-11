@@ -177,3 +177,34 @@ separadamente na máquina do usuário.
 host atual, depois de executar as verificações Rust por padrão. Nas releases,
 esse binário também é publicado como `prt-<plataforma>` (nome principal),
 enquanto o Dart usa `prt-dart-<plataforma>`.
+
+### Snapshots da TUI Rust
+
+Os testes de renderização usam o Insta para comparar a interface com os arquivos
+`.snap` em `apps/rust/src/tui/snapshots/`. Essas referências fazem parte dos
+testes e devem ser versionadas junto com mudanças intencionais na interface.
+Apenas os candidatos `.snap.new`, ainda pendentes de revisão, são ignorados.
+
+Para atualizar as referências após uma mudança visual, execute na raiz do
+repositório (Bash/Zsh):
+
+```bash
+# Instale a ferramenta de revisão uma vez; não é necessária para rodar os testes.
+cargo install cargo-insta --locked
+
+# Gere candidatos. Diferenças ou referências ausentes fazem esta etapa falhar.
+INSTA_UPDATE=new cargo test --manifest-path apps/rust/Cargo.toml --locked
+
+# Revise os diffs e aceite apenas as mudanças esperadas.
+(cd apps/rust && cargo insta review)
+
+# Confirme que a suíte passa sem gerar ou aceitar referências automaticamente.
+INSTA_UPDATE=no cargo test --manifest-path apps/rust/Cargo.toml --locked
+
+git add apps/rust/src/tui/snapshots/
+```
+
+Inclua os `.snap` revisados no mesmo commit da mudança visual. Não remova nem
+ignore a pasta de referências: um checkout limpo no CI precisa desses arquivos.
+Não habilite aceite automático de snapshots no CI, pois isso esconderia
+regressões de renderização.

@@ -4,5 +4,6 @@
 dist/
 /apps/rust/target/
 
-# Snapshots do Insta (gerados e versionados anteriormente).
-/apps/rust/src/tui/snapshots/
+# Snapshots de referência do Insta (*.snap) devem ser versionados.
+# Ignore apenas os resultados pendentes de revisão.
+*.snap.new
