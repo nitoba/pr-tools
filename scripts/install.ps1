@@ -1,4 +1,4 @@
-<# Instalador interativo principal do `prt` Rust — Windows PowerShell.
+﻿<# Instalador interativo principal do `prt` Rust — Windows PowerShell.
 #
 #   $installer = Join-Path $env:TEMP 'pr-tools-install.ps1'
 #   Invoke-WebRequest 'https://raw.githubusercontent.com/nitoba/pr-tools/main/scripts/install.ps1' -OutFile $installer
@@ -150,7 +150,11 @@ Write-Ok "prt instalado em $targetPath"
 # ---------- PATH ----------
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 $pathEntries = @($userPath -split ';' | Where-Object { $_ })
-$alreadyThere = $pathEntries | Where-Object { $_.TrimEnd('\') -ieq $InstallDir.TrimEnd('\') }
+$directorySeparator = [IO.Path]::DirectorySeparatorChar
+$normalizedInstallDir = $InstallDir.TrimEnd($directorySeparator)
+$alreadyThere = $pathEntries | Where-Object {
+  $_.TrimEnd($directorySeparator) -ieq $normalizedInstallDir
+}
 if (-not $alreadyThere) {
   if (Confirm-Answer "Adicionar $InstallDir ao PATH do usuário?") {
     $newUserPath = (@($pathEntries) + $InstallDir) -join ';'
