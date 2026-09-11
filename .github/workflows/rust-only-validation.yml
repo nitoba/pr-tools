@@ -1,0 +1,112 @@
+name: Rust-only removal validation (temporary)
+
+on:
+  push:
+    branches: [audit/rust-only-validation-20260911]
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUTF8: '1'
+  INSTA_UPDATE: 'no'
+
+jobs:
+  rust-checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Apply and verify the exact Rust-only candidate
+        shell: bash
+        run: |
+          cp -R _rust-only-audit "$RUNNER_TEMP/rust-only-audit"
+          git checkout --detach 512766c7605cc8c4f496eb8d3d49f7d8dc092cdf
+          mkdir -p "$RUNNER_TEMP/evidence"
+          python "$RUNNER_TEMP/rust-only-audit/apply.py" 2>&1 | tee "$RUNNER_TEMP/evidence/scope.log"
+          git diff --cached --binary > "$RUNNER_TEMP/evidence/rust-only.patch"
+          git diff --cached --stat > "$RUNNER_TEMP/evidence/diff-stat.txt"
+          git diff --cached --name-status > "$RUNNER_TEMP/evidence/changed-files.txt"
+          git ls-files > "$RUNNER_TEMP/evidence/remaining-files.txt"
+          git write-tree > "$RUNNER_TEMP/evidence/tested-tree.txt"
+      - name: Bash syntax and installer regression checks
+        shell: bash
+        run: |
+          for script in scripts/*.sh; do bash -n "$script"; done
+          REPO_ROOT="$GITHUB_WORKSPACE" python "$RUNNER_TEMP/rust-only-audit/test_installers.py" 2>&1 | tee "$RUNNER_TEMP/evidence/bash-installers.log"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Rust format
+        run: cargo fmt --manifest-path apps/rust/Cargo.toml -- --check 2>&1 | tee "$RUNNER_TEMP/evidence/fmt.log"
+      - name: Rust lint
+        run: cargo clippy --manifest-path apps/rust/Cargo.toml --locked --all-targets -- -D clippy::correctness 2>&1 | tee "$RUNNER_TEMP/evidence/clippy.log"
+      - name: Rust tests
+        run: cargo test --manifest-path apps/rust/Cargo.toml --locked 2>&1 | tee "$RUNNER_TEMP/evidence/tests.log"
+      - name: Rust build and CLI smoke test
+        run: |
+          cargo build --manifest-path apps/rust/Cargo.toml --locked --all-targets 2>&1 | tee "$RUNNER_TEMP/evidence/build.log"
+          apps/rust/target/debug/prt --version | tee "$RUNNER_TEMP/evidence/version.log"
+          apps/rust/target/debug/prt --help > "$RUNNER_TEMP/evidence/help.log"
+          test "$(git write-tree)" = a915d27ccd93bc511533c9a26f31c854dcdf0d9b
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-only-validation
+          path: ${{ runner.temp }}/evidence/
+          retention-days: 7
+          if-no-files-found: error
+
+  installer-windows:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Apply and verify identical candidate on Windows
+        shell: bash
+        run: |
+          cp -R _rust-only-audit "$RUNNER_TEMP/rust-only-audit"
+          git config core.autocrlf false
+          git checkout --detach 512766c7605cc8c4f496eb8d3d49f7d8dc092cdf
+          python "$RUNNER_TEMP/rust-only-audit/apply.py"
+      - name: Native PowerShell installer regression checks
+        shell: pwsh
+        run: |
+          & "$env:RUNNER_TEMP/rust-only-audit/test-installers.ps1" -Root $env:GITHUB_WORKSPACE *>&1 | Tee-Object "$env:RUNNER_TEMP/windows-installers.log"
+      - name: Upload Windows evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-only-windows
+          path: ${{ runner.temp }}/windows-installers.log
+          retention-days: 7
+
+  publish-cleanup-branch:
+    needs: [rust-checks, installer-windows]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Publish only the verified product tree
+        shell: bash
+        run: |
+          cp _rust-only-audit/apply.py "$RUNNER_TEMP/apply-rust-only.py"
+          git checkout --detach 512766c7605cc8c4f496eb8d3d49f7d8dc092cdf
+          python "$RUNNER_TEMP/apply-rust-only.py"
+          git switch -c cleanup/remove-dart-20260911
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'chore: remove Dart implementation and keep Rust only'
+          test "$(git rev-parse HEAD^{tree})" = a915d27ccd93bc511533c9a26f31c854dcdf0d9b
+          git push origin HEAD:refs/heads/cleanup/remove-dart-20260911
+          git log -1 --format='%H %T %s'
