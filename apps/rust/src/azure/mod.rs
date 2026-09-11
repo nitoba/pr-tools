@@ -6,6 +6,7 @@
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Deserializer, Serialize};
+use std::fmt::Write as _;
 use std::time::Duration;
 
 use crate::error::{AppError, Result};
@@ -13,6 +14,19 @@ use crate::git::RepositoryRemote;
 
 pub mod pull_requests;
 pub mod work_items;
+
+/// Percent-encode de um segmento de path: tudo fora de `[A-Za-z0-9-_.~]` vira `%XX`.
+fn encode_segment(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        if matches!(byte, b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~') {
+            out.push(byte as char);
+        } else {
+            let _ = write!(out, "%{byte:02X}");
+        }
+    }
+    out
+}
 
 /// Cliente HTTP autenticado.
 #[derive(Debug, Clone)]

@@ -7,9 +7,7 @@
 
 use serde::Deserialize;
 
-use std::fmt::Write as _;
-
-use crate::azure::AzureClient;
+use crate::azure::{AzureClient, encode_segment};
 use crate::error::Result;
 
 /// Número máximo de alterações resumidas (espelha `$top=200` do Dart).
@@ -195,24 +193,6 @@ where
     }
 
     deserializer.deserialize_option(StringOrEmpty)
-}
-
-/// Percent-encode de um segmento de path (espelha `pathSegment` do Dart =
-/// `Uri.encodeComponent`: tudo fora de `[A-Za-z0-9-_.~]` vira `%XX`).
-///
-/// Duplicado aqui e em `work_items.rs` porque `src/azure/mod.rs` — o único
-/// lugar natural de compartilhamento — está sob responsabilidade de outro
-/// agente e não pode ser editado.
-fn encode_segment(value: &str) -> String {
-    let mut out = String::with_capacity(value.len());
-    for byte in value.bytes() {
-        if matches!(byte, b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~') {
-            out.push(byte as char);
-        } else {
-            let _ = write!(out, "%{byte:02X}");
-        }
-    }
-    out
 }
 
 /// Repositório Azure (só o `id` interessa para criar PRs).
