@@ -19,4 +19,5 @@ pub mod config;
 pub mod error;
 pub mod features;
 pub mod git;
+pub(crate) mod process;
 pub mod tui;

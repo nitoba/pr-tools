@@ -22,7 +22,7 @@ final class ProcessRunnerLive implements ProcessRunner {
     cancellation.throwIfCancelled();
     final process = await use.acquire(
       Effect.tryAsync(
-        () => Process.start(command, arguments),
+        () => _startProcess(command, arguments),
         onError: (error, _) => ProcessFailure(error.toString()),
       ),
       release: (process, _) {
@@ -73,6 +73,17 @@ final class ProcessRunnerLive implements ProcessRunner {
     cancellation.throwIfCancelled();
     return result;
   });
+}
+
+Future<Process> _startProcess(String command, List<String> arguments) async {
+  try {
+    return await Process.start(command, arguments);
+  } on ProcessException {
+    if (!Platform.isWindows || command.toLowerCase().endsWith('.cmd')) {
+      rethrow;
+    }
+    return Process.start('$command.cmd', arguments);
+  }
 }
 
 Future<void> _writeInput(Process process, String input) async {

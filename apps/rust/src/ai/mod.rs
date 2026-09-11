@@ -375,16 +375,41 @@ pub async fn generate_via_opencode(config: &Config, system: &str, prompt: &str) 
 
 async fn run_subprocess(cmd: &str, args: &[String], stdin_text: &str) -> Result<String> {
     use tokio::process::Command;
-    let mut child = Command::new(cmd)
-        .args(args)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .map_err(|e| AppError::Ai {
+    let mut child = None;
+    let mut last_spawn_error = None;
+    for candidate in crate::process::command_candidates(cmd) {
+        match Command::new(&candidate)
+            .args(args)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+        {
+            Ok(process) => {
+                child = Some(process);
+                break;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                last_spawn_error = Some(error);
+            }
+            Err(error) => {
+                return Err(AppError::Ai {
+                    provider: cmd.to_owned(),
+                    message: format!("falha ao executar {cmd}: {error}"),
+                });
+            }
+        }
+    }
+    let Some(mut child) = child else {
+        let error = last_spawn_error.map_or_else(
+            || "comando não encontrado".to_owned(),
+            |error| error.to_string(),
+        );
+        return Err(AppError::Ai {
             provider: cmd.to_owned(),
-            message: format!("falha ao executar {cmd}: {e}"),
-        })?;
+            message: format!("falha ao executar {cmd}: {error}"),
+        });
+    };
     if !stdin_text.is_empty() {
         if let Some(mut stdin) = child.stdin.take() {
             use tokio::io::AsyncWriteExt;

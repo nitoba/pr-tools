@@ -120,10 +120,22 @@ pub async fn inspect(source: Option<&str>) -> DoctorReport {
 /// retorna a saída aparada (`stdout`, ou `stderr` quando `stdout` vazio) —
 /// pode ser `Some("")` (ex.: `git branch --show-current` em detached HEAD).
 async fn run_cmd(prog: &str, args: &[&str], wait: Duration) -> Option<String> {
-    let output = timeout(wait, tokio::process::Command::new(prog).args(args).output())
-        .await
-        .ok()?
-        .ok()?;
+    let output = timeout(wait, async {
+        for candidate in crate::process::command_candidates(prog) {
+            match tokio::process::Command::new(&candidate)
+                .args(args)
+                .output()
+                .await
+            {
+                Ok(output) => return Some(output),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(_) => return None,
+            }
+        }
+        None
+    })
+    .await
+    .ok()??;
     if !output.status.success() {
         return None;
     }
