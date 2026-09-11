@@ -1,0 +1,40 @@
+name: Rust audit validation (temporary)
+
+on:
+  push:
+    branches: [audit/rust-low-value-validation]
+
+permissions:
+  contents: read
+
+jobs:
+  rust-audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - name: Package audit sources (exclude Dart)
+        run: |
+          git rev-parse HEAD
+          git ls-files | grep -vE '(^apps/dart/|\.dart$|dart-result-effect-refactor)' > /tmp/audit-files.txt
+          tar -czf /tmp/rust-audit-source.tar.gz -T /tmp/audit-files.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rust-audit-source
+          path: /tmp/rust-audit-source.tar.gz
+          retention-days: 3
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Toolchain
+        run: |
+          rustc --version
+          cargo --version
+      - name: Rust format
+        run: cargo fmt --manifest-path apps/rust/Cargo.toml -- --check
+      - name: Rust lint
+        run: cargo clippy --manifest-path apps/rust/Cargo.toml --locked --all-targets -- -D clippy::correctness
+      - name: Rust tests
+        run: cargo test --manifest-path apps/rust/Cargo.toml --locked
+      - name: Rust build
+        run: cargo build --manifest-path apps/rust/Cargo.toml --locked --all-targets
