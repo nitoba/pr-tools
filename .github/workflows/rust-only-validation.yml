@@ -65,6 +65,9 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 15
     steps:
+      - name: Configure LF checkout before materializing files
+        shell: bash
+        run: git config --global core.autocrlf false
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
@@ -73,7 +76,6 @@ jobs:
         shell: bash
         run: |
           cp -R _rust-only-audit "$RUNNER_TEMP/rust-only-audit"
-          git config core.autocrlf false
           git checkout --detach 512766c7605cc8c4f496eb8d3d49f7d8dc092cdf
           python "$RUNNER_TEMP/rust-only-audit/apply.py"
       - name: Native PowerShell installer regression checks
