@@ -28,8 +28,9 @@ use tokio::sync::mpsc;
 use unicode_width::UnicodeWidthChar;
 
 use super::markdown::{markdown_text, title_line};
-use super::shimmer::{shimmer_bar, shimmer_text};
-use super::{app_layout, border_type, centered_buttons, modal_frame, spin_frames, theme};
+use super::{
+    StatusHeader, border_type, centered_buttons, modal_frame, status_header, status_layout, theme,
+};
 use crate::azure::WorkItem;
 use crate::cli::CliOptions;
 use crate::features::test_card::{
@@ -127,7 +128,7 @@ impl TestPhase {
         }
     }
 
-    /// Fase ocupada (spinner + shimmer ativos)?
+    /// Fase ocupada (animação do status ativa)?
     fn busy(self) -> bool {
         matches!(self, Self::Preparando | Self::Gerando | Self::Criando)
     }
@@ -298,8 +299,6 @@ struct TestApp {
     phase: TestPhase,
     /// Rótulo detalhado da fase.
     phase_label: String,
-    /// Início (p/ elapsed).
-    started_at: Instant,
     /// Frame de animação (~30fps).
     tick: u64,
     /// Scroll vertical do preview.
@@ -366,7 +365,6 @@ impl TestApp {
         Self {
             phase: TestPhase::Preparando,
             phase_label: "preparando contexto…".to_owned(),
-            started_at: Instant::now(),
             tick: 0,
             scroll: 0,
             progress: 0.0,
@@ -404,46 +402,6 @@ impl TestApp {
         self.tick = self.tick.wrapping_add(1);
     }
 
-    /// Segundos decorridos.
-    fn elapsed_secs(&self) -> u64 {
-        self.started_at.elapsed().as_secs()
-    }
-
-    /// Símbolo de atividade: gira só com trabalho; parado no ocioso.
-    fn spinner(&self) -> &str {
-        if !self.phase.busy() {
-            return match self.phase {
-                TestPhase::Erro => {
-                    if super::ascii_only() {
-                        "x"
-                    } else {
-                        "✘"
-                    }
-                }
-                TestPhase::Pronto => {
-                    if super::ascii_only() {
-                        "+"
-                    } else {
-                        "✓"
-                    }
-                }
-                _ => {
-                    if super::ascii_only() {
-                        "*"
-                    } else {
-                        "●"
-                    }
-                }
-            };
-        }
-        let frames = spin_frames();
-        let idx = usize::try_from(self.tick).unwrap_or(usize::MAX) % frames.len().max(1);
-        match frames.get(idx) {
-            Some(f) => f,
-            None => "-",
-        }
-    }
-
     /// Rola o preview com clamp simples.
     fn scroll_by(&mut self, delta: i16) {
         let next = i32::from(self.scroll) + i32::from(delta);
@@ -458,14 +416,6 @@ impl TestApp {
     /// Está no flash de copiado?
     fn is_copied_flash(&self) -> bool {
         self.tick < self.copied_flash_until
-    }
-
-    /// Último log (p/ a faixa de progresso).
-    fn last_log(&self) -> &str {
-        match self.logs.back() {
-            Some(l) => l.as_str(),
-            None => "",
-        }
     }
 
     /// Corpo atual p/ copiar (final se houver, senão stream parcial).
@@ -973,7 +923,7 @@ impl Widget for &TestApp {
             render_too_small(area, buf);
             return;
         }
-        let [head, body, foot] = app_layout(area);
+        let [head, body, foot] = status_layout(area);
         Block::new().style(theme().root).render(area, buf);
         render_header(self, head, buf);
         render_body(self, body, buf);
@@ -1020,67 +970,63 @@ fn render_too_small(area: Rect, buf: &mut Buffer) {
     }
 }
 
-/// Header com spinner, fase e elapsed.
+/// Header com fase, mensagem e progresso global.
 fn render_header(app: &TestApp, area: Rect, buf: &mut Buffer) {
-    // Parado no ocioso: cor fixa em vez de pulsar à toa.
-    let pulse = if app.phase.busy() {
-        if app.tick % 2 == 0 {
-            theme().accent
-        } else {
-            theme().app_title
-        }
+    let message = if app.candidate_activity == CandidateActivity::Loading {
+        "consultando Test Cases recentes…"
+    } else if app.candidate_activity == CandidateActivity::Deleting {
+        "excluindo candidato…"
+    } else if app.phase == TestPhase::Erro {
+        "consulte os detalhes abaixo"
+    } else if app.phase == TestPhase::Revisao {
+        "card pronto"
+    } else if app.phase == TestPhase::Pronto {
+        "id e URL disponíveis"
     } else {
-        theme().accent
+        app.phase_label.as_str()
     };
-    let phase_line = if app.phase.busy() {
-        shimmer_text(app.phase_label.as_str(), app.tick, 28)
-    } else {
-        Line::from(Span::styled(app.phase_label.clone(), theme().accent))
+    let style = match app.phase {
+        TestPhase::Erro => theme().error,
+        TestPhase::Pronto | TestPhase::Revisao => theme().success,
+        TestPhase::Preparando | TestPhase::Gerando | TestPhase::Criando => theme().accent,
     };
-    let chars = if app.body.is_empty() {
-        app.streamed_raw.len()
-    } else {
-        app.body.len()
-    };
-    let mut spans = vec![
-        Span::styled(format!("{} ", app.spinner()), pulse),
-        Span::styled("◆ prt ", theme().app_title),
-        Span::styled(crate::cli::VERSION, theme().muted),
-        Span::styled(
-            format!(
-                "  ·  test  ·  {}  ·  {}s  ·  {chars} chars",
-                app.phase.short(),
-                app.elapsed_secs()
-            ),
-            theme().muted,
-        ),
-        Span::styled("  ·  ", theme().muted),
-    ];
-    spans.extend(phase_line.spans);
-    Paragraph::new(Line::from(spans)).render(area, buf);
+    status_header(
+        area,
+        buf,
+        StatusHeader {
+            command: "test",
+            phase: app.phase.short(),
+            message,
+            progress: if app.candidate_activity == CandidateActivity::Idle {
+                Some(app.progress)
+            } else {
+                None
+            },
+            tick: app.tick,
+            active: app.phase.busy() || app.candidate_activity != CandidateActivity::Idle,
+            style,
+        },
+    );
 }
 
-/// Corpo: faixa de progresso + colunas preview/settings.
+/// Corpo: preview e settings, sem repetir o status global.
 fn render_body(app: &TestApp, area: Rect, buf: &mut Buffer) {
-    let [prog_area, cols] =
-        Layout::vertical([Constraint::Length(3), Constraint::Min(0)]).areas(area);
-    render_progress(app, prog_area, buf);
-    if cols.height == 0 || cols.width == 0 {
+    if area.height == 0 || area.width == 0 {
         return;
     }
-    if cols.width < 100 {
-        let half = cols.height / 2;
+    if area.width < 100 {
+        let half = area.height / 2;
         let top = Rect {
-            x: cols.x,
-            y: cols.y,
-            width: cols.width,
+            x: area.x,
+            y: area.y,
+            width: area.width,
             height: half,
         };
         let bottom = Rect {
-            x: cols.x,
-            y: cols.y.saturating_add(half),
-            width: cols.width,
-            height: cols.height.saturating_sub(half),
+            x: area.x,
+            y: area.y.saturating_add(half),
+            width: area.width,
+            height: area.height.saturating_sub(half),
         };
         if top.height > 0 {
             render_preview(app, top, buf);
@@ -1095,91 +1041,30 @@ fn render_body(app: &TestApp, area: Rect, buf: &mut Buffer) {
         Constraint::Length(1),
         Constraint::Percentage(42),
     ])
-    .areas(cols);
+    .areas(area);
     render_preview(app, left, buf);
     render_settings(app, right, buf);
-}
-
-/// Faixa de progresso com shimmer + último log.
-fn render_progress(app: &TestApp, area: Rect, buf: &mut Buffer) {
-    if area.width == 0 || area.height == 0 {
-        return;
-    }
-    let bar_width = area.width as usize;
-    let bar = shimmer_bar(app.progress, bar_width, app.tick, app.phase.busy());
-    // `progress` vive em 0.0–1.0 (com clamp em `on_event`); trunca a casa
-    // decimal por ops de float (`as u16` truncava igual) e formata sem `as`.
-    let pct = (app.progress * 100.0).trunc().clamp(0.0, 100.0);
-    if area.height >= 1 {
-        Paragraph::new(bar).render(
-            Rect {
-                x: area.x,
-                y: area.y,
-                width: area.width,
-                height: 1,
-            },
-            buf,
-        );
-    }
-    if area.height >= 2 {
-        let label = if app.phase.busy() {
-            shimmer_text(app.progress_label.as_str(), app.tick, 24)
-        } else {
-            Line::from(Span::styled(app.progress_label.clone(), theme().success))
-        };
-        let mut spans = label.spans.clone();
-        spans.push(Span::styled(format!("  {pct:.0}%"), theme().muted));
-        Paragraph::new(Line::from(spans)).render(
-            Rect {
-                x: area.x,
-                y: area.y.saturating_add(1),
-                width: area.width,
-                height: 1,
-            },
-            buf,
-        );
-    }
-    if area.height >= 3 {
-        let (status, style) = app.error.as_ref().map_or_else(
-            || (app.last_log().to_owned(), theme().muted),
-            |error| (format!("✘ {error}"), theme().error),
-        );
-        Paragraph::new(status).style(style).render(
-            Rect {
-                x: area.x,
-                y: area.y.saturating_add(2),
-                width: area.width,
-                height: 1,
-            },
-            buf,
-        );
-    }
 }
 
 /// Preview do card (Markdown final ou stream parcial).
 fn render_preview(app: &TestApp, area: Rect, buf: &mut Buffer) {
     let ready = !app.title.is_empty() || !app.body.is_empty();
-    let title = if ready {
-        " ◉ Card de teste "
-    } else {
-        " ◌ Gerando… "
-    };
-    let border = if ready {
-        theme().border
-    } else {
-        theme().warning
-    };
+    let title = " Card de teste ";
     let block = Block::default()
         .title(Span::styled(
             title,
             if ready {
                 theme().success
             } else {
-                theme().warning
+                theme().border
             },
         ))
         .borders(Borders::ALL)
-        .border_style(border)
+        .border_style(if ready {
+            theme().success
+        } else {
+            theme().border
+        })
         .border_type(border_type())
         .padding(ratatui::widgets::Padding::horizontal(1));
     let inner = block.inner(area);
@@ -1204,7 +1089,7 @@ fn render_preview(app: &TestApp, area: Rect, buf: &mut Buffer) {
         );
     } else {
         let text = if app.streamed_raw.is_empty() {
-            "aguardando a IA…".to_owned()
+            String::new()
         } else {
             format!("{}▊", app.streamed_raw)
         };
@@ -1460,16 +1345,13 @@ fn render_candidate_list_dialog(app: &TestApp, selected: usize, area: Rect, buf:
     if inner.width == 0 || inner.height == 0 {
         return;
     }
-    let mut lines = vec![Line::from(Span::styled(
-        if app.candidate_activity == CandidateActivity::Loading {
-            "consultando Test Cases recentes…"
-        } else if app.candidate_activity == CandidateActivity::Deleting {
-            "excluindo candidato…"
-        } else {
-            "a busca usa título exato e relação com o Work Item pai"
-        },
-        theme().muted,
-    ))];
+    let mut lines = Vec::new();
+    if app.candidate_activity == CandidateActivity::Idle {
+        lines.push(Line::from(Span::styled(
+            "a busca usa título exato e relação com o Work Item pai",
+            theme().muted,
+        )));
+    }
     if app.candidates.is_empty() && app.candidate_activity == CandidateActivity::Idle {
         lines.push(Line::from(Span::styled(
             "nenhum candidato encontrado; o retry ainda pode duplicar um card",
@@ -1794,7 +1676,7 @@ fn render_footer(app: &TestApp, area: Rect, buf: &mut Buffer) {
         }
         None => match app.phase {
             TestPhase::Preparando | TestPhase::Gerando => "j/k rolar preview · q/esc abortar",
-            TestPhase::Criando => "criando… aguarde · q/esc abortar",
+            TestPhase::Criando => "q/esc abortar",
             TestPhase::Revisao => match app.panel {
                 Panel::Preview => "tab settings · enter continuar · c copia · j/k rola · q sai",
                 Panel::Settings => {
@@ -1814,11 +1696,6 @@ fn render_footer(app: &TestApp, area: Rect, buf: &mut Buffer) {
     let mut spans = vec![Span::styled(hints, theme().muted)];
     if app.is_copied_flash() {
         spans.push(Span::styled("   ✓ copiado!", theme().success));
-    }
-    if let Some(e) = app.error.as_ref() {
-        if app.phase == TestPhase::Revisao {
-            spans.push(Span::styled(format!("   ✘ {e}"), theme().error));
-        }
     }
     Paragraph::new(Line::from(spans)).render(area, buf);
 }
@@ -2805,6 +2682,20 @@ mod tests {
     }
 
     #[test]
+    fn test_generating_100x30() -> anyhow::Result<()> {
+        let mut app = TestApp::new();
+        app.phase = TestPhase::Gerando;
+        app.phase_label = "gerando card via IA…".to_owned();
+        app.progress = 0.42;
+        app.streamed_raw = "# Card de teste\n\n## Objetivo\nTexto parcial".to_owned();
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend)?;
+        terminal.draw(|f| f.render_widget(&app, f.area()))?;
+        insta::assert_snapshot!("test_generating_100x30", terminal.backend());
+        Ok(())
+    }
+
+    #[test]
     fn test_qa_efforts_100x30() -> anyhow::Result<()> {
         let mut app = review_app();
         app.open_qa_efforts();
@@ -2858,6 +2749,18 @@ mod tests {
         let mut terminal = Terminal::new(backend)?;
         terminal.draw(|f| f.render_widget(&app, f.area()))?;
         insta::assert_snapshot!("test_candidate_list_100x30", terminal.backend());
+        Ok(())
+    }
+
+    #[test]
+    fn test_candidate_lookup_100x30() -> anyhow::Result<()> {
+        let mut app = review_app();
+        app.candidate_activity = CandidateActivity::Loading;
+        app.dialog = Some(TestDialog::CandidateList { selected: 0 });
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend)?;
+        terminal.draw(|f| f.render_widget(&app, f.area()))?;
+        insta::assert_snapshot!("test_candidate_lookup_100x30", terminal.backend());
         Ok(())
     }
 }

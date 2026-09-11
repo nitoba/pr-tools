@@ -3,3 +3,6 @@
 .dart_tool/
 dist/
 /apps/rust/target/
+
+# Snapshots do Insta (gerados e versionados anteriormente).
+/apps/rust/src/tui/snapshots/

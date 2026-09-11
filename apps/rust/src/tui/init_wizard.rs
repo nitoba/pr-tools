@@ -1,13 +1,11 @@
 //! Wizard `prt init` — formulário multi-etapas em Ratatui, tudo reativo.
 //!
-//! Nada aqui é estático: cada frame (~10fps) redesenha sidebar com pulso,
-//! borda do campo focado pulsante, validação de email ao vivo (✓/✘) a cada
-//! tecla, barra de progresso do wizard com shimmer e botão salvar pulsante.
+//! Nada aqui é estático: cada frame (~10fps) redesenha a borda do campo focado,
+//! validação de email ao vivo (✓/✘) a cada tecla e o botão salvar pulsante.
 //! Texto via editor próprio de linha única (sem dependência extra); segredos
 //! com máscara `•`; selects com ←/→. A lógica pura (draft/validação/
 //! persistência) vive em [`crate::features::init`].
 
-use std::cmp::Ordering;
 use std::collections::HashSet;
 use std::io::IsTerminal;
 use std::time::Duration;
@@ -23,8 +21,7 @@ use ratatui::{
 };
 use unicode_width::UnicodeWidthChar;
 
-use super::shimmer::shimmer_bar;
-use super::{app_layout, border_type, theme};
+use super::{StatusHeader, border_type, status_header, status_layout, theme};
 use crate::features::init::{
     InitDraft, InitResult, PROVIDERS, REASONING_LEVELS, save_draft, validate_optional_email,
 };
@@ -69,17 +66,6 @@ impl Step {
             Self::Review => "Revisão",
         }
     }
-
-    fn icon(self) -> &'static str {
-        match self {
-            Self::Azure => "◆",
-            Self::Reviewers => "✉",
-            Self::Provider => "◈",
-            Self::Model => "✦",
-            Self::TestDefaults => "▤",
-            Self::Review => "✔",
-        }
-    }
 }
 
 /// Campos do formulário.
@@ -90,8 +76,10 @@ enum Field {
     Dev,
     Assigned,
     Provider,
+    CodexPath,
     CodexModel,
     CodexReasoning,
+    OpencodePath,
     OpencodeModel,
     OpencodeReasoning,
     BaseUrl,
@@ -112,8 +100,10 @@ impl Field {
             Self::Dev => "Email de review de dev",
             Self::Assigned => "Responsável do card de teste",
             Self::Provider => "Provider padrão",
+            Self::CodexPath => "Caminho do executável do Codex",
             Self::CodexModel => "Modelo do Codex",
             Self::CodexReasoning => "Thinking level do Codex",
+            Self::OpencodePath => "Caminho do executável do OpenCode",
             Self::OpencodeModel => "Modelo do OpenCode",
             Self::OpencodeReasoning => "Thinking level do OpenCode",
             Self::BaseUrl => "Base URL OpenAI-compatible",
@@ -140,6 +130,9 @@ impl Field {
                 "opcional · validado enquanto digita".to_owned()
             }
             Self::Provider => "codex/opencode rodam na máquina; compatible usa base URL".to_owned(),
+            Self::CodexPath | Self::OpencodePath => {
+                "opcional · vazio usa o PATH do sistema".to_owned()
+            }
             Self::CodexModel => format!("padrão: {}", crate::config::CODEX_MODEL),
             Self::OpencodeModel => format!("padrão: {}", crate::config::OPENCODE_MODEL),
             Self::CompatModel => format!("padrão: {}", crate::config::DEFAULT_COMPATIBLE_MODEL),
@@ -165,6 +158,7 @@ impl Field {
         match self {
             Self::Pat => "ya01.…",
             Self::Sprint | Self::Dev | Self::Assigned => "dev@empresa.com",
+            Self::CodexPath | Self::OpencodePath => "C:/.../tool.cmd",
             Self::CodexModel => crate::config::CODEX_MODEL,
             Self::OpencodeModel => crate::config::OPENCODE_MODEL,
             Self::CompatModel => crate::config::DEFAULT_COMPATIBLE_MODEL,
@@ -202,14 +196,18 @@ fn fields_for(step: Step, provider: &str) -> Vec<Field> {
         Step::Reviewers => vec![Field::Sprint, Field::Dev, Field::Assigned],
         Step::Provider => vec![Field::Provider],
         Step::Model => match provider {
-            "opencode" => vec![Field::OpencodeModel, Field::OpencodeReasoning],
+            "opencode" => vec![
+                Field::OpencodePath,
+                Field::OpencodeModel,
+                Field::OpencodeReasoning,
+            ],
             "openai-compatible" => vec![
                 Field::BaseUrl,
                 Field::CompatModel,
                 Field::CompatReasoning,
                 Field::ApiKey,
             ],
-            _ => vec![Field::CodexModel, Field::CodexReasoning],
+            _ => vec![Field::CodexPath, Field::CodexModel, Field::CodexReasoning],
         },
         Step::TestDefaults => vec![Field::AreaPath, Field::Team, Field::Program],
         Step::Review => vec![],
@@ -274,8 +272,10 @@ impl InitWizard {
             Field::Dev => d.reviewer_dev.clone(),
             Field::Assigned => d.test_assigned_to.clone(),
             Field::Provider => d.provider.clone(),
+            Field::CodexPath => d.codex_path.clone(),
             Field::CodexModel => d.codex_model.clone(),
             Field::CodexReasoning => d.codex_reasoning.clone(),
+            Field::OpencodePath => d.opencode_path.clone(),
             Field::OpencodeModel => d.opencode_model.clone(),
             Field::OpencodeReasoning => d.opencode_reasoning.clone(),
             Field::BaseUrl => d.base_url.clone(),
@@ -297,8 +297,10 @@ impl InitWizard {
             Field::Dev => d.reviewer_dev = value,
             Field::Assigned => d.test_assigned_to = value,
             Field::Provider => d.provider = value,
+            Field::CodexPath => d.codex_path = value,
             Field::CodexModel => d.codex_model = value,
             Field::CodexReasoning => d.codex_reasoning = value,
+            Field::OpencodePath => d.opencode_path = value,
             Field::OpencodeModel => d.opencode_model = value,
             Field::OpencodeReasoning => d.opencode_reasoning = value,
             Field::BaseUrl => d.base_url = value,
@@ -545,14 +547,14 @@ fn char_byte_index(s: &str, char_idx: usize) -> usize {
     s.char_indices().nth(char_idx).map_or(s.len(), |(b, _)| b)
 }
 
-/// Desenha um frame — sidebar pulsante + formulário + progresso shimmer.
+/// Desenha um frame — status global + formulário.
 impl Widget for &InitWizard {
     fn render(self, area: Rect, buf: &mut Buffer) {
         if area.width < 60 || area.height < 20 {
             render_too_small(area, buf);
             return;
         }
-        let [head, body, foot] = app_layout(area);
+        let [head, body, foot] = status_layout(area);
         Block::new().style(theme().root).render(area, buf);
         render_header(self, head, buf);
         render_body(self, body, buf);
@@ -596,32 +598,41 @@ fn render_too_small(area: Rect, buf: &mut Buffer) {
 }
 
 fn render_header(wiz: &InitWizard, area: Rect, buf: &mut Buffer) {
-    // Parado: o wizard é preenchimento local, sem trabalho em curso.
-    let line = Line::from(vec![
-        Span::styled("● ", theme().accent),
-        Span::styled("◆ prt ", theme().app_title),
-        Span::styled(crate::cli::VERSION, theme().muted),
-        Span::styled(
-            format!(
-                "  ·  init  ·  passo {}/{}  ·  {}",
-                wiz.step + 1,
-                STEPS.len(),
-                wiz.step().title()
-            ),
-            theme().muted,
-        ),
-    ]);
-    Paragraph::new(line).render(area, buf);
+    let total = STEPS.len().saturating_sub(1).max(1);
+    let ratio = f64::from(u32::try_from(wiz.step).unwrap_or(u32::MAX))
+        / f64::from(u32::try_from(total).unwrap_or(u32::MAX));
+    let message = if wiz.done.is_some() {
+        "arquivo pronto"
+    } else if wiz.step() == Step::Review {
+        "resumo final"
+    } else {
+        wiz.step().title()
+    };
+    status_header(
+        area,
+        buf,
+        StatusHeader {
+            command: "init",
+            phase: if wiz.done.is_some() {
+                "concluído"
+            } else {
+                "configuração"
+            },
+            message,
+            progress: Some(if wiz.done.is_some() { 1.0 } else { ratio }),
+            tick: wiz.tick,
+            active: false,
+            style: if wiz.done.is_some() {
+                theme().success
+            } else {
+                theme().accent
+            },
+        },
+    );
 }
 
 fn render_body(wiz: &InitWizard, area: Rect, buf: &mut Buffer) {
-    let [side, _gap, form] = Layout::horizontal([
-        Constraint::Length(22),
-        Constraint::Length(1),
-        Constraint::Min(0),
-    ])
-    .areas(area);
-    render_steps(wiz, side, buf);
+    let form = area;
     if wiz.done.is_some() {
         render_success(wiz, form, buf);
     } else if wiz.step() == Step::Review {
@@ -631,55 +642,9 @@ fn render_body(wiz: &InitWizard, area: Rect, buf: &mut Buffer) {
     }
 }
 
-/// Sidebar com as etapas — atual pulsa com o tick.
-fn render_steps(wiz: &InitWizard, area: Rect, buf: &mut Buffer) {
-    let pulse = wiz.tick % 2 == 0;
-    let items: Vec<ListItem> = STEPS
-        .iter()
-        .enumerate()
-        .map(|(i, s)| {
-            let (glyph, style) = match i.cmp(&wiz.step) {
-                Ordering::Less => ("✓ ", theme().success),
-                Ordering::Equal => (
-                    "● ",
-                    if pulse {
-                        theme().accent.add_modifier(Modifier::BOLD)
-                    } else {
-                        theme().app_title.add_modifier(Modifier::BOLD)
-                    },
-                ),
-                Ordering::Greater => ("○ ", theme().muted),
-            };
-            let title_style = if i == wiz.step {
-                Style::new().add_modifier(Modifier::BOLD)
-            } else {
-                theme().muted
-            };
-            ListItem::new(Line::from(vec![
-                Span::styled(format!("{} {} ", glyph, s.icon()), style),
-                Span::styled(s.title().to_owned(), title_style),
-            ]))
-        })
-        .collect();
-    List::new(items)
-        .block(
-            Block::default()
-                .title(Span::styled(" Etapas ", theme().accent))
-                .borders(Borders::ALL)
-                .border_style(theme().border)
-                .border_type(border_type())
-                .padding(ratatui::widgets::Padding::horizontal(1)),
-        )
-        .render(area, buf);
-}
-
-/// Cartão do formulário + barra de progresso do wizard com shimmer.
+/// Cartão do formulário sem repetir a etapa já exibida no header.
 fn render_form(wiz: &InitWizard, area: Rect, buf: &mut Buffer) {
     let block = Block::default()
-        .title(Span::styled(
-            format!(" {} {} ", wiz.step().icon(), wiz.step().title()),
-            theme().accent.add_modifier(Modifier::BOLD),
-        ))
         .borders(Borders::ALL)
         .border_style(theme().border)
         .border_type(border_type())
@@ -687,15 +652,7 @@ fn render_form(wiz: &InitWizard, area: Rect, buf: &mut Buffer) {
     let inner = block.inner(area);
     block.render(area, buf);
 
-    // Progresso do wizard (etapas concluídas) com shimmer animado.
-    // Índices pequenos (6 etapas): `u32` cobre com folga e `f64::from` é exato.
-    let step = f64::from(u32::try_from(wiz.step).unwrap_or(u32::MAX));
-    let total = f64::from(u32::try_from(STEPS.len() - 1).unwrap_or(1));
-    let ratio = step / total;
-    let bar_width = inner.width.saturating_sub(2) as usize;
-    let [bar_area, fields_area] =
-        Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(inner);
-    Paragraph::new(shimmer_bar(ratio, bar_width, wiz.tick, false)).render(bar_area, buf);
+    let fields_area = inner;
 
     let fields = wiz.fields();
     let mut y = 0u16;
@@ -968,9 +925,15 @@ fn render_review(wiz: &InitWizard, area: Rect, buf: &mut Buffer) {
             d.codex_reasoning
         ),
     };
+    let executable = match d.provider.as_str() {
+        "opencode" => or_dash(&d.opencode_path),
+        "codex" => or_dash(&d.codex_path),
+        _ => "—".to_owned(),
+    };
     let rows = [
         ("provider", d.provider.clone()),
         ("modelo", model_line),
+        ("executável", executable),
         (
             "azure pat",
             secret_state(!d.pat_input.trim().is_empty() || d.has_existing_pat),
@@ -1152,7 +1115,7 @@ async fn run_loop(terminal: &mut DefaultTerminal) -> anyhow::Result<InitOutcome>
     let mut last_tick = std::time::Instant::now();
 
     loop {
-        // Tick contínuo: spinner, pulsos e shimmer animam mesmo parado.
+        // Tick contínuo: pulsos do formulário animam mesmo parado.
         if last_tick.elapsed() >= tick_rate {
             wiz.tick = wiz.tick.wrapping_add(1);
             last_tick = std::time::Instant::now();
@@ -1287,6 +1250,18 @@ mod tests {
             let fields = fields_for(Step::Model, provider);
             assert!(!fields.is_empty(), "sem campos p/ {provider}");
         }
+        assert_eq!(
+            fields_for(Step::Model, "codex"),
+            vec![Field::CodexPath, Field::CodexModel, Field::CodexReasoning]
+        );
+        assert_eq!(
+            fields_for(Step::Model, "opencode"),
+            vec![
+                Field::OpencodePath,
+                Field::OpencodeModel,
+                Field::OpencodeReasoning
+            ]
+        );
         assert!(fields_for(Step::Review, "codex").is_empty());
     }
 
@@ -1373,8 +1348,10 @@ mod tests {
         wiz.draft.reviewer_dev.clear();
         wiz.draft.test_assigned_to.clear();
         wiz.draft.provider = "codex".to_owned();
+        wiz.draft.codex_path.clear();
         wiz.draft.codex_model.clear();
         wiz.draft.codex_reasoning = "provider-default".to_owned();
+        wiz.draft.opencode_path.clear();
         wiz.draft.opencode_model.clear();
         wiz.draft.opencode_reasoning = "provider-default".to_owned();
         wiz.draft.base_url.clear();

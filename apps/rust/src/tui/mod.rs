@@ -4,8 +4,7 @@
 //! - helpers estáticos (`header`, `card`, …) para `doctor`/`init`;
 //! - loop vivo reativo (`live::run_describe_tui`) para `desc`: backend em
 //!   tokio empurra `Token`/`Log`/`Progress` por `mpsc` e cada frame (~30fps)
-//!   redesenha spinner, preview com cursor, logs auto-scroll e barra de
-//!   progresso com shimmer.
+//!   redesenha o preview com cursor e o status global.
 
 pub mod describe_app;
 pub mod doctor_flow;
@@ -27,6 +26,8 @@ use ratatui::{
         Block, BorderType, Borders, Clear, Gauge, List, ListItem, Paragraph, Tabs, Widget, Wrap,
     },
 };
+
+use self::shimmer::{filled_cells, percent_u16, shimmer_bar};
 
 /// Tema global da TUI.
 #[derive(Debug, Clone, Copy)]
@@ -141,23 +142,6 @@ pub fn border_type() -> BorderType {
     }
 }
 
-// Faixas de frames do spinner (detalhe interno de [`spin_frames`]).
-const SPIN_BRAILLE: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-const SPIN_ASCII: &[&str] = &["-", "\\", "|", "/"];
-
-/// Frames do spinner efetivo: Braille normal, ASCII simples.
-///
-/// Prefira este aos arrays locais de frames nos renders para
-/// respeitar `PRT_ASCII=1`/`TERM=dumb`.
-#[must_use]
-pub fn spin_frames() -> &'static [&'static str] {
-    if ascii_only() {
-        SPIN_ASCII
-    } else {
-        SPIN_BRAILLE
-    }
-}
-
 /// Glifo de checkbox efetivo: `☐`/`☑` normal, `[ ]`/`[x]` em ASCII.
 ///
 /// Prefira este aos literais `☐`/`☑` nos renders para
@@ -183,6 +167,147 @@ pub fn header(area: Rect, buf: &mut Buffer, subtitle: &str) {
     Paragraph::new(line).render(area, buf);
 }
 
+/// Dados do header compartilhado das telas com estado.
+#[derive(Debug, Clone, Copy)]
+pub struct StatusHeader<'a> {
+    /// Comando em execução, como `desc` ou `doctor`.
+    pub command: &'a str,
+    /// Fase principal atual.
+    pub phase: &'a str,
+    /// Mensagem contextual da fase.
+    pub message: &'a str,
+    /// Progresso conhecido; `None` representa uma operação indeterminada.
+    pub progress: Option<f64>,
+    /// Frame usado para animar o progresso indeterminado ou ativo.
+    pub tick: u64,
+    /// Se a operação ainda está em andamento.
+    pub active: bool,
+    /// Cor da fase principal.
+    pub style: Style,
+}
+
+/// Renderiza o único status visual de uma tela.
+///
+/// A primeira linha identifica comando e fase. A segunda combina mensagem
+/// contextual com uma única barra de progresso; operações sem percentual usam
+/// uma barra indeterminada em vez de inventar um valor.
+pub fn status_header(area: Rect, buf: &mut Buffer, status: StatusHeader<'_>) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+    let [identity, progress] =
+        Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).areas(area);
+    let separator = if ascii_only() { "  -  " } else { "  ·  " };
+    let brand = if ascii_only() { "prt" } else { "◆ prt" };
+    Paragraph::new(Line::from(vec![
+        Span::styled(format!("{brand} "), theme().app_title),
+        Span::styled(crate::cli::VERSION, theme().muted),
+        Span::styled(format!("{separator}{}", status.command), theme().muted),
+        Span::styled(
+            format!("{separator}{}", status_text(status.phase)),
+            status.style,
+        ),
+    ]))
+    .render(identity, buf);
+
+    if progress.height == 0 {
+        return;
+    }
+    let message =
+        deduplicate_status_message(&status_text(status.phase), &status_text(status.message));
+    let percent = status.progress.map(percent_u16);
+    let percent_text = percent.map_or_else(String::new, |value| format!("{value}%"));
+    let available = usize::from(progress.width);
+    let separator_width = separator.chars().count();
+    let separator_count = if percent.is_some() { 2 } else { 1 };
+    let max_message_width = available.saturating_sub(
+        percent_text
+            .chars()
+            .count()
+            .saturating_add(separator_width.saturating_mul(separator_count))
+            .saturating_add(8),
+    );
+    let message = truncate_status(&message, max_message_width);
+    let fixed_width = message
+        .chars()
+        .count()
+        .saturating_add(percent_text.chars().count())
+        .saturating_add(separator_width.saturating_mul(separator_count));
+    let bar_width = available.saturating_sub(fixed_width).max(8);
+    let mut spans = vec![Span::styled(message, theme().muted), Span::raw(separator)];
+    spans.extend(
+        status_bar(
+            status.progress.unwrap_or(0.0),
+            bar_width,
+            status.tick,
+            status.active,
+        )
+        .spans,
+    );
+    if let Some(value) = percent {
+        spans.push(Span::styled(format!("{separator}{value}%"), status.style));
+    }
+    Paragraph::new(Line::from(spans)).render(progress, buf);
+}
+
+fn status_bar(ratio: f64, width: usize, tick: u64, active: bool) -> Line<'static> {
+    let width = width.max(8);
+    if ascii_only() {
+        let filled = filled_cells(ratio, width);
+        return Line::from(vec![
+            Span::styled("#".repeat(filled), theme().accent),
+            Span::styled("-".repeat(width.saturating_sub(filled)), theme().muted),
+        ]);
+    }
+    shimmer_bar(ratio, width, tick, active)
+}
+
+fn status_text(value: &str) -> String {
+    if !ascii_only() {
+        return value.to_owned();
+    }
+    value
+        .replace('…', "...")
+        .replace('→', "->")
+        .replace(['—', '·'], "-")
+        .replace('×', "x")
+        .replace('✓', "ok")
+        .replace('✘', "x")
+        .replace('▊', "_")
+        .replace(['○', '●'], "o")
+}
+
+fn deduplicate_status_message(phase: &str, message: &str) -> String {
+    let Some(phase_word) = phase.split_whitespace().next() else {
+        return message.to_owned();
+    };
+    let Some(remainder) = message.strip_prefix(phase_word) else {
+        return message.to_owned();
+    };
+    let remainder = remainder.trim_start();
+    if remainder.is_empty() {
+        message.to_owned()
+    } else {
+        remainder.to_owned()
+    }
+}
+
+fn truncate_status(value: &str, max_width: usize) -> String {
+    if value.chars().count() <= max_width {
+        return value.to_owned();
+    }
+    let ellipsis = if ascii_only() { "..." } else { "…" };
+    if max_width <= ellipsis.chars().count() {
+        return ellipsis.chars().take(max_width).collect();
+    }
+    let mut truncated: String = value
+        .chars()
+        .take(max_width.saturating_sub(ellipsis.chars().count()))
+        .collect();
+    truncated.push_str(ellipsis);
+    truncated
+}
+
 /// Renderiza card com borda arredondada e título.
 pub fn card(area: Rect, buf: &mut Buffer, title: &str, body: &str) {
     let block = Block::default()
@@ -201,7 +326,7 @@ pub fn footer(area: Rect, buf: &mut Buffer, hints: &str) {
     Paragraph::new(Line::from(Span::styled(hints, theme().muted))).render(area, buf);
 }
 
-/// Renderiza barra de progresso (spinner de geração via IA).
+/// Renderiza uma barra de progresso isolada para componentes legados.
 pub fn progress(area: Rect, buf: &mut Buffer, label: &str, ratio: f64) {
     Gauge::default()
         .block(
@@ -256,6 +381,18 @@ pub fn tabs_widget(titles: Vec<&str>, selected: usize) -> Tabs<'_> {
 pub fn app_layout(area: Rect) -> [Rect; 3] {
     let [head, body, foot] = Layout::vertical([
         Constraint::Length(1),
+        Constraint::Min(0),
+        Constraint::Length(1),
+    ])
+    .areas(area);
+    [head, body, foot]
+}
+
+/// Layout padrão das telas com status global: header / corpo / footer.
+#[must_use]
+pub fn status_layout(area: Rect) -> [Rect; 3] {
+    let [head, body, foot] = Layout::vertical([
+        Constraint::Length(2),
         Constraint::Min(0),
         Constraint::Length(1),
     ])

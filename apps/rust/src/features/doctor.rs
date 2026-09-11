@@ -608,7 +608,12 @@ async fn probe_compatible_models(base: &str, api_key: &str, has_key: bool) -> Co
 /// Inspeciona o Codex CLI + autenticação.
 async fn inspect_codex(config: &Config) -> ProviderOutcome {
     let mut out = Vec::new();
-    let version = run_cmd("codex", &["--version"], CMD_TIMEOUT).await;
+    let executable = if config.codex_path.trim().is_empty() {
+        "codex"
+    } else {
+        config.codex_path.trim()
+    };
+    let version = run_cmd(executable, &["--version"], CMD_TIMEOUT).await;
     let Some(version) = version else {
         out.push(fail_check(
             "Codex CLI",
@@ -627,7 +632,7 @@ async fn inspect_codex(config: &Config) -> ProviderOutcome {
         "Codex CLI",
         format!("{line} · modelo {model} · thinking {reasoning}."),
     ));
-    let login = run_cmd("codex", &["login", "status"], CMD_TIMEOUT).await;
+    let login = run_cmd(executable, &["login", "status"], CMD_TIMEOUT).await;
     match login {
         Some(text) if codex_logged_in(&text) => {
             let detail = clean_line(&text);
@@ -676,7 +681,12 @@ async fn inspect_codex(config: &Config) -> ProviderOutcome {
 /// Inspeciona o `OpenCode` CLI + credencial do provider do modelo.
 async fn inspect_opencode(config: &Config) -> ProviderOutcome {
     let mut out = Vec::new();
-    let version = run_cmd("opencode", &["--version"], CMD_TIMEOUT).await;
+    let executable = if config.opencode_path.trim().is_empty() {
+        "opencode"
+    } else {
+        config.opencode_path.trim()
+    };
+    let version = run_cmd(executable, &["--version"], CMD_TIMEOUT).await;
     let Some(version) = version else {
         out.push(fail_check(
             "OpenCode CLI",
@@ -702,7 +712,7 @@ async fn inspect_opencode(config: &Config) -> ProviderOutcome {
         .unwrap_or_default()
         .trim()
         .to_lowercase();
-    let raw = run_cmd("opencode", &["auth", "list"], CMD_TIMEOUT)
+    let raw = run_cmd(executable, &["auth", "list"], CMD_TIMEOUT)
         .await
         .unwrap_or_default();
     match classify_opencode_auth(&raw, &provider) {

@@ -21,19 +21,6 @@ const BAND: i64 = 8;
 /// ticks que crescem a ~30fps. A saturação via `try_from().unwrap_or(MAX)`
 /// nunca muda pixel em uso real; só evita wrap/truncate em 32-bit ou
 /// overflow. Nenhum helper usa `unwrap`/`expect`.
-/// Índice do frame do spinner a partir do `tick`.
-///
-/// Saturação: `tick % len` sempre cabe em `usize` em uso real
-/// (`len` < 20); em 32-bit o módulo em `u64` evita truncate.
-#[must_use]
-pub fn tick_frame_index(tick: u64, len: usize) -> usize {
-    if len == 0 {
-        return 0;
-    }
-    let len_u64 = u64::try_from(len).unwrap_or(u64::MAX).max(1);
-    usize::try_from(tick % len_u64).unwrap_or(0)
-}
-
 /// `usize` → `u16` saturando em `u16::MAX` (ex.: máx. de scroll).
 #[must_use]
 pub fn u16_from_usize_saturated(value: usize) -> u16 {

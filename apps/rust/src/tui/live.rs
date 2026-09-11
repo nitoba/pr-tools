@@ -25,8 +25,11 @@ use tokio::sync::mpsc;
 
 use super::describe_app::{CandidateActivity, DescribeApp, Phase, PublishDialog, PublishSetup};
 use super::events::{BackendEvent, LiveOutcome};
-use super::shimmer::{f64_from_usize, filled_cells, percent_u16};
-use super::{ascii_only, border_type, centered_buttons, modal_frame, theme};
+use super::shimmer::f64_from_usize;
+use super::{
+    StatusHeader, ascii_only, border_type, centered_buttons, modal_frame, status_header,
+    status_layout, theme,
+};
 use crate::ai;
 use crate::azure::AzureClient;
 use crate::azure::pull_requests::{PublishedPr, publish_pull_requests};
@@ -435,14 +438,8 @@ impl Widget for &DescribeApp {
             render_too_small(area, buf);
             return;
         }
-        // A tela Foco usa duas linhas de cabeçalho para separar o estado
-        // atual das métricas, sem voltar ao mosaico de duas colunas.
-        let [head, body, foot] = Layout::vertical([
-            Constraint::Length(2),
-            Constraint::Min(0),
-            Constraint::Length(1),
-        ])
-        .areas(area);
+        // O status global ocupa duas linhas: identidade/fase e progresso.
+        let [head, body, foot] = status_layout(area);
         Block::new().style(theme().root).render(area, buf);
         render_header(self, head, buf);
         render_body(self, body, buf);
@@ -503,132 +500,61 @@ fn render_too_small(area: Rect, buf: &mut Buffer) {
 }
 
 fn render_header(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
-    let [top, detail] =
-        Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).areas(area);
-    let (kicker, title) = phase_copy(app.phase);
-    let kicker = terminal_text(kicker);
-    let title = terminal_text(title);
+    let kicker = phase_copy(app.phase);
+    let candidate_lookup = matches!(app.candidate_activity, CandidateActivity::Loading);
     let active = matches!(
         app.phase,
         Phase::Boot | Phase::Generating | Phase::Publishing
-    );
-    let pulse = if active && app.tick % 2 == 0 {
-        theme().accent
-    } else if active {
-        theme().app_title
+    ) || candidate_lookup;
+    let message = if candidate_lookup {
+        "consultando PRs recentes…".to_owned()
+    } else if app.phase == Phase::Error {
+        "consulte os detalhes abaixo".to_owned()
+    } else if app.phase == Phase::Review {
+        "descrição pronta".to_owned()
+    } else if app.phase == Phase::Publishing {
+        app.current_publish_target.as_ref().map_or_else(
+            || "enviando descrição".to_owned(),
+            |target| format!("target {target} em andamento"),
+        )
+    } else if app.phase == Phase::Done {
+        "links disponíveis".to_owned()
     } else {
-        phase_style(app.phase)
+        terminal_text(&app.phase_label)
     };
-    let brand = if ascii_only() { "prt" } else { "◆ prt" };
-    let header_separator = if ascii_only() { "  -  " } else { "  ·  " };
-    let mut top_spans = vec![
-        Span::styled(format!("{} ", app.spinner()), pulse),
-        Span::styled(format!("{brand} "), theme().app_title),
-        Span::styled(crate::cli::VERSION, theme().muted),
-        Span::styled(format!("{header_separator}desc  /  "), theme().muted),
-        Span::styled(kicker, phase_style(app.phase)),
-    ];
-    if app.phase == Phase::Error {
-        top_spans.push(Span::styled(
-            if ascii_only() {
-                "  -  sem sucesso"
+    status_header(
+        area,
+        buf,
+        StatusHeader {
+            command: "desc",
+            phase: kicker,
+            message: &message,
+            progress: if candidate_lookup {
+                None
             } else {
-                "  ·  sem sucesso"
+                Some(app.progress)
             },
-            theme().error,
-        ));
-    }
-    Paragraph::new(Line::from(top_spans)).render(top, buf);
-
-    let pct = percent_u16(app.progress);
-    let phase_label = terminal_text(&app.phase_label);
-    let label = if active {
-        super::shimmer::shimmer_text(&phase_label, app.tick, 28)
-    } else {
-        Line::from(Span::styled(phase_label, phase_style(app.phase)))
-    };
-    let separator = if ascii_only() { "  -  " } else { "  ·  " };
-    let mut detail_spans = vec![Span::styled(format!("  {title}{separator}"), theme().muted)];
-    detail_spans.extend(label.spans);
-    detail_spans.extend([Span::styled(
-        format!(
-            "{separator}{pct}%{separator}~{} tok{separator}{}s",
-            app.token_count(),
-            app.elapsed_secs()
-        ),
-        theme().muted,
-    )]);
-    Paragraph::new(Line::from(detail_spans)).render(detail, buf);
+            tick: app.tick,
+            active,
+            style: phase_style(app.phase),
+        },
+    );
 }
 
 fn render_body(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
-    // Um único eixo vertical deixa a descrição dominar a tela. O segundo
-    // bloco é deliberadamente enxuto: contexto, atividade e progresso.
-    let [steps, primary, secondary] = Layout::vertical([
-        Constraint::Length(2),
-        Constraint::Min(8),
-        Constraint::Length(5),
-    ])
-    .areas(area);
-    render_steps(app, steps, buf);
+    let show_context = app.phase == Phase::Review;
+    let context_height = if show_context { 3 } else { 0 };
+    let [primary, context] =
+        Layout::vertical([Constraint::Min(0), Constraint::Length(context_height)]).areas(area);
     render_primary(app, primary, buf);
-    render_secondary(app, secondary, buf);
-}
-
-fn render_steps(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
-    if area.width == 0 || area.height == 0 {
-        return;
+    if show_context {
+        render_context(app, context, buf);
     }
-    // No mínimo aceito de 60 colunas, abrevia sem cortar a etapa de
-    // publicação. Em telas normais mantém os nomes completos.
-    let labels = if area.width < 72 {
-        ["Ctx", "Ger", "Rev", "Pub"]
-    } else if ascii_only() {
-        ["Contexto", "Geracao", "Revisao", "Publicacao"]
-    } else {
-        ["Contexto", "Geração", "Revisão", "Publicação"]
-    };
-    let current = app.step_index();
-    let done_mark = if ascii_only() { "x" } else { "✓" };
-    let pending_mark = if ascii_only() { "o" } else { "○" };
-    let current_mark = if ascii_only() { ">" } else { "●" };
-    let error_mark = if ascii_only() { "!" } else { "✘" };
-    let mut spans = Vec::with_capacity(labels.len() * 2);
-    for (idx, label) in labels.iter().enumerate() {
-        if idx > 0 {
-            spans.push(Span::styled(
-                if ascii_only() { "  -  " } else { "  ─  " },
-                theme().muted,
-            ));
-        }
-        let is_done = app.phase == Phase::Done || current > idx;
-        let is_current = app.phase != Phase::Done && current == idx;
-        let mark = if app.phase == Phase::Error && is_current {
-            error_mark
-        } else if is_done {
-            done_mark
-        } else if is_current {
-            current_mark
-        } else {
-            pending_mark
-        };
-        let style = if app.phase == Phase::Error && is_current {
-            theme().error
-        } else if is_done {
-            theme().success
-        } else if is_current {
-            theme().accent.add_modifier(Modifier::BOLD)
-        } else {
-            theme().muted
-        };
-        spans.push(Span::styled(format!("[{mark}] {label}"), style));
-    }
-    Paragraph::new(Line::from(spans)).render(area, buf);
 }
 
 fn render_primary(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
     match app.phase {
-        Phase::Boot => render_boot(app, area, buf),
+        Phase::Boot => {}
         Phase::Generating => render_stream(app, area, buf),
         Phase::Review => render_description(app, area, buf),
         Phase::Publishing => render_publishing(app, area, buf),
@@ -637,86 +563,34 @@ fn render_primary(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
     }
 }
 
-fn render_boot(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
-    let block = primary_block(" Preparando contexto ", theme().accent);
-    let inner = block.inner(area);
-    block.render(area, buf);
-    if inner.width == 0 || inner.height == 0 {
-        return;
-    }
-    let [status, details, bar] = Layout::vertical([
-        Constraint::Length(2),
-        Constraint::Min(1),
-        Constraint::Length(1),
-    ])
-    .areas(inner);
-    let phase_label = terminal_text(&app.phase_label);
-    let phase = super::shimmer::shimmer_text(&phase_label, app.tick, 30);
-    Paragraph::new(vec![
-        Line::from(vec![
-            Span::styled(format!("{} ", app.spinner()), theme().accent),
-            Span::styled(
-                "Preparando o ambiente",
-                Style::new().add_modifier(Modifier::BOLD),
-            ),
-        ]),
-        phase,
-    ])
-    .render(status, buf);
-    let details_copy = terminal_text(
-        "Branch, work item e diff serão exibidos conforme o contexto fica disponível.",
-    );
-    Paragraph::new(details_copy)
-        .style(theme().muted)
-        .wrap(Wrap { trim: false })
-        .render(details, buf);
-    Paragraph::new(progress_line(app, bar.width as usize)).render(bar, buf);
-}
-
 fn render_stream(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
-    let title = if ascii_only() {
-        " Geração via IA - ao vivo "
-    } else {
-        " Geração via IA · ao vivo "
-    };
-    let block = primary_block(title, theme().warning);
+    if app.streamed_raw.is_empty() {
+        return;
+    }
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(theme().warning)
+        .border_type(border_type())
+        .padding(ratatui::widgets::Padding::horizontal(1));
     let inner = block.inner(area);
     block.render(area, buf);
     if inner.width == 0 || inner.height == 0 {
         return;
     }
-    let [content, meta] =
-        Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(inner);
     let cursor = if ascii_only() { "_" } else { "▊" };
-    let text = if app.streamed_raw.is_empty() {
-        if ascii_only() {
-            "aguardando primeiro token...".to_owned()
-        } else {
-            "aguardando primeiro token…".to_owned()
-        }
-    } else {
-        format!("{}{cursor}", app.streamed_raw)
-    };
+    let text = format!("{}{cursor}", app.streamed_raw);
     let lines = text.lines().count();
     Paragraph::new(text)
         .wrap(Wrap { trim: false })
         .scroll((app.scroll, 0))
-        .render(content, buf);
+        .render(inner, buf);
     let mut state = ScrollbarState::new(lines.max(1)).position(app.scroll as usize);
     <Scrollbar as ratatui::widgets::StatefulWidget>::render(
         Scrollbar::new(ScrollbarOrientation::VerticalRight),
-        content,
+        inner,
         buf,
         &mut state,
     );
-    Paragraph::new(Line::from(vec![
-        Span::styled(
-            terminal_text("renderizando resposta do provider"),
-            theme().muted,
-        ),
-        Span::styled(format!("  {}%", percent_u16(app.progress)), theme().accent),
-    ]))
-    .render(meta, buf);
 }
 
 fn render_description(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
@@ -734,7 +608,7 @@ fn render_description(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
     };
     let title_separator = if ascii_only() { " - " } else { " · " };
     let title = terminal_text(&format!(
-        " Descrição gerada{title_separator}{chars}/4000 {limit_mark} "
+        " Body do PR{title_separator}{chars}/4000 {limit_mark} "
     ));
     let block = primary_block(&title, theme().success);
     let inner = block.inner(area);
@@ -787,101 +661,54 @@ fn render_description(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
 }
 
 fn render_publishing(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
-    let title = if ascii_only() {
-        " Publicação - Pull Requests "
-    } else {
-        " Publicação · Pull Requests "
-    };
-    let block = primary_block(title, theme().accent);
+    if app.published.is_empty() {
+        return;
+    }
+    let block = primary_block(" PRs criados ", theme().accent);
     let inner = block.inner(area);
     block.render(area, buf);
     if inner.width == 0 || inner.height == 0 {
         return;
     }
-    let [status, bar, meta, latest] = Layout::vertical([
-        Constraint::Length(1),
-        Constraint::Length(1),
-        Constraint::Length(1),
-        Constraint::Min(1),
-    ])
-    .areas(inner);
-    Paragraph::new(Line::from(vec![
-        Span::styled(format!("{} ", app.spinner()), theme().accent),
-        Span::styled(
-            terminal_text("Enviando a descrição e os reviewers selecionados"),
-            Style::new().add_modifier(Modifier::BOLD),
-        ),
-    ]))
-    .render(status, buf);
-    Paragraph::new(progress_line(app, bar.width as usize)).render(bar, buf);
-    let separator = if ascii_only() { "  -  " } else { "  ·  " };
-    let progress_label = terminal_text(&app.progress_label);
-    Paragraph::new(Line::from(vec![
-        Span::styled(progress_label, theme().muted),
-        Span::styled(
-            format!(
-                "{separator}{}%{separator}{}/{} target(s)",
-                percent_u16(app.progress),
-                app.published.len(),
-                app.targets.len()
-            ),
-            theme().accent,
-        ),
-    ]))
-    .render(meta, buf);
-    let recent = app
-        .logs
-        .back()
-        .map_or("aguardando resposta do Azure DevOps", String::as_str);
-    let recent = terminal_text(recent);
-    Paragraph::new(Line::from(vec![
-        Span::styled(if ascii_only() { "> " } else { "› " }, theme().muted),
-        Span::styled(recent, theme().muted),
-    ]))
-    .wrap(Wrap { trim: false })
-    .render(latest, buf);
+    let lines = app.published.iter().map(|item| {
+        Line::from(vec![
+            Span::styled(format!("  {}  ", item.target), branch_style()),
+            Span::styled(item.url.clone(), link_style()),
+        ])
+    });
+    Paragraph::new(lines.collect::<Vec<_>>())
+        .wrap(Wrap { trim: false })
+        .render(inner, buf);
 }
 
 fn render_done(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
-    let block_title = terminal_text(" Publicação concluída ");
-    let block = primary_block(&block_title, theme().success);
+    if app.published.is_empty() {
+        return;
+    }
+    let block = primary_block(" PRs publicados ", theme().success);
     let inner = block.inner(area);
     block.render(area, buf);
     if inner.width == 0 || inner.height == 0 {
         return;
     }
-    let mark = if ascii_only() { "[x]" } else { "✓" };
-    let summary = if app.published.is_empty() {
-        if ascii_only() {
-            "A operacao terminou sem PRs retornados pelo backend.".to_owned()
-        } else {
-            "A operação terminou sem PRs retornados pelo backend.".to_owned()
-        }
-    } else {
-        format!("{} PR(s) criado(s) no Azure DevOps.", app.published.len())
-    };
-    let mut lines = vec![Line::from(vec![
-        Span::styled(format!("{mark} "), theme().success),
-        Span::styled(summary, Style::new().add_modifier(Modifier::BOLD)),
-    ])];
-    for item in &app.published {
-        lines.push(Line::from(vec![
-            Span::styled(format!("  {}  ", item.target), branch_style()),
-            Span::styled(item.url.clone(), link_style()),
-        ]));
-    }
+    let lines: Vec<Line> = app
+        .published
+        .iter()
+        .map(|item| {
+            Line::from(vec![
+                Span::styled(format!("  {}  ", item.target), branch_style()),
+                Span::styled(item.url.clone(), link_style()),
+            ])
+        })
+        .collect();
     Paragraph::new(lines)
         .wrap(Wrap { trim: false })
         .render(inner, buf);
 }
 
 fn render_error(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
-    let title = if ascii_only() {
-        " Erro na operacao "
-    } else {
-        " Erro na operação "
-    };
-    let block = primary_block(title, theme().error);
+    let title = terminal_text(" Detalhes da operação ");
+    let block = primary_block(&title, theme().error);
     let inner = block.inner(area);
     block.render(area, buf);
     if inner.width == 0 || inner.height == 0 {
@@ -927,14 +754,9 @@ fn render_error(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
         .render(inner, buf);
 }
 
-fn render_secondary(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
-    let secondary_title = if ascii_only() {
-        " Contexto - atividade - progresso "
-    } else {
-        " Contexto · atividade · progresso "
-    };
+fn render_context(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
     let block = Block::default()
-        .title(Span::styled(secondary_title, theme().muted))
+        .title(Span::styled(" Contexto ", theme().muted))
         .borders(Borders::ALL)
         .border_style(theme().muted)
         .border_type(border_type())
@@ -975,37 +797,7 @@ fn render_secondary(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
             context.push(Span::styled(target.clone(), style));
         }
     }
-    let recent = app
-        .logs
-        .back()
-        .map_or(app.phase_label.as_str(), String::as_str);
-    let recent = terminal_text(recent);
-    let active = matches!(
-        app.phase,
-        Phase::Boot | Phase::Generating | Phase::Publishing
-    );
-    let activity = if active {
-        let phase = super::shimmer::shimmer_text(&recent, app.tick, 28);
-        let mut line = vec![Span::styled(format!("{} ", app.spinner()), theme().accent)];
-        line.extend(phase.spans);
-        Line::from(line)
-    } else {
-        Line::from(vec![
-            Span::styled(format!("{} ", app.spinner()), phase_style(app.phase)),
-            Span::styled(recent, theme().muted),
-        ])
-    };
-    let progress_separator = if ascii_only() { " - " } else { " · " };
-    let progress_label = format!(
-        "  {}%{progress_separator}{}",
-        percent_u16(app.progress),
-        app.progress_label
-    );
-    let label_width = u16::try_from(progress_label.chars().count()).unwrap_or(u16::MAX);
-    let progress_width = usize::from(inner.width.saturating_sub(label_width.saturating_add(1)));
-    let mut progress = progress_line(app, progress_width).spans;
-    progress.push(Span::styled(progress_label, theme().muted));
-    Paragraph::new(vec![Line::from(context), activity, Line::from(progress)])
+    Paragraph::new(Line::from(context))
         .wrap(Wrap { trim: false })
         .render(inner, buf);
 }
@@ -1019,14 +811,14 @@ fn primary_block(title: &str, style: Style) -> Block<'static> {
         .padding(ratatui::widgets::Padding::horizontal(1))
 }
 
-fn phase_copy(phase: Phase) -> (&'static str, &'static str) {
+fn phase_copy(phase: Phase) -> &'static str {
     match phase {
-        Phase::Boot => ("Preparação", "Inicializando o fluxo"),
-        Phase::Generating => ("Geração via IA", "Escrevendo a descrição"),
-        Phase::Review => ("Revisão", "Descrição pronta para revisão"),
-        Phase::Publishing => ("Publicação", "Criando Pull Request(s)"),
-        Phase::Done => ("Concluído", "Pull Request publicado"),
-        Phase::Error => ("Erro", "A operação não foi concluída"),
+        Phase::Boot => "Preparação",
+        Phase::Generating => "Geração via IA",
+        Phase::Review => "Revisão",
+        Phase::Publishing => "Publicação",
+        Phase::Done => "Concluído",
+        Phase::Error => "Erro",
     }
 }
 
@@ -1071,29 +863,8 @@ fn terminal_text(value: &str) -> String {
         .replace(['○', '●'], "o")
 }
 
-fn progress_line(app: &DescribeApp, width: usize) -> Line<'static> {
-    if ascii_only() {
-        let width = width.max(1);
-        let filled = filled_cells(app.progress, width);
-        return Line::from(vec![
-            Span::styled("#".repeat(filled), theme().accent),
-            Span::styled("-".repeat(width.saturating_sub(filled)), theme().muted),
-        ]);
-    }
-    super::shimmer::shimmer_bar(
-        app.progress,
-        width.max(8),
-        app.tick,
-        matches!(
-            app.phase,
-            Phase::Boot | Phase::Generating | Phase::Publishing
-        ),
-    )
-}
-
 fn render_footer(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
     let success_mark = if ascii_only() { "+" } else { "✓" };
-    let error_mark = if ascii_only() { "x" } else { "✘" };
     let hints = match &app.publish_dialog {
         Some(PublishDialog::ConfirmCreate(_) | PublishDialog::ConfirmPublish(_)) => {
             if ascii_only() {
@@ -1154,21 +925,6 @@ fn render_footer(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
             format!("   {success_mark} copiado!"),
             theme().success,
         ));
-    }
-    if !app.published_urls.is_empty() {
-        spans.push(Span::styled(
-            format!(
-                "   {success_mark} {} PR(s) publicado(s)",
-                app.published_urls.len()
-            ),
-            theme().success,
-        ));
-    }
-    // Barra de erro em destaque quando falha.
-    if let Phase::Error = app.phase {
-        if let Some(e) = &app.error {
-            spans.push(Span::styled(format!("   {error_mark} {e}"), theme().error));
-        }
     }
     Paragraph::new(Line::from(spans)).render(area, buf);
 }
@@ -1346,14 +1102,13 @@ fn render_candidate_list(app: &DescribeApp, selected: usize, area: Rect, buf: &m
     if inner.width == 0 || inner.height == 0 {
         return;
     }
-    let mut lines = vec![Line::from(Span::styled(
-        if app.candidate_activity == CandidateActivity::Loading {
-            "consultando PRs recentes…"
-        } else {
-            "Adote um PR somente se confirmar que ele corresponde a esta publicação."
-        },
-        theme().muted,
-    ))];
+    let mut lines = Vec::new();
+    if app.candidate_activity != CandidateActivity::Loading {
+        lines.push(Line::from(Span::styled(
+            "Adote um PR somente se confirmar que ele corresponde a esta publicação.",
+            theme().muted,
+        )));
+    }
     if let Some(message) = &app.candidate_message {
         lines.push(Line::from(Span::styled(message.clone(), theme().error)));
     }
@@ -2104,7 +1859,7 @@ fn run_loop(
     // para a task de publicação criada sob demanda).
     tokio::spawn(backend_task(prep, tx.clone()));
 
-    let tick_rate = Duration::from_millis(33); // ~30fps p/ spinner/shimmer suaves
+    let tick_rate = Duration::from_millis(33); // ~30fps p/ barra/status suaves
     let mut last_tick = std::time::Instant::now();
     // Dirty-flag: desenha só se tick/backend/input sujaram a tela.
     let mut needs_draw = true;
@@ -2114,7 +1869,7 @@ fn run_loop(
         if drain_backend(&mut rx, &mut app) {
             needs_draw = true;
         }
-        // 2. Tick de animação (spinner/shimmer continua e suja a tela).
+        // 2. Tick de animação (barra/status continuam e sujam a tela).
         if last_tick.elapsed() >= tick_rate {
             app.on_tick();
             last_tick = std::time::Instant::now();

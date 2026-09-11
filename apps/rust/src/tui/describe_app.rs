@@ -8,17 +8,10 @@ use std::collections::VecDeque;
 use std::time::Instant;
 
 use super::events::BackendEvent;
-use super::shimmer::{tick_frame_index, u16_from_i32_clamped};
-use super::spin_frames;
+use super::shimmer::u16_from_i32_clamped;
 use crate::ai::PrDescription;
 use crate::azure::pull_requests::{PublishedPr, PullRequestCandidate};
 use crate::features::describe::{PublishFailure, PublishFailureKind};
-
-/// Frames do spinner (efeito de atividade).
-///
-/// Mantido por compat; o estado usa [`super::spin_frames()`], que respeita
-/// `PRT_ASCII`/`TERM=dumb`.
-pub const SPINNER: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 /// Fase do fluxo.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -103,7 +96,7 @@ pub struct DescribeApp {
     pub phase_label: String,
     /// Início (para elapsed).
     pub started_at: Instant,
-    /// Frame do spinner (incrementado a cada tick).
+    /// Frame da animação do status (incrementado a cada tick).
     pub tick: u64,
     /// Tokens brutos recebidos (efeito typing).
     pub streamed_raw: String,
@@ -208,7 +201,7 @@ impl DescribeApp {
         }
     }
 
-    /// Avança 1 tick (~33ms): move spinner e shimmer.
+    /// Avança 1 tick (~33ms): move a animação do status.
     pub fn on_tick(&mut self) {
         self.tick = self.tick.wrapping_add(1);
     }
@@ -308,42 +301,6 @@ impl DescribeApp {
     #[must_use]
     pub fn elapsed_secs(&self) -> u64 {
         self.started_at.elapsed().as_secs()
-    }
-
-    /// Símbolo de atividade: gira enquanto há trabalho, parado no ocioso.
-    ///
-    /// Ocioso mostra estado final (`●` revisando, `✓` pronto, `✘` erro) em
-    /// vez de girar à toa — spinner que nunca para sinaliza trabalho
-    /// inexistente.
-    #[must_use]
-    pub fn spinner(&self) -> &str {
-        match self.phase {
-            Phase::Boot | Phase::Generating | Phase::Publishing => {
-                let frames = spin_frames();
-                frames[tick_frame_index(self.tick, frames.len())]
-            }
-            Phase::Review => {
-                if super::ascii_only() {
-                    "*"
-                } else {
-                    "●"
-                }
-            }
-            Phase::Done => {
-                if super::ascii_only() {
-                    "+"
-                } else {
-                    "✓"
-                }
-            }
-            Phase::Error => {
-                if super::ascii_only() {
-                    "x"
-                } else {
-                    "✘"
-                }
-            }
-        }
     }
 
     /// Texto do preview: final se pronto, senão stream parcial + cursor.
@@ -656,31 +613,6 @@ mod tests {
         a.on_backend(BackendEvent::Phase("streaming gpt…".to_owned()));
         assert_eq!(a.phase, Phase::Generating);
         assert_eq!(a.step_index(), 1);
-    }
-
-    #[test]
-    fn spinner_should_stop_when_idle() {
-        let frames: std::collections::HashSet<&str> =
-            crate::tui::spin_frames().iter().copied().collect();
-        // Ocioso: símbolo parado por fase, nunca frame animado.
-        let mut a = app();
-        a.on_backend(BackendEvent::Finished(
-            PrDescription {
-                title: "T".to_owned(),
-                body: "B".to_owned(),
-            },
-            "raw".to_owned(),
-        ));
-        assert_eq!(a.spinner(), "●");
-        a.on_backend(BackendEvent::Failed("x".to_owned()));
-        assert_eq!(a.spinner(), "✘");
-        // Ocupado: gira com o tick.
-        let mut b = app();
-        b.on_backend(BackendEvent::Token("tok".to_owned()));
-        let first = b.spinner().to_owned();
-        assert!(frames.contains(first.as_str()), "{first}");
-        b.on_tick();
-        let _ = b.spinner();
     }
 
     #[test]

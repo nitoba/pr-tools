@@ -1,11 +1,23 @@
 {
   "version": 1,
   "skills": {
+    "grill-me": {
+      "source": "mattpocock/skills",
+      "sourceType": "github",
+      "skillPath": "skills/productivity/grill-me/SKILL.md",
+      "computedHash": "9cdbb4b8f7a3aeaef82e6230c9e823500d4a8a1214c726cf342cf9829d34fc7d"
+    },
     "orchestrate": {
       "source": "rafaelquintanilha/skills",
       "sourceType": "github",
       "skillPath": "skills/orchestrate/SKILL.md",
       "computedHash": "8955ac61d024033bb22046f04291b2ce4b639d7d525c42ffac993df98b29a83b"
+    },
+    "tui-design": {
+      "source": "gfargo/tui-design-skill",
+      "sourceType": "github",
+      "skillPath": "plugins/tui-design/skills/tui-design/SKILL.md",
+      "computedHash": "68d4af9ca336eb73e65730f7c297f28e510ee58a8c5c86f220b09b4f32fb17d0"
     }
   }
 }

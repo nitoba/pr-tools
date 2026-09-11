@@ -77,12 +77,18 @@ pub struct Config {
     /// Modelo do Codex.
     #[serde(default = "default_codex_model")]
     pub codex_model: String,
+    /// Caminho opcional do executável do Codex (vazio = PATH).
+    #[serde(default)]
+    pub codex_path: String,
     /// Thinking do Codex.
     #[serde(default = "default_codex_reasoning")]
     pub codex_reasoning: ReasoningLevel,
     /// Modelo do `OpenCode` (`provider/modelo`).
     #[serde(default = "default_opencode_model")]
     pub opencode_model: String,
+    /// Caminho opcional do executável do `OpenCode` (vazio = PATH).
+    #[serde(default)]
+    pub opencode_path: String,
     /// Thinking do `OpenCode`.
     #[serde(default = "default_opencode_reasoning")]
     pub opencode_reasoning: ReasoningLevel,
@@ -155,8 +161,10 @@ impl Default for Config {
             compatible_model: default_compatible_model(),
             compatible_reasoning: default_reasoning(),
             codex_model: default_codex_model(),
+            codex_path: String::new(),
             codex_reasoning: default_codex_reasoning(),
             opencode_model: default_opencode_model(),
+            opencode_path: String::new(),
             opencode_reasoning: default_opencode_reasoning(),
             azure_pat: String::new(),
             reviewer_dev: String::new(),

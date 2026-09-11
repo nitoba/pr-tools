@@ -1,8 +1,8 @@
 //! Fluxo interativo do `prt doctor` — verifica o ambiente com lista rolável.
 //!
-//! Roda [`inspect`](crate::features::doctor::inspect) em background enquanto a
-//! UI mostra "verificando…" com spinner animado; quando o relatório chega,
-//! exibe a lista de checks (navegável com `j`/`k`) com painel de correção.
+//! Roda [`inspect`](crate::features::doctor::inspect) em background enquanto o
+//! header mostra o status indeterminado; quando o relatório chega, exibe a
+//! lista de checks (navegável com `j`/`k`) com painel de correção.
 //!
 //! Retorna o exit code do relatório ([`DoctorReport::exit_code`](crate::features::doctor::DoctorReport::exit_code));
 //! se o usuário sair antes do resultado, retorna `130` (abortado).
@@ -21,10 +21,10 @@ use ratatui::{
 };
 use tokio::sync::oneshot::error::TryRecvError;
 
-use super::{app_layout, ascii_only, border_type, spin_frames, theme};
+use super::{StatusHeader, border_type, status_header, status_layout, theme};
 use crate::features::doctor::{Check, DoctorReport, inspect};
 
-/// Tick do spinner durante a verificação (10fps — suficiente p/ Braille).
+/// Tick do status indeterminado durante a verificação.
 const TICK_CHECKING: Duration = Duration::from_millis(100);
 /// Poll do input (mantém a navegação responsiva entre ticks).
 const INPUT_POLL: Duration = Duration::from_millis(10);
@@ -104,7 +104,7 @@ fn closed_report() -> DoctorReport {
 
 /// Estado do fluxo (puro — sem terminal; testável via `#[cfg(test)]`).
 struct DoctorFlowApp {
-    /// Frame do spinner.
+    /// Frame da animação do status.
     tick: u64,
     /// Índice do check selecionado.
     selected: usize,
@@ -125,7 +125,7 @@ impl DoctorFlowApp {
         }
     }
 
-    /// Avança 1 tick do spinner.
+    /// Avança 1 tick do status.
     fn on_tick(&mut self) {
         self.tick = self.tick.wrapping_add(1);
     }
@@ -179,19 +179,6 @@ impl DoctorFlowApp {
         } else if self.selected >= self.offset.saturating_add(visible) {
             self.offset = self.selected.saturating_add(1).saturating_sub(visible);
         }
-    }
-
-    /// Símbolo de atividade: gira verificando; parado com relatório pronto.
-    fn spinner(&self) -> &str {
-        if self.report.is_some() {
-            return if ascii_only() { "*" } else { "●" };
-        }
-        let frames = spin_frames();
-        if frames.is_empty() {
-            return "·";
-        }
-        let idx = usize::try_from(self.tick).unwrap_or(usize::MAX) % frames.len();
-        frames.get(idx).copied().unwrap_or("·")
     }
 
     /// Exit code atual: o do relatório, ou 130 se ainda verificando.
@@ -256,7 +243,7 @@ async fn run_loop(terminal: &mut DefaultTerminal, source: Option<&str>) -> anyho
                 }
             }
         }
-        // 2. Tick do spinner (100ms) suja a tela.
+        // 2. Tick do status (100ms) suja a tela.
         if last_tick.elapsed() >= TICK_CHECKING {
             app.on_tick();
             last_tick = std::time::Instant::now();
@@ -320,7 +307,7 @@ fn render_app(app: &mut DoctorFlowApp, area: Rect, buf: &mut Buffer) {
         render_too_small(area, buf);
         return;
     }
-    let [head, body, foot] = app_layout(area);
+    let [head, body, foot] = status_layout(area);
     Block::new().style(theme().root).render(area, buf);
     render_header(app, head, buf);
     render_body(app, body, buf);
@@ -363,24 +350,9 @@ fn render_too_small(area: Rect, buf: &mut Buffer) {
     }
 }
 
-/// Header: spinner + título + resumo (`N falha(s) e M aviso(s)` / `todos prontos`).
+/// Header com fase e resumo global do diagnóstico.
 fn render_header(app: &DoctorFlowApp, area: Rect, buf: &mut Buffer) {
-    // Parado no ocioso: cor fixa quando o relatório já chegou.
-    let pulse = if app.report.is_none() {
-        if app.tick % 2 == 0 {
-            theme().accent
-        } else {
-            theme().app_title
-        }
-    } else {
-        theme().accent
-    };
-    let mut spans = vec![
-        Span::styled(format!("{} ", app.spinner()), pulse),
-        Span::styled("◆ prt doctor ", theme().app_title),
-        Span::styled("  ·  ", theme().muted),
-    ];
-    if let Some(report) = &app.report {
+    let (message, style, progress, active) = if let Some(report) = &app.report {
         let (failures, warnings) = report.summary();
         let style = if failures > 0 {
             theme().error
@@ -389,30 +361,33 @@ fn render_header(app: &DoctorFlowApp, area: Rect, buf: &mut Buffer) {
         } else {
             theme().success
         };
-        spans.push(Span::styled(summary_text(report), style));
+        (summary_text(report), style, Some(1.0), false)
     } else {
-        let line = super::shimmer::shimmer_text("verificando ambiente…", app.tick, 24);
-        spans.extend(line.spans);
-    }
-    Paragraph::new(Line::from(spans)).render(area, buf);
+        (
+            "verificando ambiente…".to_owned(),
+            theme().accent,
+            None,
+            true,
+        )
+    };
+    status_header(
+        area,
+        buf,
+        StatusHeader {
+            command: "doctor",
+            phase: "diagnóstico",
+            message: &message,
+            progress,
+            tick: app.tick,
+            active,
+            style,
+        },
+    );
 }
 
-/// Corpo: estado de verificação ou lista (Min) + detalhe do `fix` (5 linhas).
+/// Corpo: lista (Min) + detalhe do `fix` (5 linhas), quando o relatório chega.
 fn render_body(app: &mut DoctorFlowApp, area: Rect, buf: &mut Buffer) {
     if app.report.is_none() {
-        let line = super::shimmer::shimmer_text("verificando ambiente…", app.tick, 24);
-        let mut spans = vec![Span::styled(format!("{} ", app.spinner()), theme().accent)];
-        spans.extend(line.spans);
-        Paragraph::new(Line::from(spans))
-            .block(
-                Block::default()
-                    .title(Span::styled(" Doctor ", theme().accent))
-                    .borders(Borders::ALL)
-                    .border_style(theme().border)
-                    .border_type(border_type())
-                    .padding(ratatui::widgets::Padding::horizontal(1)),
-            )
-            .render(area, buf);
         return;
     }
     if app.report.as_ref().is_some_and(|r| r.checks.is_empty()) {
@@ -431,10 +406,8 @@ fn render_body(app: &mut DoctorFlowApp, area: Rect, buf: &mut Buffer) {
         return;
     }
     let detail_h = DETAIL_HEIGHT.min(area.height);
-    let list_h = area.height.saturating_sub(detail_h);
     let [list_area, detail_area] =
         Layout::vertical([Constraint::Min(0), Constraint::Length(detail_h)]).areas(area);
-    let _ = list_h;
     render_list(app, list_area, buf);
     let Some(report) = app.report.as_ref() else {
         return;
@@ -497,7 +470,7 @@ fn render_footer(app: &DoctorFlowApp, area: Rect, buf: &mut Buffer) {
     let hints = if app.is_ready() {
         format!("j/k navegar · q/enter/esc sair (código {code})")
     } else {
-        format!("verificando… · q/esc sai sem resultado (código {code})")
+        format!("q/esc sai sem resultado (código {code})")
     };
     Paragraph::new(Line::from(Span::styled(hints, theme().muted))).render(area, buf);
 }
@@ -505,6 +478,7 @@ fn render_footer(app: &DoctorFlowApp, area: Rect, buf: &mut Buffer) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::{Terminal, backend::TestBackend};
 
     /// Check de sucesso p/ testes.
     fn ok_check() -> Check {
@@ -617,11 +591,24 @@ mod tests {
     }
 
     #[test]
-    fn spinner_should_never_be_empty() {
+    fn doctor_checking_should_keep_status_only_in_header() -> anyhow::Result<()> {
         let mut app = DoctorFlowApp::new();
-        assert!(!app.spinner().is_empty());
-        app.on_tick();
-        assert!(!app.spinner().is_empty());
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend)?;
+        terminal.draw(|f| render_app(&mut app, f.area(), f.buffer_mut()))?;
+        insta::assert_snapshot!("doctor_checking_80x24", terminal.backend());
+        Ok(())
+    }
+
+    #[test]
+    fn doctor_ready_should_keep_checks_and_fixes() -> anyhow::Result<()> {
+        let mut app = DoctorFlowApp::new();
+        app.set_report(mixed_report());
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend)?;
+        terminal.draw(|f| render_app(&mut app, f.area(), f.buffer_mut()))?;
+        insta::assert_snapshot!("doctor_ready_80x24", terminal.backend());
+        Ok(())
     }
 
     #[test]

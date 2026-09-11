@@ -317,6 +317,11 @@ pub async fn generate_via_compatible(
 ///
 /// Retorna [`AppError::Ai`] se o binário falhar ou sair diferente de zero.
 pub async fn generate_via_codex(config: &Config, system: &str, prompt: &str) -> Result<String> {
+    let executable = if config.codex_path.trim().is_empty() {
+        "codex"
+    } else {
+        config.codex_path.trim()
+    };
     let mut args = vec![
         "exec".to_owned(),
         "-m".to_owned(),
@@ -334,7 +339,7 @@ pub async fn generate_via_codex(config: &Config, system: &str, prompt: &str) -> 
         args.push(format!("model_reasoning_effort={}", config.codex_reasoning));
     }
     args.push("-".to_owned());
-    run_subprocess("codex", &args, &format!("{system}\n\n{prompt}")).await
+    run_subprocess(executable, &args, &format!("{system}\n\n{prompt}")).await
 }
 
 /// Gera via `opencode run` (arquivo temporário de prompt).
@@ -344,6 +349,11 @@ pub async fn generate_via_codex(config: &Config, system: &str, prompt: &str) -> 
 /// Retorna [`AppError::Ai`] se a escrita do prompt temporário falhar, o
 /// binário `opencode` sair diferente de zero ou a saída vier vazia.
 pub async fn generate_via_opencode(config: &Config, system: &str, prompt: &str) -> Result<String> {
+    let executable = if config.opencode_path.trim().is_empty() {
+        "opencode"
+    } else {
+        config.opencode_path.trim()
+    };
     let path = std::env::temp_dir().join(format!("prt-opencode-{}.md", std::process::id()));
     tokio::fs::write(&path, format!("{system}\n\n{prompt}"))
         .await
@@ -352,7 +362,7 @@ pub async fn generate_via_opencode(config: &Config, system: &str, prompt: &str) 
             message: e.to_string(),
         })?;
     let res = run_subprocess(
-        "opencode",
+        executable,
         &[
             "run".to_owned(),
             "--format".to_owned(),

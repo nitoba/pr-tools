@@ -69,10 +69,14 @@ pub struct InitDraft {
     pub provider: String,
     /// Modelo do Codex.
     pub codex_model: String,
+    /// Caminho opcional do executável do Codex (vazio = PATH).
+    pub codex_path: String,
     /// Thinking do Codex.
     pub codex_reasoning: String,
     /// Modelo do `OpenCode`.
     pub opencode_model: String,
+    /// Caminho opcional do executável do `OpenCode` (vazio = PATH).
+    pub opencode_path: String,
     /// Thinking do `OpenCode`.
     pub opencode_reasoning: String,
     /// Base URL compatible.
@@ -110,8 +114,10 @@ impl InitDraft {
                 .cloned()
                 .unwrap_or_else(|| "codex".to_owned()),
             codex_model: cfg.codex_model,
+            codex_path: cfg.codex_path,
             codex_reasoning: cfg.codex_reasoning,
             opencode_model: cfg.opencode_model,
+            opencode_path: cfg.opencode_path,
             opencode_reasoning: cfg.opencode_reasoning,
             base_url: cfg.base_url,
             compatible_model: cfg.compatible_model,
@@ -143,8 +149,10 @@ impl InitDraft {
             compatible_model: or_default(&self.compatible_model, DEFAULT_COMPATIBLE_MODEL),
             compatible_reasoning: or_default(&self.compatible_reasoning, COMPATIBLE_REASONING),
             codex_model: or_default(&self.codex_model, crate::config::CODEX_MODEL),
+            codex_path: self.codex_path.trim().to_owned(),
             codex_reasoning: or_default(&self.codex_reasoning, crate::config::CODEX_REASONING),
             opencode_model: or_default(&self.opencode_model, OPENCODE_MODEL),
+            opencode_path: self.opencode_path.trim().to_owned(),
             opencode_reasoning: or_default(&self.opencode_reasoning, OPENCODE_REASONING),
             azure_pat: if self.pat_input.trim().is_empty() {
                 keep_pat.to_owned()
@@ -352,8 +360,10 @@ mod tests {
             test_assigned_to: String::new(),
             provider: "codex".to_owned(),
             codex_model: String::new(),
+            codex_path: String::new(),
             codex_reasoning: String::new(),
             opencode_model: String::new(),
+            opencode_path: String::new(),
             opencode_reasoning: String::new(),
             base_url: String::new(),
             compatible_model: String::new(),
@@ -368,6 +378,39 @@ mod tests {
         assert_eq!(cfg.test_team, "DevOps");
         assert_eq!(cfg.test_program, "Agrotrace");
         assert_eq!(cfg.codex_model, crate::config::CODEX_MODEL);
+    }
+
+    #[test]
+    fn draft_should_preserve_provider_executable_paths() {
+        let mut d = InitDraft {
+            pat_input: String::new(),
+            has_existing_pat: false,
+            reviewer_sprint: String::new(),
+            reviewer_dev: String::new(),
+            test_assigned_to: String::new(),
+            provider: "codex".to_owned(),
+            codex_model: String::new(),
+            codex_path: String::new(),
+            codex_reasoning: String::new(),
+            opencode_model: String::new(),
+            opencode_path: String::new(),
+            opencode_reasoning: String::new(),
+            base_url: String::new(),
+            compatible_model: String::new(),
+            compatible_reasoning: String::new(),
+            api_key_input: String::new(),
+            has_existing_api_key: false,
+            test_area_path: String::new(),
+            test_team: String::new(),
+            test_program: String::new(),
+        };
+        d.codex_path = " C:/Tools/codex.cmd ".to_owned();
+        d.opencode_path = "C:/Tools/opencode.exe".to_owned();
+
+        let cfg = d.to_config("", "");
+
+        assert_eq!(cfg.codex_path, "C:/Tools/codex.cmd");
+        assert_eq!(cfg.opencode_path, "C:/Tools/opencode.exe");
     }
 
     #[test]
