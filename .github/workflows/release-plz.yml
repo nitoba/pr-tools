@@ -28,11 +28,12 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Run release-plz release
-        uses: release-plz/action@63ab0c2746bedc448370bad4b0b3d536458398b0 # v0.5.50
+        uses: release-plz/action@a80d79efe0a195618acb02a4089d55fe74d2505f # v0.5.136
         with:
           command: release
-          project_manifest: apps/rust/Cargo.toml
+          manifest_path: apps/rust/Cargo.toml
           config: release-plz.toml
+          version: 0.3.165
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
 
@@ -57,10 +58,11 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Run release-plz release PR
-        uses: release-plz/action@63ab0c2746bedc448370bad4b0b3d536458398b0 # v0.5.50
+        uses: release-plz/action@a80d79efe0a195618acb02a4089d55fe74d2505f # v0.5.136
         with:
           command: release-pr
-          project_manifest: apps/rust/Cargo.toml
+          manifest_path: apps/rust/Cargo.toml
           config: release-plz.toml
+          version: 0.3.165
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
