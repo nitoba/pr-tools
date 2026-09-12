@@ -1,4 +1,5 @@
 dist/
+/target/
 /apps/rust/target/
 
 # Snapshots de referência do Insta (*.snap) devem ser versionados.

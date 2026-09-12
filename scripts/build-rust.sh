@@ -11,8 +11,9 @@
 # Use --no-verify para pular fmt/clippy/test (build puro).
 set -euo pipefail
 
-APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../apps/rust" && pwd)"
-cd "$APP_DIR"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+APP_DIR="$REPO_ROOT/apps/rust"
+cd "$REPO_ROOT"
 
 usage() {
   echo "Uso: ./scripts/build-rust.sh [alvo] [--no-verify]" >&2
@@ -79,21 +80,21 @@ fi
 
 if [ "$VERIFY" = "1" ]; then
   echo "==> cargo fmt --check"
-  cargo fmt --all -- --check
+  cargo fmt --manifest-path "$APP_DIR/Cargo.toml" -- --check
   echo "==> cargo clippy"
-  cargo clippy --locked --all-targets -- -D clippy::correctness
+  cargo clippy --manifest-path "$APP_DIR/Cargo.toml" --locked --all-targets -- -D clippy::correctness
   echo "==> cargo test"
-  cargo test --locked
+  cargo test --manifest-path "$APP_DIR/Cargo.toml" --locked
 fi
 
 echo "==> cargo build --release"
-cargo build --locked --release
+cargo build --manifest-path "$APP_DIR/Cargo.toml" --locked --release
 
-EXE="target/release/prt"
+EXE="$REPO_ROOT/target/release/prt"
 if [ "$TARGET" = "windows-x64" ]; then
   # No host Windows o binário sai com .exe; no Unix simulamos o nome.
-  if [ -f "target/release/prt.exe" ]; then
-    EXE="target/release/prt.exe"
+  if [ -f "$REPO_ROOT/target/release/prt.exe" ]; then
+    EXE="$REPO_ROOT/target/release/prt.exe"
   fi
 fi
 if [ ! -f "$EXE" ]; then
@@ -101,13 +102,13 @@ if [ ! -f "$EXE" ]; then
   exit 1
 fi
 
-mkdir -p dist
-OUT="dist/prt-rust-$TARGET"
+mkdir -p "$APP_DIR/dist"
+OUT="$APP_DIR/dist/prt-rust-$TARGET"
 if [ "$TARGET" = "windows-x64" ]; then
   OUT="$OUT.exe"
 fi
 cp -f "$EXE" "$OUT"
 chmod +x "$OUT" 2>/dev/null || true
 
-echo "Binário criado em apps/rust/$OUT"
+echo "Binário criado em $OUT"
 ls -lh "$OUT"
