@@ -114,6 +114,6 @@ Proof: `INSTA_UPDATE=no cargo test --manifest-path apps/rust/Cargo.toml --locked
 
 S1-S4 cabem em uma única batch: os arquivos existentes somam aproximadamente 89k tokens pela regra `wc -c / 4`, e o novo editor/testes permanecem abaixo do teto de 150k; a fronteira natural é entre editor, integração e payload, mas não há necessidade de handoff de build.
 
-- Boundary: única batch, a ser fechada após C18; não há commit de implementação ainda.
+- Boundary: única batch fechada após C18; implementação em `5bc160e` e verificação independente em `.checks/issue-9-edit-content-before-publish.verified.md`.
 - User-settled mid-build: nenhum; o ticket declara 0 questões abertas.
 - Abandoned: nenhum; alternativas rejeitadas estão registradas em `Landing`.
