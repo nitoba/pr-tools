@@ -126,9 +126,11 @@ prt update
 As releases são preparadas automaticamente pelo `release-plz`, usando o
 `git-cliff` para atualizar o [CHANGELOG.md](CHANGELOG.md). O fluxo cria uma
 Release PR com o incremento de versão em `apps/rust/Cargo.toml`, o changelog e,
-após o merge, uma tag `vX.Y.Z` e uma GitHub Release. O workflow de release
-existente gera uma descrição humanizada com um endpoint OpenAI-compatible,
-compila e anexa os binários para Linux, macOS e Windows.
+após o merge, uma tag `vX.Y.Z` e uma GitHub Release em modo draft. O workflow
+de release executa os testes, compila e anexa os binários para Linux, macOS e
+Windows, gera uma descrição humanizada com um endpoint OpenAI-compatible e só
+então publica a Release. Se a geração por IA falhar, a Release permanece como
+draft.
 
 Para que o workflow consiga criar a Release PR, a configuração do repositório
 no GitHub precisa ter o secret `RELEASE_PLZ_TOKEN`: um fine-grained PAT com
