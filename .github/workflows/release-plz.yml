@@ -31,7 +31,7 @@ jobs:
         uses: release-plz/action@63ab0c2746bedc448370bad4b0b3d536458398b0 # v0.5.50
         with:
           command: release
-          manifest_path: apps/rust/Cargo.toml
+          project_manifest: apps/rust/Cargo.toml
           config: release-plz.toml
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
@@ -60,7 +60,7 @@ jobs:
         uses: release-plz/action@63ab0c2746bedc448370bad4b0b3d536458398b0 # v0.5.50
         with:
           command: release-pr
-          manifest_path: apps/rust/Cargo.toml
+          project_manifest: apps/rust/Cargo.toml
           config: release-plz.toml
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
