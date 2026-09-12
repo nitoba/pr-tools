@@ -44,15 +44,6 @@ insta = { version = "1", features = ["yaml"] }
 pretty_assertions = "1"
 tempfile = "3"
 
-[profile.release]
-opt-level = 3
-lto = "fat"
-codegen-units = 1
-strip = true
-
-[profile.dev.package."*"]
-opt-level = 3
-
 [lints.rust]
 unsafe_code = "warn"
 missing_docs = "warn"

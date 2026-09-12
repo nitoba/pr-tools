@@ -31,7 +31,7 @@ jobs:
         uses: release-plz/action@a80d79efe0a195618acb02a4089d55fe74d2505f # v0.5.136
         with:
           command: release
-          manifest_path: apps/rust/Cargo.toml
+          manifest_path: Cargo.toml
           config: release-plz.toml
           version: 0.3.165
         env:
@@ -61,7 +61,7 @@ jobs:
         uses: release-plz/action@a80d79efe0a195618acb02a4089d55fe74d2505f # v0.5.136
         with:
           command: release-pr
-          manifest_path: apps/rust/Cargo.toml
+          manifest_path: Cargo.toml
           config: release-plz.toml
           version: 0.3.165
         env:
