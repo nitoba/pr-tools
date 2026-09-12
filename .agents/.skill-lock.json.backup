@@ -1,0 +1,18 @@
+{
+  "version": 2,
+  "skills": {
+    "tlc-spec-lean": {
+      "name": "tlc-spec-lean",
+      "source": "local",
+      "contentHash": "af264d73172a488bab93cb76366df411cee8631800480fbca4add00dd72bbd8b",
+      "installedAt": "2026-09-12T14:42:46.130Z",
+      "updatedAt": "2026-09-12T14:42:46.161Z",
+      "agents": [
+        "cursor",
+        "claude-code"
+      ],
+      "method": "copy",
+      "global": false
+    }
+  }
+}
