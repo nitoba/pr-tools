@@ -282,14 +282,21 @@ fn validate_provider(value: Option<&str>) -> Result<Option<String>> {
 
 /// Valida targets (`dev`, `sprint`, `sprint/<n>`).
 fn validate_targets(targets: &[String]) -> Result<Vec<String>> {
+    let mut validated = Vec::with_capacity(targets.len());
     for t in targets {
-        if t != "dev" && t != "sprint" && !t.starts_with("sprint/") {
+        let numbered_sprint = t.strip_prefix("sprint/").is_some_and(|number| {
+            !number.is_empty() && number.bytes().all(|byte| byte.is_ascii_digit())
+        });
+        if t != "dev" && t != "sprint" && !numbered_sprint {
             return Err(AppError::cli(format!(
                 "target inválido: {t}. use dev, sprint ou sprint/<número>."
             )));
         }
+        if !validated.contains(t) {
+            validated.push(t.clone());
+        }
     }
-    Ok(targets.to_vec())
+    Ok(validated)
 }
 
 /// Converte argv estilo Dart (`--opt valor` e `--opt=valor`) via clap,
@@ -548,6 +555,30 @@ mod tests {
     fn desc_should_reject_invalid_target() {
         let err = parse_cli(["prt", "desc", "--target", "main"]).unwrap_err();
         assert!(err.to_string().contains("target inválido"));
+    }
+
+    #[test]
+    fn desc_should_reject_non_numeric_sprint_target() {
+        for target in ["sprint/", "sprint/doze", "sprint/12x"] {
+            let err = parse_cli(["prt", "desc", "--target", target]).unwrap_err();
+            assert!(err.to_string().contains("target inválido"));
+        }
+    }
+
+    #[test]
+    fn desc_should_deduplicate_targets_preserving_order() {
+        let opts = parse_cli([
+            "prt",
+            "desc",
+            "--target",
+            "dev",
+            "--target",
+            "sprint/12",
+            "--target",
+            "dev",
+        ])
+        .unwrap();
+        assert_eq!(opts.targets, vec!["dev", "sprint/12"]);
     }
 
     #[test]

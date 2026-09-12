@@ -122,11 +122,9 @@ pub async fn inspect(source: Option<&str>) -> DoctorReport {
 async fn run_cmd(prog: &str, args: &[&str], wait: Duration) -> Option<String> {
     let output = timeout(wait, async {
         for candidate in crate::process::command_candidates(prog) {
-            match tokio::process::Command::new(&candidate)
-                .args(args)
-                .output()
-                .await
-            {
+            let mut command = tokio::process::Command::new(&candidate);
+            command.args(args).kill_on_drop(true);
+            match command.output().await {
                 Ok(output) => return Some(output),
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                 Err(_) => return None,
@@ -1141,5 +1139,50 @@ mod tests {
             repository: "meurepo".to_owned(),
         };
         assert_eq!(remote_label(&remote), "minhaorg/meuproj/meurepo");
+    }
+
+    #[tokio::test]
+    async fn command_timeout_should_terminate_child() {
+        let dir = tempfile::tempdir().unwrap();
+        let completed = dir.path().join("completed");
+
+        #[cfg(windows)]
+        let (command, args) = {
+            let completed = completed.to_string_lossy().replace('\'', "''");
+            let script = format!(
+                "Start-Sleep -Milliseconds 1000; Set-Content -LiteralPath '{completed}' -Value completed"
+            );
+            (
+                "powershell.exe".to_owned(),
+                vec![
+                    "-NoProfile".to_owned(),
+                    "-NonInteractive".to_owned(),
+                    "-Command".to_owned(),
+                    script,
+                ],
+            )
+        };
+
+        #[cfg(not(windows))]
+        let (command, args) = (
+            "sh".to_owned(),
+            vec![
+                "-c".to_owned(),
+                "sleep 1; printf completed > \"$1\"".to_owned(),
+                "prt-test".to_owned(),
+                completed.to_string_lossy().into_owned(),
+            ],
+        );
+
+        let args = args.iter().map(String::as_str).collect::<Vec<_>>();
+        assert_eq!(
+            run_cmd(&command, &args, Duration::from_millis(300)).await,
+            None
+        );
+        tokio::time::sleep(Duration::from_millis(1800)).await;
+        assert!(
+            !completed.exists(),
+            "o comando continuou executando após o timeout"
+        );
     }
 }

@@ -323,13 +323,30 @@ async fn run_init(_options: &prt::cli::CliOptions) -> anyhow::Result<()> {
 
 async fn run_doctor(options: &prt::cli::CliOptions) -> anyhow::Result<()> {
     use prt::tui::doctor_flow::run_doctor_flow;
-    const MSG: &str =
-        "Diagnóstico interativo em implementação.\n\nUse `prt desc` ou `prt init`, já em Ratatui.";
     if !std::io::IsTerminal::is_terminal(&std::io::stdout()) {
-        println!("Doctor\n\n{MSG}");
+        let report = prt::features::doctor::inspect(options.source.as_deref()).await;
+        println!("Doctor");
+        for check in &report.checks {
+            let status = if check.ok {
+                "OK"
+            } else if check.warning {
+                "AVISO"
+            } else {
+                "FALHA"
+            };
+            println!("[{status}] {}: {}", check.component, check.detail);
+            if !check.ok && !check.fix.trim().is_empty() {
+                println!("  correção: {}", check.fix);
+            }
+        }
+        let (failures, warnings) = report.summary();
+        println!("\nResumo: {failures} falha(s), {warnings} aviso(s).");
+        let code = report.exit_code();
+        if code != 0 {
+            std::process::exit(code);
+        }
         return Ok(());
     }
-    let _ = options;
     let code = run_doctor_flow(options.source.as_deref()).await?;
     if code != 0 {
         std::process::exit(code);

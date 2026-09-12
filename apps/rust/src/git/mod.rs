@@ -85,17 +85,18 @@ pub fn work_item_from_branch(branch: &str) -> String {
 #[must_use]
 pub fn resolve_targets(context: &ChangeContext, requested: &[String]) -> Vec<String> {
     if !requested.is_empty() {
-        return requested
-            .iter()
-            .map(|t| {
-                if t == "sprint" {
-                    context.sprint_branch.clone()
-                } else {
-                    t.clone()
-                }
-            })
-            .filter(|t| !t.is_empty())
-            .collect();
+        let mut resolved = Vec::with_capacity(requested.len());
+        for requested_target in requested {
+            let target = if requested_target == "sprint" {
+                context.sprint_branch.clone()
+            } else {
+                requested_target.clone()
+            };
+            if !target.is_empty() && !resolved.contains(&target) {
+                resolved.push(target);
+            }
+        }
+        return resolved;
     }
     [context.sprint_branch.clone(), "dev".to_owned()]
         .into_iter()
@@ -176,8 +177,7 @@ pub fn collect(source: Option<&str>) -> Result<ChangeContext> {
     let source_ref = format!("refs/heads/{branch}");
 
     // Descobre `sprint/<n>` com maior n.
-    let branches =
-        git(&["branch", "--list", "sprint/*", "dev", "main", "master"]).unwrap_or_default();
+    let branches = git(&["branch", "--list", "sprint/*", "dev", "main", "master"])?;
     let mut sprint_branch = String::new();
     let mut sprint_max: i64 = -1;
     for b in branches
@@ -214,8 +214,7 @@ pub fn collect(source: Option<&str>) -> Result<ChangeContext> {
 
     // Diff: `diff base...source`, fallback `diff base source`.
     let diff_raw = git(&["diff", &format!("{base_branch}...{branch}")])
-        .or_else(|_| git(&["diff", &base_branch, &branch]))
-        .unwrap_or_default();
+        .or_else(|_| git(&["diff", &base_branch, &branch]))?;
     let diff_original_lines = diff_raw.lines().count();
     let diff = diff_raw
         .lines()
@@ -228,8 +227,7 @@ pub fn collect(source: Option<&str>) -> Result<ChangeContext> {
         "--oneline",
         "-50",
         &format!("{base_branch}..{branch}"),
-    ])
-    .unwrap_or_default();
+    ])?;
     let remote_url = git(&["remote", "get-url", "origin"]).ok();
     let remote = remote_url.as_deref().and_then(parse_azure_remote);
     let work_item_id = work_item_from_branch(&branch);
@@ -272,6 +270,10 @@ mod tests {
         };
         assert_eq!(resolve_targets(&ctx, &[]), vec!["sprint/12", "dev"]);
         assert_eq!(resolve_targets(&ctx, &["dev".to_owned()]), vec!["dev"]);
+        assert_eq!(
+            resolve_targets(&ctx, &["sprint".to_owned(), "sprint/12".to_owned()]),
+            vec!["sprint/12"]
+        );
         assert_eq!(
             resolve_targets(&ctx, &["sprint".to_owned()]),
             vec!["sprint/12"]

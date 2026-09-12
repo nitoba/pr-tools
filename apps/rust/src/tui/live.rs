@@ -88,7 +88,11 @@ async fn stream_compatible_live(
             _ => {}
         }
     }
-    Ok(acc)
+    if acc.trim().is_empty() {
+        Err("openai-compatible: saída vazia".to_owned())
+    } else {
+        Ok(acc)
+    }
 }
 
 /// Typing simulado: quebra o texto em pedaços para animar a tela mesmo

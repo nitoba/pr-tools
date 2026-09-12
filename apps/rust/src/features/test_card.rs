@@ -1172,6 +1172,7 @@ pub fn build_test_case_steps_xml(body: &str) -> String {
         if action.is_empty() {
             continue;
         }
+        let action = escape_html(action);
         let _ = write!(
             steps,
             "<step id=\"{id}\" type=\"ActionStep\"><parameterizedString isformatted=\"true\">{action}</parameterizedString><parameterizedString isformatted=\"true\">Resultado esperado: conforme especificado.</parameterizedString></step>"
@@ -1203,6 +1204,13 @@ mod tests {
         let xml = build_test_case_steps_xml("- [ ] Abrir tela\n- [ ] Confirmar");
         assert!(xml.contains("ActionStep"));
         assert!(xml.contains("Abrir tela"));
+    }
+
+    #[test]
+    fn steps_xml_should_escape_xml_metacharacters() {
+        let xml = build_test_case_steps_xml("- [ ] Comparar A & B < C > D");
+        assert!(xml.contains("Comparar A &amp; B &lt; C &gt; D"));
+        assert!(!xml.contains("Comparar A & B < C > D"));
     }
 
     fn test_options() -> CliOptions {

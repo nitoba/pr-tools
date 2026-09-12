@@ -32,7 +32,7 @@ pub struct PrDescription {
 /// Retorna `true` se o body cabe no limite do Azure.
 #[must_use]
 pub fn is_within_limit(body: &str) -> bool {
-    body.len() < AZURE_PR_DESCRIPTION_MAX_LENGTH
+    body.chars().count() < AZURE_PR_DESCRIPTION_MAX_LENGTH
 }
 
 /// Valida o limite.
@@ -43,7 +43,7 @@ pub fn is_within_limit(body: &str) -> bool {
 pub fn validate_description(desc: &PrDescription) -> Result<()> {
     if !is_within_limit(&desc.body) {
         return Err(AppError::DescriptionTooLong {
-            length: desc.body.len(),
+            length: desc.body.chars().count(),
         });
     }
     Ok(())
@@ -69,22 +69,23 @@ pub fn normalize_description(raw: &str, branch: &str) -> PrDescription {
 fn strip_think(s: &str) -> String {
     // Remove blocos <think>...</think> (inclui variações de case).
     let mut out = s.to_owned();
-    loop {
-        let lower = out.to_lowercase();
-        let Some(start) = lower.find("<think>") else {
+    while let Some(start) = find_ascii_case_insensitive(&out, "<think>") {
+        let content_start = start + "<think>".len();
+        let Some(relative_end) = find_ascii_case_insensitive(&out[content_start..], "</think>")
+        else {
             break;
         };
-        let Some(end) = lower.find("</think>") else {
-            break;
-        };
-        let end_idx = end + "</think>".len();
-        if end_idx <= out.len() && start < end_idx {
-            out.replace_range(start..end_idx, "");
-        } else {
-            break;
-        }
+        let end = content_start + relative_end + "</think>".len();
+        out.replace_range(start..end, "");
     }
     out
+}
+
+fn find_ascii_case_insensitive(haystack: &str, needle: &str) -> Option<usize> {
+    haystack
+        .as_bytes()
+        .windows(needle.len())
+        .position(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
 }
 
 fn strip_fences(s: &str) -> std::borrow::Cow<'_, str> {
@@ -307,7 +308,14 @@ pub async fn generate_via_compatible(
             provider: "openai-compatible".to_owned(),
             message: e.to_string(),
         })?;
-    Ok(result.text().unwrap_or_default())
+    let text = result.text().unwrap_or_default();
+    if text.trim().is_empty() {
+        return Err(AppError::Ai {
+            provider: "openai-compatible".to_owned(),
+            message: "saída vazia".to_owned(),
+        });
+    }
+    Ok(text)
 }
 
 /// Gera via `codex exec` (subprocesso, stdin = system+prompt).
@@ -383,6 +391,15 @@ pub async fn generate_via_opencode(config: &Config, system: &str, prompt: &str) 
 }
 
 async fn run_subprocess(cmd: &str, args: &[String], stdin_text: &str) -> Result<String> {
+    run_subprocess_with_timeout(cmd, args, stdin_text, std::time::Duration::from_secs(300)).await
+}
+
+async fn run_subprocess_with_timeout(
+    cmd: &str,
+    args: &[String],
+    stdin_text: &str,
+    wait: std::time::Duration,
+) -> Result<String> {
     use tokio::process::Command;
     let mut child = None;
     let mut last_spawn_error = None;
@@ -392,6 +409,7 @@ async fn run_subprocess(cmd: &str, args: &[String], stdin_text: &str) -> Result<
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true)
             .spawn()
         {
             Ok(process) => {
@@ -419,31 +437,30 @@ async fn run_subprocess(cmd: &str, args: &[String], stdin_text: &str) -> Result<
             message: format!("falha ao executar {cmd}: {error}"),
         });
     };
-    if !stdin_text.is_empty() {
-        if let Some(mut stdin) = child.stdin.take() {
-            use tokio::io::AsyncWriteExt;
-            stdin
-                .write_all(stdin_text.as_bytes())
-                .await
-                .map_err(|e| AppError::Ai {
-                    provider: cmd.to_owned(),
-                    message: e.to_string(),
-                })?;
+    let operation = async {
+        if !stdin_text.is_empty() {
+            if let Some(mut stdin) = child.stdin.take() {
+                use tokio::io::AsyncWriteExt;
+                stdin
+                    .write_all(stdin_text.as_bytes())
+                    .await
+                    .map_err(|e| AppError::Ai {
+                        provider: cmd.to_owned(),
+                        message: e.to_string(),
+                    })?;
+            }
         }
-    }
-    let out = tokio::time::timeout(
-        std::time::Duration::from_secs(300),
-        child.wait_with_output(),
-    )
-    .await
-    .map_err(|_| AppError::Ai {
-        provider: cmd.to_owned(),
-        message: "timeout após 300s".to_owned(),
-    })?
-    .map_err(|e| AppError::Ai {
-        provider: cmd.to_owned(),
-        message: e.to_string(),
-    })?;
+        child.wait_with_output().await.map_err(|e| AppError::Ai {
+            provider: cmd.to_owned(),
+            message: e.to_string(),
+        })
+    };
+    let out = tokio::time::timeout(wait, operation)
+        .await
+        .map_err(|_| AppError::Ai {
+            provider: cmd.to_owned(),
+            message: format!("timeout após {}s", wait.as_secs()),
+        })??;
     if !out.status.success() {
         return Err(AppError::Ai {
             provider: cmd.to_owned(),
@@ -517,6 +534,14 @@ mod tests {
     }
 
     #[test]
+    fn normalizer_should_strip_think_after_case_changing_unicode() {
+        let raw = "\u{212a}<THINK>segredo</THINK>\n{\"title\":\"T\",\"body\":\"B\"}";
+        let d = normalize_description(raw, "b");
+        assert_eq!(d.title, "T");
+        assert_eq!(d.body, "B");
+    }
+
+    #[test]
     fn normalizer_should_fallback_to_first_line() {
         let d = normalize_description("Só um texto livre", "minha-branch");
         assert_eq!(d.title, "Só um texto livre");
@@ -531,5 +556,128 @@ mod tests {
             body: "a".repeat(4000),
         };
         assert!(validate_description(&d).is_err());
+    }
+
+    #[test]
+    fn limits_should_count_unicode_characters() {
+        assert!(is_within_limit(&"é".repeat(3999)));
+    }
+
+    #[tokio::test]
+    async fn compatible_provider_should_reject_empty_text() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0_u8; 8192];
+            let _ = socket.read(&mut request).await.unwrap();
+            let body = r#"{"id":"audit","object":"chat.completion","created":0,"model":"audit","choices":[]}"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            socket.write_all(response.as_bytes()).await.unwrap();
+        });
+
+        let config = Config {
+            base_url: format!("http://{address}/v1"),
+            compatible_model: "audit".to_owned(),
+            ..Config::default()
+        };
+        let error = generate_via_compatible(&config, "system", "prompt")
+            .await
+            .unwrap_err();
+        server.await.unwrap();
+        assert!(error.to_string().contains("saída vazia"));
+    }
+
+    #[tokio::test]
+    async fn cancelling_subprocess_should_terminate_child() {
+        let dir = tempfile::tempdir().unwrap();
+        let started = dir.path().join("started");
+        let completed = dir.path().join("completed");
+
+        #[cfg(windows)]
+        let (command, args) = {
+            let started = started.to_string_lossy().replace('\'', "''");
+            let completed = completed.to_string_lossy().replace('\'', "''");
+            let script = format!(
+                "Set-Content -LiteralPath '{started}' -Value started; Start-Sleep -Milliseconds 1000; Set-Content -LiteralPath '{completed}' -Value completed; Write-Output done"
+            );
+            (
+                "powershell.exe".to_owned(),
+                vec![
+                    "-NoProfile".to_owned(),
+                    "-NonInteractive".to_owned(),
+                    "-Command".to_owned(),
+                    script,
+                ],
+            )
+        };
+
+        #[cfg(not(windows))]
+        let (command, args) = {
+            let script = "printf started > \"$1\"; sleep 1; printf completed > \"$2\"; printf done";
+            (
+                "sh".to_owned(),
+                vec![
+                    "-c".to_owned(),
+                    script.to_owned(),
+                    "prt-test".to_owned(),
+                    started.to_string_lossy().into_owned(),
+                    completed.to_string_lossy().into_owned(),
+                ],
+            )
+        };
+
+        let task = tokio::spawn(async move { run_subprocess(&command, &args, "").await });
+        for _ in 0..100 {
+            if started.exists() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        assert!(started.exists(), "o subprocesso não chegou a iniciar");
+
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+        assert!(
+            !completed.exists(),
+            "o subprocesso continuou após o cancelamento"
+        );
+    }
+
+    #[tokio::test]
+    async fn subprocess_timeout_should_cover_stdin_write() {
+        let command = std::env::current_exe()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let args = vec![
+            "--ignored".to_owned(),
+            "--exact".to_owned(),
+            "ai::tests::subprocess_blocking_child".to_owned(),
+            "--nocapture".to_owned(),
+            "--test-threads=1".to_owned(),
+        ];
+        let input = "x".repeat(16 * 1024 * 1024);
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            run_subprocess_with_timeout(&command, &args, &input, std::time::Duration::from_secs(1)),
+        )
+        .await
+        .expect("o timeout interno não cobriu a escrita no stdin")
+        .unwrap_err();
+        assert!(result.to_string().contains("timeout após 1s"));
+    }
+
+    #[test]
+    #[ignore = "processo auxiliar para o teste de timeout"]
+    fn subprocess_blocking_child() {
+        std::thread::sleep(std::time::Duration::from_secs(5));
+        println!("done");
     }
 }

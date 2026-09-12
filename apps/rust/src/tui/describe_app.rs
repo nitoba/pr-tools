@@ -336,17 +336,16 @@ impl DescribeApp {
     /// Quantidade de caracteres exibida para a descrição/stream.
     #[must_use]
     pub fn content_chars(&self) -> usize {
-        self.desc
-            .as_ref()
-            .map_or(self.streamed_raw.len(), |description| {
-                description.body.len()
-            })
+        self.desc.as_ref().map_or_else(
+            || self.streamed_raw.chars().count(),
+            |description| description.body.chars().count(),
+        )
     }
 
     /// Número de tokens (aprox. por chars/4).
     #[must_use]
     pub fn token_count(&self) -> usize {
-        self.streamed_raw.len() / 4
+        self.streamed_raw.chars().count() / 4
     }
 
     /// Scroll para cima/baixo com clamp simples.
@@ -601,6 +600,26 @@ mod tests {
         assert_eq!(a.phase, Phase::Generating);
         assert!(a.preview_text().contains("title"));
         assert!(a.streamed_raw.contains("title"));
+    }
+
+    #[test]
+    fn content_counter_should_count_unicode_characters() {
+        let mut a = app();
+        a.on_backend(BackendEvent::Token("ééé".to_owned()));
+        assert_eq!(a.content_chars(), 3);
+
+        let mut token_app = app();
+        token_app.on_backend(BackendEvent::Token("é".repeat(8)));
+        assert_eq!(token_app.token_count(), 2);
+
+        a.on_backend(BackendEvent::Finished(
+            PrDescription {
+                title: "T".to_owned(),
+                body: "ação".to_owned(),
+            },
+            String::new(),
+        ));
+        assert_eq!(a.content_chars(), 4);
     }
 
     #[test]

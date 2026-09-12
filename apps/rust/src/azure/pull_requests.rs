@@ -547,7 +547,7 @@ pub async fn publish_pull_requests(
     use std::collections::HashMap;
     if !crate::ai::is_within_limit(input.body) {
         return Err(AppError::DescriptionTooLong {
-            length: input.body.len(),
+            length: input.body.chars().count(),
         });
     }
     let remote = input.remote;
