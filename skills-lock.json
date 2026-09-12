@@ -13,6 +13,30 @@
       "skillPath": "skills/orchestrate/SKILL.md",
       "computedHash": "8955ac61d024033bb22046f04291b2ce4b639d7d525c42ffac993df98b29a83b"
     },
+    "the-judge": {
+      "source": "tech-leads-club/agent-skills",
+      "sourceType": "github",
+      "skillPath": "packages/skills-catalog/skills/(quality)/the-judge/SKILL.md",
+      "computedHash": "f938ba8870f8846136305a1dec9651a068268478e9e05b0b3eebd635bf3f9c0b"
+    },
+    "tlc-discover": {
+      "source": "tech-leads-club/agent-skills",
+      "sourceType": "github",
+      "skillPath": "packages/skills-catalog/skills/(development)/tlc-discover/SKILL.md",
+      "computedHash": "bb9be691aabf04422865d30a5b499ab8139c3881cb85c121a2fe4145e0c0d168"
+    },
+    "tlc-implement": {
+      "source": "tech-leads-club/agent-skills",
+      "sourceType": "github",
+      "skillPath": "packages/skills-catalog/skills/(development)/tlc-implement/SKILL.md",
+      "computedHash": "be46f7182559c8db87627f4a4805827be91f4a32c8671d7b2ad0ef2a5ce90880"
+    },
+    "tlc-plan": {
+      "source": "tech-leads-club/agent-skills",
+      "sourceType": "github",
+      "skillPath": "packages/skills-catalog/skills/(development)/tlc-plan/SKILL.md",
+      "computedHash": "17640023a6aa10ede7dfbb734a1686b16e26593a5737a32a439bd77bc9e7de2e"
+    },
     "tui-design": {
       "source": "gfargo/tui-design-skill",
       "sourceType": "github",
