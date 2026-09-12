@@ -33,7 +33,7 @@ Abra um novo terminal após a instalação. O instalador configura `.profile`/`.
 ```powershell
 $installer = Join-Path $env:TEMP 'pr-tools-install.ps1'
 Invoke-WebRequest 'https://raw.githubusercontent.com/nitoba/pr-tools/main/scripts/install.ps1' -OutFile $installer
-PowerShell -ExecutionPolicy Bypass -File $installer
+pwsh -NoProfile -ExecutionPolicy Bypass -File $installer
 ```
 
 Abra um novo PowerShell para que o PATH atualizado seja carregado.
