@@ -58,33 +58,66 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       # release-plz reconstructs the latest git-only release in a worktree.
-      # v4.0.11 predates the root Cargo workspace, so provide the workspace
-      # files in a local synthetic tag without rewriting the remote tag.
+      # v4.0.11 predates the root Cargo workspace. This bounded migration
+      # workaround can be removed after the first release made from the root
+      # workspace; it never rewrites or pushes the remote tag.
       - name: Bootstrap historical Cargo workspace for release-plz
         shell: bash
         run: |
           set -euo pipefail
 
+          bootstrap_tag="v4.0.11"
           latest_tag="$(git tag --list 'v[0-9]*' --sort=-v:refname | head -n 1)"
-          if [[ -z "$latest_tag" ]] || git cat-file -e "${latest_tag}^{tree}:Cargo.toml" 2>/dev/null; then
+          if [[ -z "$latest_tag" ]]; then
+            exit 0
+          fi
+          if [[ "$latest_tag" != "$bootstrap_tag" ]]; then
+            if git cat-file -e "${latest_tag}^{tree}:Cargo.toml" 2>/dev/null; then
+              exit 0
+            fi
+            echo "Refusing to bootstrap unexpected tag without a root Cargo.toml: $latest_tag" >&2
+            exit 1
+          fi
+          if git cat-file -e "${bootstrap_tag}^{tree}:Cargo.toml" 2>/dev/null; then
             exit 0
           fi
 
-          tag_ref="$(git rev-parse "$latest_tag")"
-          tag_commit="$(git rev-list -n 1 "$latest_tag")"
+          expected_tag_ref="d6a757ebb7fa1ef7efd7afbc19ddde86d1af5625"
+          expected_tag_commit="18fce6224f36d1e29ec9ad60d9da2395dd966443"
+          expected_manifest_blob="8ba2e912cb514c9b3c6cbc076133f3c08944bc85"
+          expected_lock_blob="4a81e80218696553739ccf0ff2da5c8dd6a82207"
+          tag_ref="$(git rev-parse "$bootstrap_tag")"
+          tag_commit="$(git rev-list -n 1 "$bootstrap_tag")"
+          [[ "$tag_ref" == "$expected_tag_ref" ]]
+          [[ "$tag_commit" == "$expected_tag_commit" ]]
+          git merge-base --is-ancestor "$tag_commit" HEAD
+          [[ "$(git rev-parse HEAD:Cargo.toml)" == "$expected_manifest_blob" ]]
+          [[ "$(git rev-parse HEAD:Cargo.lock)" == "$expected_lock_blob" ]]
+          [[ "$(git rev-parse "${bootstrap_tag}:apps/rust/Cargo.lock")" == "$expected_lock_blob" ]]
+
           temporary_index="$(mktemp)"
           trap 'rm -f "$temporary_index"' EXIT
           rm -f "$temporary_index"
 
-          GIT_INDEX_FILE="$temporary_index" git read-tree "${latest_tag}^{tree}"
+          GIT_INDEX_FILE="$temporary_index" git read-tree "${bootstrap_tag}^{tree}"
           GIT_INDEX_FILE="$temporary_index" git add Cargo.toml Cargo.lock
           bootstrap_tree="$(GIT_INDEX_FILE="$temporary_index" git write-tree)"
-          bootstrap_commit="$(git -c user.name='release-plz bootstrap' \
+          changed_files="$(git diff-tree --no-commit-id --name-only -r "$tag_commit" "$bootstrap_tree" | sort)"
+          [[ "$changed_files" == $'Cargo.lock\nCargo.toml' ]]
+          [[ "$(GIT_INDEX_FILE="$temporary_index" git rev-parse :Cargo.toml)" == "$expected_manifest_blob" ]]
+          [[ "$(GIT_INDEX_FILE="$temporary_index" git rev-parse :Cargo.lock)" == "$expected_lock_blob" ]]
+          bootstrap_date="$(git show -s --format=%cI "$tag_commit")"
+          bootstrap_commit="$(GIT_AUTHOR_DATE="$bootstrap_date" \
+            GIT_COMMITTER_DATE="$bootstrap_date" \
+            git -c user.name='release-plz bootstrap' \
             -c user.email='release-plz-bootstrap@example.invalid' \
             commit-tree "$bootstrap_tree" -p "$tag_commit" \
             -m 'chore(release): bootstrap historical Cargo workspace')"
 
-          git update-ref "refs/tags/$latest_tag" "$bootstrap_commit" "$tag_ref"
+          printf 'RELEASE_PLZ_BOOTSTRAP_ACTIVE=1\n' >> "$GITHUB_ENV"
+          printf 'RELEASE_PLZ_BOOTSTRAP_TAG=%s\n' "$bootstrap_tag" >> "$GITHUB_ENV"
+          printf 'RELEASE_PLZ_BOOTSTRAP_TAG_REF=%s\n' "$tag_ref" >> "$GITHUB_ENV"
+          git update-ref "refs/tags/$bootstrap_tag" "$bootstrap_commit" "$tag_ref"
 
       - name: Run release-plz release PR
         uses: release-plz/action@a80d79efe0a195618acb02a4089d55fe74d2505f # v0.5.136
@@ -95,3 +128,15 @@ jobs:
           version: 0.3.165
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+
+      - name: Restore local release tag
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${RELEASE_PLZ_BOOTSTRAP_ACTIVE:-0}" != "1" ]]; then
+            exit 0
+          fi
+          current_tag_ref="$(git rev-parse "refs/tags/$RELEASE_PLZ_BOOTSTRAP_TAG")"
+          git update-ref "refs/tags/$RELEASE_PLZ_BOOTSTRAP_TAG" \
+            "$RELEASE_PLZ_BOOTSTRAP_TAG_REF" "$current_tag_ref"
