@@ -31,4 +31,4 @@ expression: terminal.backend()
 "╭ Contexto ────────────────────────────────────────────────────────────────────────────────────────╮"
 "│ branch feature/11763-exemplo  ·  work #11763  ·  targets dev                                     │"
 "╰──────────────────────────────────────────────────────────────────────────────────────────────────╯"
-"enter publicar · c copiar · tab target · j/k scroll · ? ajuda · q sair                              "
+"e editar · enter publicar · c copiar · tab · j/k · ? ajuda · q sair                                 "

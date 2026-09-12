@@ -6,6 +6,7 @@
 //!   tokio empurra `Token`/`Log`/`Progress` por `mpsc` e cada frame (~30fps)
 //!   redesenha o preview com cursor e o status global.
 
+pub mod content_editor;
 pub mod describe_app;
 pub mod doctor_flow;
 pub mod events;

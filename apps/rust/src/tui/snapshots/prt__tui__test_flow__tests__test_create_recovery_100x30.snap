@@ -31,4 +31,4 @@ expression: terminal.backend()
 "│                                                     ║ │ │                                        │"
 "│                                                     ▼ │ │                                        │"
 "╰───────────────────────────────────────────────────────╯ ╰────────────────────────────────────────╯"
-"e editar · v verificar cards · r reenviar · enter escolher · esc editar                             "
+"e editar settings · v verificar cards · r reenviar · enter escolher · esc editar                    "
