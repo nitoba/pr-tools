@@ -85,14 +85,63 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Checkout release metadata
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
       - name: Download platform artifacts
         uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
 
-      - name: Publish GitHub Release
+      - name: Wait for GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: gh release create "${GITHUB_REF_NAME}" dist/* --verify-tag --generate-notes --title "${GITHUB_REF_NAME}"
+        run: |
+          for attempt in $(seq 1 30); do
+            if gh release view "${GITHUB_REF_NAME}" --json body --jq .body > .release-plz-notes.md 2> /dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+
+          echo "GitHub Release ${GITHUB_REF_NAME} was not created in time" >&2
+          exit 1
+
+      - name: Generate humanized release notes
+        env:
+          RELEASE_NOTES_API_URL: https://api.groq.com/openai/v1/chat/completions
+          RELEASE_NOTES_API_KEY: ${{ secrets.RELEASE_NOTES_API_KEY }}
+          RELEASE_NOTES_MODEL: openai/gpt-oss-120b
+          RELEASE_NOTES_REASONING_EFFORT: medium
+        run: |
+          python scripts/generate-release-notes.py \
+            --tag "${GITHUB_REF_NAME}" \
+            --fallback .release-plz-notes.md \
+            --output .release-notes.md
+
+      - name: Update GitHub Release description
+        if: ${{ hashFiles('.release-notes.md') != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release edit "${GITHUB_REF_NAME}" --notes-file .release-notes.md
+
+      - name: Upload artifacts to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          for attempt in $(seq 1 30); do
+            if gh release view "${GITHUB_REF_NAME}" > /dev/null 2>&1; then
+              gh release upload "${GITHUB_REF_NAME}" dist/* --clobber
+              exit 0
+            fi
+            sleep 2
+          done
+
+          echo "GitHub Release ${GITHUB_REF_NAME} was not created in time" >&2
+          exit 1

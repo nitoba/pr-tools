@@ -121,6 +121,48 @@ binário no mesmo caminho em que o `prt` está instalado:
 prt update
 ```
 
+## Releases e changelog
+
+As releases são preparadas automaticamente pelo `release-plz`, usando o
+`git-cliff` para atualizar o [CHANGELOG.md](CHANGELOG.md). O fluxo cria uma
+Release PR com o incremento de versão em `apps/rust/Cargo.toml`, o changelog e,
+após o merge, uma tag `vX.Y.Z` e uma GitHub Release. O workflow de release
+existente gera uma descrição humanizada com um endpoint OpenAI-compatible,
+compila e anexa os binários para Linux, macOS e Windows.
+
+Para que o workflow consiga criar a Release PR, a configuração do repositório
+no GitHub precisa ter o secret `RELEASE_PLZ_TOKEN`: um fine-grained PAT com
+permissão de leitura/escrita em `Contents` e `Pull requests`. Esse token é
+necessário porque a tag criada pelo `GITHUB_TOKEN` padrão não dispara o
+workflow de build da release.
+
+Para gerar a descrição humanizada, adicione também o secret
+`RELEASE_NOTES_API_KEY` com a chave da API compatível com OpenAI. Atualmente o
+workflow usa:
+
+```text
+endpoint: https://api.groq.com/openai/v1/chat/completions
+model: openai/gpt-oss-120b
+reasoning_effort: medium
+```
+
+Se a API estiver indisponível ou o secret não existir, a release não falha: o
+workflow mantém a descrição técnica gerada pelo `git-cliff`.
+
+Use Conventional Commits nos títulos dos commits ou PRs:
+
+```text
+feat(cli): add a new command
+fix(ai): handle an empty provider response
+docs: improve the installation guide
+refactor(tui): simplify navigation
+feat!: change the configuration format
+```
+
+`feat` gera uma nova funcionalidade, `fix` uma correção e `!` indica uma
+mudança incompatível. Para gerar o changelog localmente, instale o git-cliff e
+execute `git-cliff --config git-cliff.toml -o CHANGELOG.md`.
+
 ## Estrutura do projeto
 
 A aplicação Rust com Ratatui fica em `apps/rust/`:

@@ -4,3 +4,7 @@ dist/
 # Snapshots de referência do Insta (*.snap) devem ser versionados.
 # Ignore apenas os resultados pendentes de revisão.
 *.snap.new
+
+# Notas de release geradas apenas no runner do GitHub Actions.
+.release-plz-notes.md
+.release-notes.md

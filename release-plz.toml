@@ -1,0 +1,25 @@
+# Release configuration for the single Rust binary in apps/rust/.
+# release-plz uses git-cliff to update CHANGELOG.md.
+
+[workspace]
+git_only = true
+publish = false
+git_tag_enable = true
+git_tag_name = "v{{ version }}"
+git_release_enable = true
+git_release_name = "v{{ version }}"
+git_release_body = "{{ changelog }}"
+changelog_config = "git-cliff.toml"
+release_always = false
+dependencies_update = false
+pr_branch_prefix = "release-plz-"
+pr_labels = ["release"]
+
+[[package]]
+name = "prt"
+changelog_path = "./CHANGELOG.md"
+changelog_update = true
+publish = false
+git_only = true
+git_tag_name = "v{{ version }}"
+git_release_enable = true
