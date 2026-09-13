@@ -9,8 +9,8 @@ use std::time::Duration;
 use tracing::info;
 
 use crate::ai::{self, PrDescription};
-use crate::azure;
 use crate::azure::pull_requests::{self, PullRequestCandidate};
+use crate::azure::{self, work_items::FunctionalWorkItemContext};
 use crate::cli::CliOptions;
 use crate::config::{self, Config};
 use crate::error::{AppError, Result};
@@ -18,6 +18,46 @@ use crate::git::{self, ChangeContext};
 
 /// Limite das operações Azure acionadas pela recuperação da TUI.
 pub const TUI_AZURE_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Estado da leitura do contexto funcional usado por desc.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FunctionalContextStatus {
+    /// Nenhum Work Item foi resolvido; o fluxo é Git-only.
+    NotRequested,
+    /// O Work Item foi lido e projetado com sucesso.
+    Loaded(FunctionalWorkItemContext),
+    /// A leitura falhou; contém somente uma mensagem segura para exibição.
+    Unavailable(String),
+}
+
+impl FunctionalContextStatus {
+    /// Retorna a projeção quando a leitura foi concluída.
+    #[must_use]
+    pub fn context(&self) -> Option<&FunctionalWorkItemContext> {
+        match self {
+            Self::Loaded(context) => Some(context),
+            Self::NotRequested | Self::Unavailable(_) => None,
+        }
+    }
+
+    /// Retorna se a TUI precisa de confirmação para seguir Git-only.
+    #[must_use]
+    pub fn requires_confirmation(&self) -> bool {
+        matches!(self, Self::Unavailable(_))
+    }
+
+    /// Rótulo seguro para preparação, revisão, logs e receipts.
+    #[must_use]
+    pub fn display_label(&self) -> String {
+        match self {
+            Self::NotRequested => "somente contexto Git (sem Work Item)".to_owned(),
+            Self::Loaded(context) => {
+                format!("Work Item #{} — {}", context.id, context.title)
+            }
+            Self::Unavailable(message) => format!("indisponível: {message}"),
+        }
+    }
+}
 
 /// Contexto preparado para geração.
 #[derive(Debug)]
@@ -30,6 +70,8 @@ pub struct DescribePrep {
     pub targets: Vec<String>,
     /// Work Item (CLI ou branch).
     pub work_item_id: String,
+    /// Estado e projeção do contexto funcional.
+    pub functional_context: FunctionalContextStatus,
     /// Prompt de usuário.
     pub prompt: String,
 }
@@ -39,7 +81,7 @@ pub struct DescribePrep {
 /// # Errors
 ///
 /// Retorna erro de Git/config se coleta falhar.
-pub fn prepare(options: &CliOptions) -> Result<DescribePrep> {
+pub async fn prepare(options: &CliOptions) -> Result<DescribePrep> {
     let mut config = config::load_config()?;
     config::apply_cli_overrides(
         &mut config,
@@ -62,10 +104,13 @@ pub fn prepare(options: &CliOptions) -> Result<DescribePrep> {
         .work_item
         .as_ref()
         .map_or_else(|| context.work_item_id.clone(), |w| w.as_str().to_owned());
+    let functional_context =
+        load_functional_context(context.remote.as_ref(), &config.azure_pat, &work_item_id).await;
     let prompt = ai::build_describe_prompt(
         &context.branch,
         &targets,
         &work_item_id,
+        functional_context.context(),
         &context.log,
         &context.diff,
     );
@@ -74,7 +119,62 @@ pub fn prepare(options: &CliOptions) -> Result<DescribePrep> {
         context,
         targets,
         work_item_id,
+        functional_context,
         prompt,
+    })
+}
+
+async fn load_functional_context(
+    remote: Option<&git::RepositoryRemote>,
+    pat: &str,
+    work_item_id: &str,
+) -> FunctionalContextStatus {
+    if work_item_id.trim().is_empty() {
+        return FunctionalContextStatus::NotRequested;
+    }
+    let client = match azure::client_for(remote, pat) {
+        Ok(client) => client,
+        Err(error) => return FunctionalContextStatus::Unavailable(safe_azure_error(&error)),
+    };
+    match azure::get_work_item(&client, work_item_id.trim()).await {
+        Ok(item) => {
+            FunctionalContextStatus::Loaded(FunctionalWorkItemContext::from_work_item(&item))
+        }
+        Err(error) => FunctionalContextStatus::Unavailable(safe_azure_error(&error)),
+    }
+}
+
+fn safe_azure_error(error: &AppError) -> String {
+    match error {
+        AppError::Azure { status, .. } if *status == 401 || *status == 403 => format!(
+            "Azure DevOps recusou a leitura do Work Item (HTTP {status}); verifique o PAT e a permissão de leitura"
+        ),
+        AppError::Azure { status, .. } => {
+            format!("Azure DevOps não pôde carregar o Work Item (HTTP {status})")
+        }
+        AppError::Http(_) => {
+            "não foi possível comunicar com Azure DevOps; verifique a rede e o PAT".to_owned()
+        }
+        AppError::Config { .. } => {
+            "Azure DevOps não está configurado para carregar o Work Item".to_owned()
+        }
+        AppError::Git { .. } => "remote Azure DevOps não encontrado".to_owned(),
+        _ => "não foi possível carregar o contexto funcional do Work Item".to_owned(),
+    }
+}
+
+/// Mensagem para modos sem canal seguro de confirmação.
+#[must_use]
+pub fn non_interactive_functional_context_error(
+    status: &FunctionalContextStatus,
+) -> Option<AppError> {
+    let FunctionalContextStatus::Unavailable(detail) = status else {
+        return None;
+    };
+    Some(AppError::FunctionalContext {
+        message: format!(
+            "contexto funcional não pôde ser carregado; modo não interativo não permite fallback Git-only: {detail}. Execute em um terminal interativo para confirmar Git-only ou corrija o acesso ao Azure"
+        ),
     })
 }
 
@@ -265,6 +365,38 @@ fn first_error_message(value: &serde_json::Value) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn preparation_without_work_item_should_not_request_functional_context() {
+        let remote = None;
+        let status = load_functional_context(remote, "", "").await;
+        assert_eq!(status, FunctionalContextStatus::NotRequested);
+    }
+
+    #[test]
+    fn non_interactive_functional_context_failure_should_be_actionable() {
+        let status = FunctionalContextStatus::Unavailable(
+            "Azure DevOps recusou a leitura do Work Item (HTTP 403)".to_owned(),
+        );
+        let error =
+            non_interactive_functional_context_error(&status).expect("falha não interativa");
+        assert_eq!(error.exit_code(), 1);
+        let message = error.to_string();
+        assert!(message.contains("contexto funcional não pôde ser carregado"));
+        assert!(message.contains("fallback Git-only"));
+        assert!(message.contains("HTTP 403"));
+    }
+
+    #[test]
+    fn functional_context_error_should_not_expose_azure_response_body() {
+        let error = AppError::Azure {
+            status: 401,
+            message: r#"{"message":"secret work item description"}"#.to_owned(),
+        };
+        let safe = safe_azure_error(&error);
+        assert!(safe.contains("HTTP 401"));
+        assert!(!safe.contains("secret work item description"));
+    }
 
     #[test]
     fn copy_should_not_panic_on_empty() {
