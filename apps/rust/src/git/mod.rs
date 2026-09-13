@@ -54,9 +54,9 @@ pub enum FingerprintStatus {
 impl GitContextFingerprint {
     /// Captura o checkout atual e os OIDs das refs source/target.
     ///
-    /// Refs ausentes são representadas por texto vazio. Isso preserva a
-    /// capacidade de comparar o estado mesmo quando uma ref remota ainda não
-    /// foi materializada localmente, sem impedir a publicação existente.
+    /// Refs ausentes são representadas por texto vazio. Em checkout detached,
+    /// a origem usa o OID de `HEAD`, mantendo a comparação útil mesmo sem
+    /// nome de branch.
     ///
     /// # Errors
     ///
@@ -115,11 +115,11 @@ impl GitContextFingerprint {
     }
 }
 
-/// OID da ref local ou de sua correspondente `origin/<branch>`.
+/// OID da ref local, de `HEAD` em detached checkout, ou de `origin/<branch>`.
 fn ref_oid(branch: &str) -> String {
     let branch = branch.strip_prefix("refs/heads/").unwrap_or(branch).trim();
     if branch.is_empty() {
-        return String::new();
+        return git(&["rev-parse", "--verify", "HEAD"]).unwrap_or_default();
     }
     let local = format!("refs/heads/{branch}");
     git(&["rev-parse", "--verify", &local])
@@ -641,11 +641,7 @@ mod tests {
 
         assert!(!fingerprint.repository.is_empty());
         assert_eq!(fingerprint.source_branch, branch);
-        if branch.is_empty() {
-            assert!(fingerprint.source_oid.is_empty());
-        } else {
-            assert!(!fingerprint.source_oid.is_empty());
-        }
+        assert!(!fingerprint.source_oid.is_empty());
         assert_eq!(fingerprint.target_oids.len(), targets.len());
         for target in &targets {
             assert!(fingerprint.target_oids.contains_key(target));
