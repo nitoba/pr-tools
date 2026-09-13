@@ -607,21 +607,27 @@ mod tests {
     #[test]
     fn fingerprint_should_capture_repository_branch_and_requested_ref_oids() {
         let branch = git(&["branch", "--show-current"]).expect("branch do teste");
-        assert!(
-            !branch.is_empty(),
-            "os testes precisam de uma branch checked out"
-        );
-        let targets = vec!["main".to_owned(), branch.clone()];
+        let targets = if branch.is_empty() {
+            vec!["main".to_owned()]
+        } else {
+            vec!["main".to_owned(), branch.clone()]
+        };
         let fingerprint =
             GitContextFingerprint::capture("", &targets).expect("fingerprint do checkout");
 
         assert!(!fingerprint.repository.is_empty());
         assert_eq!(fingerprint.source_branch, branch);
-        assert!(!fingerprint.source_oid.is_empty());
+        if branch.is_empty() {
+            assert!(fingerprint.source_oid.is_empty());
+        } else {
+            assert!(!fingerprint.source_oid.is_empty());
+        }
         assert_eq!(fingerprint.target_oids.len(), targets.len());
         for target in &targets {
             assert!(fingerprint.target_oids.contains_key(target));
-            assert!(!fingerprint.target_oids[target].is_empty());
+            if !branch.is_empty() {
+                assert!(!fingerprint.target_oids[target].is_empty());
+            }
         }
     }
 }

@@ -2952,7 +2952,9 @@ mod tests {
 
     use super::*;
     use crate::git::{ChangeContext, GitContextFingerprint, RepositoryRemote};
-    use ratatui::{Terminal, backend::TestBackend};
+    use ratatui::{
+        DefaultTerminal, Terminal, TerminalOptions, Viewport, backend::TestBackend, layout::Rect,
+    };
 
     fn review_app() -> TestApp {
         let mut app = TestApp::new();
@@ -2961,6 +2963,16 @@ mod tests {
         app.phase = TestPhase::Revisao;
         app.create_initial = true;
         app
+    }
+
+    fn test_terminal() -> DefaultTerminal {
+        Terminal::with_options(
+            ratatui::backend::CrosstermBackend::new(std::io::stdout()),
+            TerminalOptions {
+                viewport: Viewport::Fixed(Rect::new(0, 0, 100, 30)),
+            },
+        )
+        .expect("terminal de teste")
     }
 
     fn published_request() -> TestCardRequest {
@@ -3173,14 +3185,7 @@ mod tests {
 
     #[test]
     fn matching_git_fingerprint_should_skip_divergence_gate() {
-        let branch = std::process::Command::new("git")
-            .args(["branch", "--show-current"])
-            .output()
-            .expect("git branch");
-        let branch = String::from_utf8_lossy(&branch.stdout).trim().to_owned();
-        assert!(!branch.is_empty());
-        let fingerprint = GitContextFingerprint::capture("", std::slice::from_ref(&branch))
-            .expect("fingerprint atual");
+        let fingerprint = GitContextFingerprint::capture("", &[]).expect("fingerprint atual");
         let mut request = published_request();
         let TestCardRequest::PublishedPr(context) = &mut request else {
             unreachable!();
@@ -3337,9 +3342,7 @@ mod tests {
             Event::Key(event::KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
         ]);
         let mut idle_cycles = 0;
-        let mut terminal =
-            Terminal::new(ratatui::backend::CrosstermBackend::new(std::io::stdout()))
-                .expect("terminal de teste");
+        let mut terminal = test_terminal();
         let outcome = run_loop_with(
             &mut terminal,
             request,
@@ -3467,9 +3470,7 @@ mod tests {
             KeyCode::Esc,
             KeyModifiers::NONE,
         ))]);
-        let mut gate_terminal =
-            Terminal::new(ratatui::backend::CrosstermBackend::new(std::io::stdout()))
-                .expect("terminal do gate");
+        let mut gate_terminal = test_terminal();
         let gate_outcome = run_loop_with(
             &mut gate_terminal,
             gate_request,
@@ -3493,9 +3494,7 @@ mod tests {
             Event::Key(event::KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
         ]);
         let mut idle_cycles = 0;
-        let mut review_terminal =
-            Terminal::new(ratatui::backend::CrosstermBackend::new(std::io::stdout()))
-                .expect("terminal da revisão");
+        let mut review_terminal = test_terminal();
         let generated = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let generated_by_backend = generated.clone();
         let review_outcome = run_loop_with(

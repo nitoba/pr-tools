@@ -2303,7 +2303,9 @@ mod tests {
     use crate::tui::describe_app::DescribeApp;
     use crate::tui::events::BackendEvent;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-    use ratatui::{DefaultTerminal, Terminal, backend::TestBackend};
+    use ratatui::{
+        DefaultTerminal, Terminal, TerminalOptions, Viewport, backend::TestBackend, layout::Rect,
+    };
 
     /// Estado Review de exemplo p/ snapshots: heading + checklist + code fence.
     fn review_app() -> DescribeApp {
@@ -2398,8 +2400,13 @@ mod tests {
     }
 
     fn test_terminal() -> DefaultTerminal {
-        Terminal::new(ratatui::backend::CrosstermBackend::new(std::io::stdout()))
-            .expect("terminal de teste")
+        Terminal::with_options(
+            ratatui::backend::CrosstermBackend::new(std::io::stdout()),
+            TerminalOptions {
+                viewport: Viewport::Fixed(Rect::new(0, 0, 100, 30)),
+            },
+        )
+        .expect("terminal de teste")
     }
 
     fn buffer_text(terminal: &Terminal<TestBackend>) -> String {
