@@ -2049,7 +2049,7 @@ dependencies = [
 
 [[package]]
 name = "prt"
-version = "6.0.0"
+version = "6.0.1"
 dependencies = [
  "aisdk",
  "anyhow",

@@ -7,6 +7,12 @@ O histórico das próximas versões será atualizado automaticamente pelo
 
 ## [Unreleased]
 
+## [6.0.1] - 2026-09-13
+
+### Correções
+
+- tornar a geração de notas de release compatível com o filtro de borda do Cloudflare e registrar diagnósticos HTTP seguros.
+
 ## [6.0.0] - 2026-09-13
 
 
