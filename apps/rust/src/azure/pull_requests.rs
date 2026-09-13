@@ -1088,4 +1088,89 @@ mod tests {
         assert_eq!(list.value[0].links.web.href, "https://web/pr/42");
         assert_eq!(list.value[0].creation_date, "2026-09-11T20:00:00Z");
     }
+
+    #[tokio::test]
+    async fn published_pr_receipt_should_remain_minimal() {
+        let item = PublishedPr {
+            target: "dev".to_owned(),
+            id: 42,
+            url: "https://dev.azure.com/org/project/_git/repo/pullrequest/42".to_owned(),
+        };
+        let PublishedPr { target, id, url } = item;
+        assert_eq!(target, "dev");
+        assert_eq!(id, 42);
+        assert!(url.ends_with("/42"));
+
+        let (base_url, requests, server) = spawn_json_server(vec![
+            serde_json::to_string(&serde_json::json!({"id": "repo-id"})).unwrap(),
+            serde_json::to_string(&serde_json::json!({
+                "pullRequestId": 101,
+                "url": "https://api/pr/101",
+                "webUrl": "https://web/pr/101"
+            }))
+            .unwrap(),
+            serde_json::to_string(&serde_json::json!({
+                "pullRequestId": 102,
+                "url": "https://api/pr/102",
+                "webUrl": "https://web/pr/102"
+            }))
+            .unwrap(),
+        ]);
+        let client = AzureClient::new_for_test(&base_url, "pat");
+        let remote = crate::git::RepositoryRemote {
+            organization: "org".to_owned(),
+            project: "project".to_owned(),
+            repository: "repo".to_owned(),
+        };
+        let targets = ["sprint/12".to_owned(), "dev".to_owned()];
+        let reviewer_calls = std::sync::atomic::AtomicUsize::new(0);
+        let published = std::sync::Mutex::new(Vec::new());
+        let result = publish_pull_requests(
+            &client,
+            &PublishInput {
+                remote: &remote,
+                branch: "feature/42",
+                targets: &targets,
+                title: "Título",
+                body: "Descrição",
+                work_item_ids: &["11763".to_owned()],
+                reviewer_for: &|_| {
+                    reviewer_calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    String::new()
+                },
+                on_published: Some(&|item| published.lock().unwrap().push(item.clone())),
+                on_target_started: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            result.iter().map(|item| item.id).collect::<Vec<_>>(),
+            [101, 102]
+        );
+        assert_eq!(
+            result
+                .iter()
+                .map(|item| item.target.as_str())
+                .collect::<Vec<_>>(),
+            ["sprint/12", "dev"]
+        );
+        assert_eq!(reviewer_calls.load(std::sync::atomic::Ordering::Relaxed), 2);
+        assert_eq!(published.lock().unwrap().len(), 2);
+        let requests = (0..3)
+            .map(|_| requests.recv().expect("requisição do publisher"))
+            .collect::<Vec<_>>();
+        assert_eq!(requests[0].method, "GET");
+        for request in &requests[1..] {
+            assert_eq!(request.method, "POST");
+            let body: serde_json::Value = serde_json::from_str(&request.body).unwrap();
+            assert!(body.get("reviewers").is_none());
+            assert_eq!(body["workItemRefs"][0]["id"], "11763");
+        }
+        let first_body: serde_json::Value = serde_json::from_str(&requests[1].body).unwrap();
+        let second_body: serde_json::Value = serde_json::from_str(&requests[2].body).unwrap();
+        assert_eq!(first_body["targetRefName"], "refs/heads/sprint/12");
+        assert_eq!(second_body["targetRefName"], "refs/heads/dev");
+        server.join().unwrap();
+    }
 }

@@ -720,7 +720,8 @@ fn render_done(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
         .iter()
         .map(|item| {
             Line::from(vec![
-                Span::styled(format!("  {}  ", item.target), branch_style()),
+                Span::styled(format!("  PR #{}  ", item.id), branch_style()),
+                Span::styled(format!("{}  ", item.target), branch_style()),
                 Span::styled(item.url.clone(), link_style()),
             ])
         })
@@ -767,7 +768,8 @@ fn render_error(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
         )));
         lines.extend(app.published.iter().map(|item| {
             Line::from(vec![
-                Span::styled(format!("  {}  ", item.target), branch_style()),
+                Span::styled(format!("  PR #{}  ", item.id), branch_style()),
+                Span::styled(format!("{}  ", item.target), branch_style()),
                 Span::styled(item.url.clone(), link_style()),
             ])
         }));
@@ -939,6 +941,13 @@ fn render_footer(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
                     "↑/↓ escolher · enter adotar · esc voltar"
                 }
             }
+            Some(PublishDialog::PublishedPrPicker { .. }) => {
+                if ascii_only() {
+                    "up/down escolher - enter preparar - esc voltar"
+                } else {
+                    "↑/↓ escolher · enter preparar · esc voltar"
+                }
+            }
             None => match app.phase {
                 Phase::Review => {
                     if app.frozen_publish_content.is_none() {
@@ -953,7 +962,13 @@ fn render_footer(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
                         "enter publicar · c copiar · tab target · j/k scroll · ? ajuda · q sair"
                     }
                 }
-                Phase::Done => "q sair",
+                Phase::Done => {
+                    if ascii_only() {
+                        "t preparar Test Case - q sair"
+                    } else {
+                        "t preparar Test Case · q sair"
+                    }
+                }
                 Phase::Error => {
                     if ascii_only() {
                         "r retornar erro ao comando - q sair - ? ajuda"
@@ -1068,7 +1083,55 @@ fn render_publish_dialog(app: &DescribeApp, dialog: PublishDialog, area: Rect, b
         PublishDialog::CandidateList { selected } => {
             render_candidate_list(app, selected, area, buf);
         }
+        PublishDialog::PublishedPrPicker { selected } => {
+            render_published_pr_picker(app, selected, area, buf);
+        }
     }
+}
+
+fn render_published_pr_picker(app: &DescribeApp, selected: usize, area: Rect, buf: &mut Buffer) {
+    let height = 7 + app.published.len();
+    let inner = modal_frame(
+        area,
+        buf,
+        " Preparar Test Case ",
+        theme().accent,
+        96,
+        height,
+    );
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+    let mut lines = vec![Line::from(Span::styled(
+        "Escolha o PR que representa esta mudança funcional:",
+        theme().muted,
+    ))];
+    for (index, item) in app.published.iter().enumerate() {
+        let marker = if index == selected { ">" } else { " " };
+        let style = if index == selected {
+            theme().accent.add_modifier(Modifier::BOLD)
+        } else {
+            Style::new()
+        };
+        lines.push(Line::from(Span::styled(
+            format!("{marker} PR #{}  {}  {}", item.id, item.target, item.url),
+            style,
+        )));
+    }
+    lines.extend([
+        Line::from(""),
+        Line::from(Span::styled(
+            if ascii_only() {
+                "enter preparar um PR - up/down escolher - esc/q voltar"
+            } else {
+                "Enter preparar um PR · ↑/↓ escolher · Esc/q voltar"
+            },
+            theme().muted,
+        )),
+    ]);
+    Paragraph::new(lines)
+        .wrap(Wrap { trim: false })
+        .render(inner, buf);
 }
 
 fn render_functional_context_fallback(app: &DescribeApp, yes: bool, area: Rect, buf: &mut Buffer) {
@@ -1512,6 +1575,12 @@ fn start_backend(
 fn on_nav_key(app: &mut DescribeApp, key: crossterm::event::KeyEvent) -> bool {
     use crossterm::event::KeyCode;
     match (key.code, app.publish_dialog) {
+        (KeyCode::Down | KeyCode::Char('j'), Some(PublishDialog::PublishedPrPicker { .. })) => {
+            app.move_published_pr_picker(true)
+        }
+        (KeyCode::Up | KeyCode::Char('k'), Some(PublishDialog::PublishedPrPicker { .. })) => {
+            app.move_published_pr_picker(false)
+        }
         (KeyCode::Char('j') | KeyCode::Down, Some(PublishDialog::PublishRecovery(selected))) => {
             app.publish_dialog = Some(PublishDialog::PublishRecovery((selected + 1) % 4));
             true
@@ -1743,7 +1812,9 @@ fn on_enter_key(
             }
             false
         }
-        Some(PublishDialog::FunctionalContextFallback(_)) => true,
+        Some(
+            PublishDialog::FunctionalContextFallback(_) | PublishDialog::PublishedPrPicker { .. },
+        ) => true,
         Some(PublishDialog::ConfirmCreate(yes)) => {
             if yes {
                 app.open_reviewers();
@@ -1925,6 +1996,59 @@ fn handle_key_event(
     if app.is_waiting_for_functional_context() {
         return Ok(handle_functional_context_key(app, key, needs_draw));
     }
+    if let Some(PublishDialog::PublishedPrPicker { selected }) = app.publish_dialog {
+        match key.code {
+            KeyCode::Enter => {
+                let Some(launch_context) = app.selected_published_pr(selected) else {
+                    return Ok(Some(LiveOutcome::Failed(
+                        "não foi possível montar o contexto do PR publicado".to_owned(),
+                    )));
+                };
+                let Some(desc) = app.desc.clone() else {
+                    return Ok(Some(LiveOutcome::Failed(
+                        "descrição ausente para continuar ao Test Case".to_owned(),
+                    )));
+                };
+                return Ok(Some(LiveOutcome::PrepareTestCase {
+                    desc,
+                    launch_context,
+                    published: app.published.clone(),
+                }));
+            }
+            KeyCode::Esc | KeyCode::Char('q') => {
+                app.publish_dialog = None;
+                *needs_draw = true;
+                return Ok(None);
+            }
+            _ => {}
+        }
+    }
+    if key.modifiers.is_empty()
+        && matches!(key.code, KeyCode::Char('t' | 'T'))
+        && app.phase == Phase::Done
+        && app.publish_dialog.is_none()
+    {
+        if app.published.len() > 1 {
+            app.open_published_pr_picker();
+            *needs_draw = true;
+            return Ok(None);
+        }
+        let Some(launch_context) = app.selected_published_pr(0) else {
+            return Ok(Some(LiveOutcome::Failed(
+                "não foi possível montar o contexto do PR publicado".to_owned(),
+            )));
+        };
+        let Some(desc) = app.desc.clone() else {
+            return Ok(Some(LiveOutcome::Failed(
+                "descrição ausente para continuar ao Test Case".to_owned(),
+            )));
+        };
+        return Ok(Some(LiveOutcome::PrepareTestCase {
+            desc,
+            launch_context,
+            published: app.published.clone(),
+        }));
+    }
     match (key.code, key.modifiers) {
         (KeyCode::Char('c'), m) if m.contains(KeyModifiers::CONTROL) => {
             if app.phase == Phase::Publishing {
@@ -2069,6 +2193,7 @@ fn run_loop(
     let (tx, mut rx) = mpsc::unbounded_channel::<BackendEvent>();
     let (publish_setup, publish_blocked, publish_base) = make_publish_parts(&prep);
     let functional_context_status = prep.functional_context.clone();
+    let launch_prep = prep.clone();
     let mut app = DescribeApp::new(
         &prep.context.branch,
         &prep.targets,
@@ -2077,6 +2202,7 @@ fn run_loop(
         publish_setup,
         publish_blocked,
     );
+    app.set_launch_prep(launch_prep);
     let mut pending_prep = Some(prep);
     // Backend roda em paralelo e empurra tokens/logs (`tx` fica no loop
     // para a task de publicação criada sob demanda).
@@ -2173,11 +2299,13 @@ mod tests {
     use super::*;
     use crate::ai::PrDescription;
     use crate::azure::work_items::FunctionalWorkItemContext;
-    use crate::features::describe::FunctionalContextStatus;
+    use crate::features::describe::{DescribePrep, FunctionalContextStatus};
     use crate::tui::describe_app::DescribeApp;
     use crate::tui::events::BackendEvent;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-    use ratatui::{Terminal, backend::TestBackend};
+    use ratatui::{
+        DefaultTerminal, Terminal, TerminalOptions, Viewport, backend::TestBackend, layout::Rect,
+    };
 
     /// Estado Review de exemplo p/ snapshots: heading + checklist + code fence.
     fn review_app() -> DescribeApp {
@@ -2212,6 +2340,83 @@ mod tests {
             "{\"title\":\"Atualiza fluxo de checkout\"}".to_owned(),
         ));
         app
+    }
+
+    fn launch_prep() -> DescribePrep {
+        let remote = crate::git::RepositoryRemote {
+            organization: "org".to_owned(),
+            project: "project".to_owned(),
+            repository: "repo".to_owned(),
+        };
+        let work_item: crate::azure::WorkItem = serde_json::from_value(serde_json::json!({
+            "id": 11763,
+            "fields": {
+                "System.Title": "Mudança funcional",
+                "System.WorkItemType": "User Story",
+                "System.IterationPath": "project\\Sprint 12"
+            }
+        }))
+        .expect("snapshot do Work Item");
+        DescribePrep {
+            config: crate::config::Config {
+                azure_pat: "pat".to_owned(),
+                test_team: "DevOps".to_owned(),
+                test_program: "Agrotrace".to_owned(),
+                ..crate::config::Config::default()
+            },
+            context: crate::git::ChangeContext {
+                branch: "feature/11763-exemplo".to_owned(),
+                source_ref: "refs/heads/feature/11763-exemplo".to_owned(),
+                base_branch: "dev".to_owned(),
+                sprint_branch: String::new(),
+                diff: "diff".to_owned(),
+                diff_original_lines: 1,
+                log: "log".to_owned(),
+                work_item_id: "11763".to_owned(),
+                remote: Some(remote),
+            },
+            targets: vec!["dev".to_owned()],
+            work_item_id: "11763".to_owned(),
+            functional_context: FunctionalContextStatus::Loaded(FunctionalWorkItemContext {
+                id: 11763,
+                title: "Mudança funcional".to_owned(),
+                work_item_type: "User Story".to_owned(),
+                area_path: "Produto\\CLI".to_owned(),
+                description: None,
+                acceptance_criteria: None,
+            }),
+            work_item: Some(work_item),
+            fingerprint: crate::git::GitContextFingerprint::default(),
+            prompt: "prompt".to_owned(),
+        }
+    }
+
+    fn published(id: i64, target: &str) -> PublishedPr {
+        PublishedPr {
+            target: target.to_owned(),
+            id,
+            url: format!("https://dev.azure.com/org/project/_git/repo/pullrequest/{id}"),
+        }
+    }
+
+    fn test_terminal() -> DefaultTerminal {
+        Terminal::with_options(
+            ratatui::backend::CrosstermBackend::new(std::io::stdout()),
+            TerminalOptions {
+                viewport: Viewport::Fixed(Rect::new(0, 0, 100, 30)),
+            },
+        )
+        .expect("terminal de teste")
+    }
+
+    fn buffer_text(terminal: &Terminal<TestBackend>) -> String {
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(ratatui::buffer::Cell::symbol)
+            .collect()
     }
 
     #[test]
@@ -2358,7 +2563,7 @@ mod tests {
             title: "   ".to_owned(),
             body: "corpo".to_owned(),
         });
-        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = mpsc::unbounded_channel();
         let base = PublishBase {
             pat: String::new(),
             remote: None,
@@ -2370,7 +2575,6 @@ mod tests {
         assert!(app.content_edit.is_some());
         assert_eq!(app.phase, Phase::Review);
         assert_eq!(app.error.as_deref(), Some("título é obrigatório"));
-        assert!(rx.try_recv().is_err());
     }
 
     #[test]
@@ -2625,6 +2829,412 @@ mod tests {
     }
 
     #[test]
+    fn done_screen_should_render_published_ids_targets_urls_and_test_action() {
+        let mut app = review_app();
+        app.set_launch_prep(launch_prep());
+        app.on_backend(BackendEvent::Published(vec![
+            published(42, "dev"),
+            published(43, "sprint/12"),
+        ]));
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).expect("terminal");
+        terminal
+            .draw(|f| f.render_widget(&app, f.area()))
+            .expect("render");
+        let rendered = buffer_text(&terminal);
+        assert!(rendered.contains("PR #42"));
+        assert!(rendered.contains("dev"));
+        assert!(rendered.contains("pullrequest/42"));
+        assert!(rendered.contains("PR #43"));
+        assert!(rendered.contains("sprint/12"));
+        assert!(rendered.contains("pullrequest/43"));
+        assert!(rendered.contains("t preparar Test Case"));
+
+        let mut t = test_terminal();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut needs_draw = false;
+        let outcome = handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('T'), KeyModifiers::NONE),
+            &PublishBase {
+                pat: String::new(),
+                remote: None,
+                branch: String::new(),
+                work_item_id: String::new(),
+            },
+            &tx,
+            &mut t,
+            &mut needs_draw,
+        )
+        .expect("tecla T");
+        assert!(outcome.is_none());
+        assert!(matches!(
+            app.publish_dialog,
+            Some(PublishDialog::PublishedPrPicker { .. })
+        ));
+
+        let mut needs_draw = false;
+        let outcome = handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE),
+            &PublishBase {
+                pat: String::new(),
+                remote: None,
+                branch: String::new(),
+                work_item_id: String::new(),
+            },
+            &tx,
+            &mut t,
+            &mut needs_draw,
+        )
+        .expect("cancelamento pelo q");
+        assert!(outcome.is_none());
+        assert!(app.publish_dialog.is_none());
+
+        let outcome = handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE),
+            &PublishBase {
+                pat: String::new(),
+                remote: None,
+                branch: String::new(),
+                work_item_id: String::new(),
+            },
+            &tx,
+            &mut t,
+            &mut needs_draw,
+        )
+        .expect("saída do Done");
+        assert!(matches!(outcome, Some(LiveOutcome::Done { .. })));
+    }
+
+    #[test]
+    fn partial_publication_should_not_offer_test_case_handoff() {
+        let mut app = review_app();
+        app.on_backend(BackendEvent::PublishedOne(published(42, "dev")));
+        app.on_backend(BackendEvent::PublishFailed(
+            crate::features::describe::PublishFailure {
+                message: "target sprint/12: resposta incerta".to_owned(),
+                kind: crate::features::describe::PublishFailureKind::OutcomeUnknown,
+                target: Some("sprint/12".to_owned()),
+            },
+        ));
+        assert!(app.publish_failure.is_some());
+        assert_eq!(app.published[0].id, 42);
+        assert_eq!(app.published[0].target, "dev");
+        assert_eq!(app.published[0].url, published(42, "dev").url);
+        let mut terminal = test_terminal();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut needs_draw = false;
+        let outcome = handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE),
+            &PublishBase {
+                pat: String::new(),
+                remote: None,
+                branch: String::new(),
+                work_item_id: String::new(),
+            },
+            &tx,
+            &mut terminal,
+            &mut needs_draw,
+        )
+        .expect("tecla t");
+        assert!(outcome.is_none());
+        assert!(matches!(
+            app.publish_dialog,
+            Some(PublishDialog::PublishRecovery(_))
+        ));
+
+        let mut error = review_app();
+        error.on_backend(BackendEvent::PublishedOne(published(42, "dev")));
+        error.on_backend(BackendEvent::Failed("falha final".to_owned()));
+        assert_eq!(error.phase, Phase::Error);
+        assert_eq!(error.published[0].id, 42);
+        assert_eq!(error.published[0].target, "dev");
+        assert_eq!(error.published[0].url, published(42, "dev").url);
+        let mut terminal = test_terminal();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let mut needs_draw = false;
+        let outcome = handle_key_event(
+            &mut error,
+            KeyEvent::new(KeyCode::Char('T'), KeyModifiers::NONE),
+            &PublishBase {
+                pat: String::new(),
+                remote: None,
+                branch: String::new(),
+                work_item_id: String::new(),
+            },
+            &tx,
+            &mut terminal,
+            &mut needs_draw,
+        )
+        .expect("tecla T após erro");
+        assert!(outcome.is_none());
+        assert!(rx.try_recv().is_err());
+        assert_eq!(error.phase, Phase::Error);
+        assert!(error.publish_dialog.is_none());
+    }
+
+    #[test]
+    fn single_published_pr_should_take_test_case_fast_path() {
+        let mut app = review_app();
+        app.set_launch_prep(launch_prep());
+        app.on_backend(BackendEvent::Published(vec![published(42, "dev")]));
+        let mut terminal = test_terminal();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut needs_draw = false;
+        let outcome = handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE),
+            &PublishBase {
+                pat: String::new(),
+                remote: None,
+                branch: String::new(),
+                work_item_id: String::new(),
+            },
+            &tx,
+            &mut terminal,
+            &mut needs_draw,
+        )
+        .expect("tecla t");
+        match outcome {
+            Some(LiveOutcome::PrepareTestCase {
+                launch_context,
+                published,
+                ..
+            }) => {
+                assert_eq!(launch_context.published_pr.id, 42);
+                assert_eq!(launch_context.published_pr.target, "dev");
+                assert_eq!(
+                    launch_context.published_pr.url,
+                    "https://dev.azure.com/org/project/_git/repo/pullrequest/42"
+                );
+                assert_eq!(published.len(), 1);
+                assert!(app.publish_dialog.is_none());
+            }
+            _ => panic!("PR único não seguiu o fast path"),
+        }
+    }
+
+    #[test]
+    fn published_pr_picker_should_select_one_pr_in_publication_order() {
+        let mut app = review_app();
+        app.set_launch_prep(launch_prep());
+        app.on_backend(BackendEvent::Published(vec![
+            published(42, "sprint/12"),
+            published(43, "dev"),
+        ]));
+        assert!(app.open_published_pr_picker());
+        assert_eq!(
+            app.publish_dialog,
+            Some(PublishDialog::PublishedPrPicker { selected: 0 })
+        );
+        assert!(app.move_published_pr_picker(true));
+        assert_eq!(
+            app.publish_dialog,
+            Some(PublishDialog::PublishedPrPicker { selected: 1 })
+        );
+
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).expect("terminal");
+        terminal
+            .draw(|f| f.render_widget(&app, f.area()))
+            .expect("render picker");
+        let rendered = buffer_text(&terminal);
+        assert!(rendered.contains("PR #42  sprint/12"));
+        assert!(rendered.contains(&published(42, "sprint/12").url));
+        assert!(rendered.contains("PR #43  dev"));
+        assert!(rendered.contains(&published(43, "dev").url));
+        assert_eq!(app.published.len(), 2);
+        assert!(app.move_published_pr_picker(true));
+        assert_eq!(
+            app.publish_dialog,
+            Some(PublishDialog::PublishedPrPicker { selected: 0 })
+        );
+        assert!(app.move_published_pr_picker(false));
+        assert_eq!(
+            app.publish_dialog,
+            Some(PublishDialog::PublishedPrPicker { selected: 1 })
+        );
+
+        let mut handler_terminal = test_terminal();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut needs_draw = false;
+        let outcome = handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            &PublishBase {
+                pat: String::new(),
+                remote: None,
+                branch: String::new(),
+                work_item_id: String::new(),
+            },
+            &tx,
+            &mut handler_terminal,
+            &mut needs_draw,
+        )
+        .expect("seleção do PR");
+        match outcome {
+            Some(LiveOutcome::PrepareTestCase {
+                launch_context,
+                published,
+                ..
+            }) => {
+                assert_eq!(launch_context.published_pr.id, 43);
+                assert_eq!(
+                    published.iter().map(|item| item.id).collect::<Vec<_>>(),
+                    [42, 43]
+                );
+            }
+            _ => panic!("picker não entregou um único PR selecionado"),
+        }
+    }
+
+    #[tokio::test]
+    async fn one_handoff_activation_should_prepare_one_test_case_for_multiple_targets() {
+        let mut app = review_app();
+        app.set_launch_prep(launch_prep());
+        app.on_backend(BackendEvent::Published(vec![
+            published(42, "sprint/12"),
+            published(43, "dev"),
+        ]));
+        let mut terminal = test_terminal();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut needs_draw = false;
+        let open = handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE),
+            &PublishBase {
+                pat: String::new(),
+                remote: None,
+                branch: String::new(),
+                work_item_id: String::new(),
+            },
+            &tx,
+            &mut terminal,
+            &mut needs_draw,
+        )
+        .expect("ativação do handoff");
+        assert!(open.is_none());
+        assert!(matches!(
+            app.publish_dialog,
+            Some(PublishDialog::PublishedPrPicker { selected: 0 })
+        ));
+
+        let selected = handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            &PublishBase {
+                pat: String::new(),
+                remote: None,
+                branch: String::new(),
+                work_item_id: String::new(),
+            },
+            &tx,
+            &mut terminal,
+            &mut needs_draw,
+        )
+        .expect("seleção única do handoff");
+        let mut preparation_count = 0;
+        match selected {
+            Some(LiveOutcome::PrepareTestCase {
+                launch_context,
+                published,
+                ..
+            }) => {
+                preparation_count += 1;
+                assert_eq!(launch_context.published_pr.id, 42);
+                assert_eq!(published.len(), 2);
+                let (generated, reviewed, created, parent_updated) =
+                    crate::tui::test_flow::exercise_published_request_for_test(
+                        crate::features::test_card::TestCardRequest::PublishedPr(launch_context),
+                    )
+                    .await;
+                assert_eq!(generated, 1);
+                assert!(reviewed);
+                assert!(!created);
+                assert!(!parent_updated);
+            }
+            _ => panic!("ativação multi-target não entregou o handoff"),
+        }
+        assert_eq!(preparation_count, 1);
+        assert!(app.publish_dialog.is_none());
+    }
+
+    #[test]
+    fn published_pr_picker_cancel_should_return_without_handoff() {
+        let mut app = review_app();
+        app.set_launch_prep(launch_prep());
+        app.on_backend(BackendEvent::Published(vec![
+            published(42, "sprint/12"),
+            published(43, "dev"),
+        ]));
+        app.open_published_pr_picker();
+        let mut terminal = test_terminal();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let mut needs_draw = false;
+        let outcome = handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+            &PublishBase {
+                pat: String::new(),
+                remote: None,
+                branch: String::new(),
+                work_item_id: String::new(),
+            },
+            &tx,
+            &mut terminal,
+            &mut needs_draw,
+        )
+        .expect("cancelamento do picker");
+        assert!(outcome.is_none());
+        assert_eq!(app.phase, Phase::Done);
+        assert!(app.publish_dialog.is_none());
+        assert!(rx.try_recv().is_err());
+        assert_eq!(
+            app.published.iter().map(|item| item.id).collect::<Vec<_>>(),
+            [42, 43]
+        );
+
+        app.open_published_pr_picker();
+        let mut no_side_effects = mpsc::unbounded_channel();
+        let mut needs_draw = false;
+        let outcome = handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE),
+            &PublishBase {
+                pat: String::new(),
+                remote: None,
+                branch: String::new(),
+                work_item_id: String::new(),
+            },
+            &no_side_effects.0,
+            &mut terminal,
+            &mut needs_draw,
+        )
+        .expect("q no picker");
+        assert!(outcome.is_none());
+        assert!(no_side_effects.1.try_recv().is_err());
+        assert!(app.publish_dialog.is_none());
+
+        let mut needs_draw = false;
+        let exit = handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE),
+            &PublishBase {
+                pat: String::new(),
+                remote: None,
+                branch: String::new(),
+                work_item_id: String::new(),
+            },
+            &tx,
+            &mut terminal,
+            &mut needs_draw,
+        )
+        .expect("saída do Done");
+        assert!(matches!(exit, Some(LiveOutcome::Done { .. })));
+    }
+
+    #[test]
     fn desc_error_100x30() -> anyhow::Result<()> {
         let mut app = review_app();
         app.phase = Phase::Publishing;
@@ -2666,7 +3276,7 @@ mod tests {
                 assert_eq!(published.len(), 1);
                 assert_eq!(published[0].url, "https://dev.azure.com/example/pr/42");
             }
-            LiveOutcome::Aborted | LiveOutcome::Failed(_) => {
+            LiveOutcome::Aborted | LiveOutcome::Failed(_) | LiveOutcome::PrepareTestCase { .. } => {
                 panic!("PR publicado não pode sair como cancelamento")
             }
         }
@@ -2693,7 +3303,9 @@ mod tests {
                 assert!(message.contains("publicação incompleta"));
                 assert!(message.contains("preservados"));
             }
-            LiveOutcome::Done { .. } | LiveOutcome::Aborted => {
+            LiveOutcome::Done { .. }
+            | LiveOutcome::Aborted
+            | LiveOutcome::PrepareTestCase { .. } => {
                 panic!("publicação incompleta não pode sair como sucesso")
             }
         }

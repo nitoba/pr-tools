@@ -10,6 +10,7 @@
 //! mais painel de settings com 6 campos de texto editáveis.
 
 use std::collections::VecDeque;
+use std::future::Future;
 use std::io::IsTerminal;
 use std::time::{Duration, Instant};
 
@@ -38,8 +39,8 @@ use crate::ai::PrDescription;
 use crate::azure::WorkItem;
 use crate::cli::CliOptions;
 use crate::features::test_card::{
-    self, CreateFailure, CreateFailureKind, TestCardPrep, TestCaseCandidate, TestSettings,
-    TestSettingsField,
+    self, CreateFailure, CreateFailureKind, TestCardPrep, TestCardRequest, TestCaseCandidate,
+    TestSettings, TestSettingsField,
 };
 
 /// Resultado final do fluxo de teste para o `main`.
@@ -165,6 +166,8 @@ enum TestDialog {
     CandidateList { selected: usize },
     /// Confirmação da exclusão de um candidato.
     DeleteCandidate { selected: usize, yes: bool },
+    /// Divergência entre o checkout atual e o snapshot da publicação.
+    PublishedContextDivergence(bool),
 }
 
 /// Atividade da consulta/exclusão de candidatos.
@@ -365,6 +368,8 @@ struct TestApp {
     qa_real: LineEditor,
     /// Campo de esforço focado (0 = Effort, 1 = Real Effort).
     qa_focus: usize,
+    /// Indica que a escolha de snapshot remoto liberou o backend.
+    start_after_divergence: bool,
 }
 
 impl TestApp {
@@ -404,7 +409,24 @@ impl TestApp {
             qa_effort: LineEditor::new(String::new()),
             qa_real: LineEditor::new(String::new()),
             qa_focus: 0,
+            start_after_divergence: false,
         }
+    }
+
+    /// Estado inicial ajustado ao contrato de entrada selecionado.
+    fn for_request(request: &TestCardRequest) -> Self {
+        let mut app = Self::new();
+        match request {
+            TestCardRequest::Cli(options) => {
+                app.create_initial = options.create;
+                app.no_create = options.no_create;
+            }
+            TestCardRequest::PublishedPr(_) => {
+                app.create_initial = false;
+                app.no_create = false;
+            }
+        }
+        app
     }
 
     /// Avança 1 tick (~33ms).
@@ -791,13 +813,42 @@ fn parent_effort_defaults(parent: &WorkItem) -> (String, String) {
 }
 
 /// Tarefa de prepare + generate (roda em `tokio::spawn`).
-async fn backend_prepare_generate(options: CliOptions, tx: mpsc::UnboundedSender<TestEvent>) {
+async fn backend_prepare_generate(request: TestCardRequest, tx: mpsc::UnboundedSender<TestEvent>) {
+    backend_prepare_generate_with(
+        request,
+        tx,
+        |request| async move { test_card::prepare_request(request).await },
+        |prep| async move { test_card::generate(&prep).await },
+    )
+    .await;
+}
+
+/// Executa o backend de prepare + generate com as duas dependências isoladas.
+///
+/// O fluxo de produção injeta os adaptadores reais acima; os testes de
+/// handoff usam o mesmo encadeamento de eventos com Azure/IA controlados, sem
+/// fabricar um `Generated` fora do backend.
+async fn backend_prepare_generate_with<P, PFut, G, GFut>(
+    request: TestCardRequest,
+    tx: mpsc::UnboundedSender<TestEvent>,
+    prepare: P,
+    generate: G,
+) where
+    P: FnOnce(TestCardRequest) -> PFut,
+    PFut: Future<Output = crate::error::Result<TestCardPrep>>,
+    G: FnOnce(TestCardPrep) -> GFut,
+    GFut: Future<Output = crate::error::Result<PrDescription>>,
+{
     let _ = tx.send(TestEvent::PhaseLabel("preparando contexto…".to_owned()));
     let _ = tx.send(TestEvent::Progress(0.05, "coletando git/pr/pai".to_owned()));
     let _ = tx.send(TestEvent::Log(
         "lendo config, git e work item pai…".to_owned(),
     ));
-    let prep = match test_card::prepare(&options).await {
+    let options = match &request {
+        TestCardRequest::Cli(options) => Some(options.clone()),
+        TestCardRequest::PublishedPr(_) => None,
+    };
+    let prep = match prepare(request).await {
         Ok(p) => p,
         Err(e) => {
             let _ = tx.send(TestEvent::Failed(e.to_string()));
@@ -807,7 +858,7 @@ async fn backend_prepare_generate(options: CliOptions, tx: mpsc::UnboundedSender
     let _ = tx.send(TestEvent::Log(format!("pai #{} resolvido", prep.parent.id)));
     let _ = tx.send(TestEvent::PhaseLabel("gerando card via IA…".to_owned()));
     let _ = tx.send(TestEvent::Progress(0.3, "chamando provider".to_owned()));
-    let desc = match test_card::generate(&prep).await {
+    let desc = match generate(prep.clone()).await {
         Ok(d) => d,
         Err(e) => {
             let _ = tx.send(TestEvent::Failed(e.to_string()));
@@ -827,7 +878,7 @@ async fn backend_prepare_generate(options: CliOptions, tx: mpsc::UnboundedSender
     if !buf.is_empty() {
         let _ = tx.send(TestEvent::Token(buf));
     }
-    let initial = initial_field_values(&options, &prep);
+    let initial = initial_field_values(options.as_ref(), &prep);
     let _ = tx.send(TestEvent::Progress(1.0, "pronto p/ revisão".to_owned()));
     let _ = tx.send(TestEvent::Generated {
         prep: Box::new(prep),
@@ -838,7 +889,25 @@ async fn backend_prepare_generate(options: CliOptions, tx: mpsc::UnboundedSender
 }
 
 /// Valores iniciais dos 6 campos (CLI > config; iteração herdada do pai).
-fn initial_field_values(options: &CliOptions, prep: &TestCardPrep) -> [String; 6] {
+fn initial_field_values(options: Option<&CliOptions>, prep: &TestCardPrep) -> [String; 6] {
+    if let Some(settings) = &prep.settings {
+        let priority = if settings.priority.fract() == 0.0 {
+            format!("{:.0}", settings.priority)
+        } else {
+            format!("{}", settings.priority)
+        };
+        return [
+            settings.area_path.clone(),
+            settings.assigned_to.clone(),
+            settings.iteration_path.clone(),
+            priority,
+            settings.team.clone(),
+            settings.program.clone(),
+        ];
+    }
+    let Some(options) = options else {
+        return std::array::from_fn(|_| String::new());
+    };
     if let Ok(s) = TestSettings::from_cli_or_config(options, &prep.config, &prep.parent) {
         let priority = if s.priority.fract() == 0.0 {
             format!("{:.0}", s.priority)
@@ -890,11 +959,35 @@ async fn backend_create(
     body: String,
     tx: mpsc::UnboundedSender<TestEvent>,
 ) {
+    backend_create_with(
+        prep,
+        settings,
+        title,
+        body,
+        tx,
+        |prep, settings, title, body| async move {
+            test_card::create_with_current_config(&prep, &settings, title.as_str(), body.as_str())
+                .await
+        },
+    )
+    .await;
+}
+
+/// Executa a escrita do Test Case com o adaptador de criação isolado.
+async fn backend_create_with<C, CFut>(
+    prep: TestCardPrep,
+    settings: TestSettings,
+    title: String,
+    body: String,
+    tx: mpsc::UnboundedSender<TestEvent>,
+    create: C,
+) where
+    C: FnOnce(TestCardPrep, TestSettings, String, String) -> CFut,
+    CFut: Future<Output = crate::error::Result<WorkItem>>,
+{
     let _ = tx.send(TestEvent::PhaseLabel("criando test case…".to_owned()));
     let _ = tx.send(TestEvent::Progress(0.5, "enviando ao azure".to_owned()));
-    match test_card::create_with_current_config(&prep, &settings, title.as_str(), body.as_str())
-        .await
-    {
+    match create(prep, settings, title, body).await {
         Ok(item) => {
             let _ = tx.send(TestEvent::Progress(1.0, "criado".to_owned()));
             let _ = tx.send(TestEvent::CreatedItem(item));
@@ -1281,7 +1374,60 @@ fn render_dialog(app: &TestApp, dialog: TestDialog, area: Rect, buf: &mut Buffer
         TestDialog::DeleteCandidate { selected, yes } => {
             render_delete_candidate_dialog(app, selected, yes, area, buf);
         }
+        TestDialog::PublishedContextDivergence(yes) => {
+            render_published_context_divergence(area, buf, yes);
+        }
     }
+}
+
+/// Aviso explícito antes de gerar quando o checkout deixou de ser o snapshot
+/// capturado na publicação.
+fn render_published_context_divergence(area: Rect, buf: &mut Buffer, yes: bool) {
+    let inner = modal_frame(
+        area,
+        buf,
+        " Contexto local alterado ",
+        theme().warning,
+        82,
+        9,
+    );
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+    let selected = if yes {
+        "continuar com snapshot remoto"
+    } else {
+        "voltar"
+    };
+    let first = if yes { "▸" } else { " " };
+    let second = if yes { " " } else { "▸" };
+    Paragraph::new(vec![
+        Line::from(Span::styled(
+            "O checkout mudou desde a publicação do PR selecionado.",
+            Style::new().add_modifier(Modifier::BOLD),
+        )),
+        Line::from("A geração só pode usar o snapshot remoto validado ou ser cancelada."),
+        Line::from(""),
+        Line::from(Span::styled(
+            format!("{first} continuar com snapshot remoto"),
+            if yes { theme().accent } else { theme().muted },
+        )),
+        Line::from(Span::styled(
+            format!("{second} voltar"),
+            if yes { theme().muted } else { theme().accent },
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            format!("selecionado: {selected}"),
+            theme().muted,
+        )),
+        Line::from(Span::styled(
+            "←/→ alternar · y/n escolher · enter confirmar · esc/q voltar",
+            theme().muted,
+        )),
+    ])
+    .wrap(Wrap { trim: false })
+    .render(inner, buf);
 }
 
 /// Modal genérico Sim/Não (base dos confirms de criar e de Test QA).
@@ -1712,6 +1858,9 @@ fn render_footer(app: &TestApp, area: Rect, buf: &mut Buffer) {
             Some(TestDialog::DeleteCandidate { .. }) => {
                 "←/→ alternar · y sim · n não · enter confirmar · esc cancelar"
             }
+            Some(TestDialog::PublishedContextDivergence(_)) => {
+                "←/→ alternar · y/n escolher · enter confirmar · esc/q voltar"
+            }
             None => match app.phase {
                 TestPhase::Preparando | TestPhase::Gerando => "j/k rolar preview · q/esc abortar",
                 TestPhase::Criando => "q/esc abortar",
@@ -1753,11 +1902,17 @@ fn render_footer(app: &TestApp, area: Rect, buf: &mut Buffer) {
 /// falhar (prepare/generate/create); nesse caso a tela de erro é exibida
 /// antes de retornar.
 pub async fn run_test_flow(options: &CliOptions) -> anyhow::Result<TestFlowOutcome> {
+    run_test_flow_request(TestCardRequest::Cli(options.clone())).await
+}
+
+/// Roda o fluxo de Test Case para uma entrada standalone ou um handoff
+/// estruturado de PR publicado.
+pub async fn run_test_flow_request(request: TestCardRequest) -> anyhow::Result<TestFlowOutcome> {
     if !std::io::stdout().is_terminal() {
         anyhow::bail!("tui requer terminal interativo");
     }
     let mut terminal: DefaultTerminal = ratatui::init();
-    let res = run_loop(&mut terminal, options).await;
+    let res = run_loop(&mut terminal, request).await;
     ratatui::restore();
     res
 }
@@ -1765,15 +1920,48 @@ pub async fn run_test_flow(options: &CliOptions) -> anyhow::Result<TestFlowOutco
 /// Loop principal: drena backend, ticka a ~30fps e trata teclas.
 async fn run_loop(
     terminal: &mut DefaultTerminal,
-    options: &CliOptions,
+    request: TestCardRequest,
 ) -> anyhow::Result<TestFlowOutcome> {
+    run_loop_with(
+        terminal,
+        request,
+        || {
+            if event::poll(Duration::from_millis(10))? {
+                Ok(Some(event::read()?))
+            } else {
+                Ok(None)
+            }
+        },
+        |request, tx| {
+            tokio::spawn(backend_prepare_generate(request, tx));
+        },
+    )
+    .await
+}
+
+/// Loop principal com fontes de entrada e backend substituíveis nos testes.
+async fn run_loop_with<I, B>(
+    terminal: &mut DefaultTerminal,
+    request: TestCardRequest,
+    mut read_event: I,
+    start_backend: B,
+) -> anyhow::Result<TestFlowOutcome>
+where
+    I: FnMut() -> anyhow::Result<Option<Event>>,
+    B: Fn(TestCardRequest, mpsc::UnboundedSender<TestEvent>),
+{
     let (tx, mut rx) = mpsc::unbounded_channel::<TestEvent>();
-    let mut app = TestApp::new();
-    let owned = options.clone();
-    app.create_initial = owned.create;
-    app.no_create = owned.no_create;
-    let first_tx = tx.clone();
-    tokio::spawn(backend_prepare_generate(owned, first_tx));
+    let mut app = TestApp::for_request(&request);
+    let mut pending_request = Some(request);
+    let published_diverged = pending_request
+        .as_ref()
+        .is_some_and(published_context_diverged);
+    if published_diverged {
+        app.dialog = Some(TestDialog::PublishedContextDivergence(false));
+    } else if let Some(request) = pending_request.take() {
+        let first_tx = tx.clone();
+        start_backend(request, first_tx);
+    }
 
     let tick_rate = Duration::from_millis(33);
     let mut last_tick = Instant::now();
@@ -1797,49 +1985,126 @@ async fn run_loop(
             terminal.draw(|f| f.render_widget(&app, f.area()))?;
             needs_draw = false;
         }
-        if event::poll(Duration::from_millis(10))? {
-            let ev = event::read()?;
-            if let Event::Paste(text) = ev {
-                if handle_content_paste(&mut app, text.as_str()) {
-                    needs_draw = true;
-                }
-                continue;
-            }
-            let Event::Key(key) = ev else {
+        let Some(ev) = read_event()? else {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+            continue;
+        };
+        if let Event::Paste(text) = ev {
+            if handle_content_paste(&mut app, text.as_str()) {
                 needs_draw = true;
-                continue;
-            };
-            if !test_key_kind_allowed(&app, key) {
-                continue;
             }
-            if let Some(action) = handle_test_interrupt_key(&mut app, key) {
-                if let Some(res) = apply_test_key_action(action, &mut needs_draw) {
-                    return res;
-                }
-                continue;
-            }
-            if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('z') {
-                #[cfg(unix)]
-                {
-                    super::suspend::suspend_to_shell(&mut *terminal)?;
-                    needs_draw = true;
-                }
-                continue;
-            }
-            // Diálogos modais têm prioridade sobre o resto da tela.
-            if let Some(dialog) = app.dialog {
-                let action = handle_test_dialog_key(&mut app, terminal, &tx, dialog, key).await?;
-                if let Some(res) = apply_test_key_action(action, &mut needs_draw) {
-                    return res;
-                }
-                continue;
-            }
-            let action = handle_test_phase_key(&mut app, key);
+            continue;
+        }
+        let Event::Key(key) = ev else {
+            needs_draw = true;
+            continue;
+        };
+        if !test_key_kind_allowed(&app, key) {
+            continue;
+        }
+        if let Some(action) = handle_test_interrupt_key(&mut app, key) {
             if let Some(res) = apply_test_key_action(action, &mut needs_draw) {
                 return res;
             }
+            continue;
+        }
+        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('z') {
+            #[cfg(unix)]
+            {
+                super::suspend::suspend_to_shell(&mut *terminal)?;
+                needs_draw = true;
+            }
+            continue;
+        }
+        // Diálogos modais têm prioridade sobre o resto da tela.
+        if let Some(dialog) = app.dialog {
+            let action = handle_test_dialog_key(&mut app, terminal, &tx, dialog, key).await?;
+            if let Some(res) = apply_test_key_action(action, &mut needs_draw) {
+                return res;
+            }
+            if app.start_after_divergence {
+                app.start_after_divergence = false;
+                if let Some(request) = pending_request.take() {
+                    start_backend(request, tx.clone());
+                }
+            }
+            continue;
+        }
+        let action = handle_test_phase_key(&mut app, key);
+        if let Some(res) = apply_test_key_action(action, &mut needs_draw) {
+            return res;
         }
     }
+}
+
+/// Exercita uma request publicada até a revisão usando o backend real do
+/// fluxo e adaptadores determinísticos para Azure/IA.
+#[cfg(test)]
+pub(crate) async fn exercise_published_request_for_test(
+    request: TestCardRequest,
+) -> (usize, bool, bool, bool) {
+    let TestCardRequest::PublishedPr(context) = &request else {
+        panic!("harness publicado recebeu request CLI");
+    };
+    let parent = context
+        .work_item
+        .clone()
+        .expect("snapshot de Work Item publicado");
+    let prep = TestCardPrep {
+        config: context.config.clone(),
+        context: crate::git::ChangeContext {
+            branch: context.source_ref_name.clone(),
+            source_ref: context.source_ref_name.clone(),
+            base_branch: context.target_ref_name.clone(),
+            sprint_branch: String::new(),
+            diff: "diff remoto".to_owned(),
+            diff_original_lines: 1,
+            log: "log remoto".to_owned(),
+            work_item_id: parent.id.to_string(),
+            remote: Some(context.remote.clone()),
+        },
+        parent,
+        pr_id: Some(context.published_pr.id.to_string()),
+        settings: Some(context.settings.clone()),
+        pr_changes: "changes remotas".to_owned(),
+        examples_text: String::new(),
+        prompt: "prompt remoto".to_owned(),
+    };
+    let generated = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let generated_by_backend = generated.clone();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    backend_prepare_generate_with(
+        request.clone(),
+        tx,
+        move |_| async move { Ok(prep) },
+        move |_| {
+            generated_by_backend.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            async {
+                Ok(PrDescription {
+                    title: "Card do PR".to_owned(),
+                    body: "## Objetivo\nValidar o PR".to_owned(),
+                })
+            }
+        },
+    )
+    .await;
+    let mut app = TestApp::for_request(&request);
+    while let Ok(event) = rx.try_recv() {
+        app.on_event(event);
+    }
+    (
+        generated.load(std::sync::atomic::Ordering::Relaxed),
+        app.phase == TestPhase::Revisao,
+        app.created.is_some(),
+        app.parent_updated,
+    )
+}
+
+fn published_context_diverged(request: &TestCardRequest) -> bool {
+    matches!(
+        request,
+        TestCardRequest::PublishedPr(context) if !context.fingerprint.matches_current()
+    )
 }
 
 /// Decisão de um handler de tecla do fluxo de teste.
@@ -1943,6 +2208,45 @@ async fn handle_test_dialog_key(
         TestDialog::DeleteCandidate { selected, yes } => {
             Ok(handle_delete_candidate_key(app, tx, selected, yes, key))
         }
+        TestDialog::PublishedContextDivergence(yes) => {
+            Ok(handle_published_context_divergence_key(app, yes, key))
+        }
+    }
+}
+
+/// Tecla do gate de divergência: continuar usa apenas o snapshot remoto;
+/// voltar encerra a entrada publicada antes de qualquer geração.
+fn handle_published_context_divergence_key(
+    app: &mut TestApp,
+    yes: bool,
+    key: event::KeyEvent,
+) -> TestKeyAction {
+    if key.kind != KeyEventKind::Press {
+        return TestKeyAction::Continue(false);
+    }
+    match key.code {
+        KeyCode::Left | KeyCode::Right => {
+            app.dialog = Some(TestDialog::PublishedContextDivergence(!yes));
+            TestKeyAction::Continue(true)
+        }
+        KeyCode::Char('y') => {
+            app.dialog = Some(TestDialog::PublishedContextDivergence(true));
+            TestKeyAction::Continue(true)
+        }
+        KeyCode::Char('n') => {
+            app.dialog = Some(TestDialog::PublishedContextDivergence(false));
+            TestKeyAction::Continue(true)
+        }
+        KeyCode::Enter if yes => {
+            app.dialog = None;
+            app.start_after_divergence = true;
+            TestKeyAction::Continue(true)
+        }
+        KeyCode::Enter | KeyCode::Esc | KeyCode::Char('q') => {
+            app.dialog = None;
+            TestKeyAction::Done(TestFlowOutcome::Aborted)
+        }
+        _ => TestKeyAction::Continue(false),
     }
 }
 
@@ -2604,24 +2908,34 @@ async fn run_qa_update(
 ) -> anyhow::Result<()> {
     app.parent_msg = Some("atualizando pai p/ Test QA…".to_owned());
     terminal.draw(|f| f.render_widget(&*app, f.area()))?;
-    match app.prep.clone() {
-        Some(prep) => {
-            match test_card::update_parent_with_current_config(
-                &prep,
-                Some(effort.as_str()),
-                Some(real.as_str()),
-            )
+    run_qa_update_with(app, effort, real, |prep, effort, real| async move {
+        test_card::update_parent_with_current_config(&prep, effort.as_deref(), real.as_deref())
             .await
-            {
-                Ok(()) => {
-                    app.parent_updated = true;
-                    app.parent_msg = Some("pai atualizado p/ Test QA ✓".to_owned());
-                }
-                Err(e) => {
-                    app.parent_msg = Some(test_card::describe_parent_update_error(&e));
-                }
+    })
+    .await
+}
+
+/// Atualiza o estado do pai usando um adaptador de escrita isolado.
+async fn run_qa_update_with<U, UFut>(
+    app: &mut TestApp,
+    effort: String,
+    real: String,
+    update: U,
+) -> anyhow::Result<()>
+where
+    U: FnOnce(TestCardPrep, Option<String>, Option<String>) -> UFut,
+    UFut: Future<Output = crate::error::Result<()>>,
+{
+    match app.prep.clone() {
+        Some(prep) => match update(prep, Some(effort), Some(real)).await {
+            Ok(()) => {
+                app.parent_updated = true;
+                app.parent_msg = Some("pai atualizado p/ Test QA ✓".to_owned());
             }
-        }
+            Err(e) => {
+                app.parent_msg = Some(test_card::describe_parent_update_error(&e));
+            }
+        },
         None => {
             app.parent_msg = Some("sem contexto do pai p/ atualizar".to_owned());
         }
@@ -2631,8 +2945,16 @@ async fn run_qa_update(
 
 #[cfg(test)]
 mod tests {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::mpsc::{Receiver, channel};
+    use std::thread::{JoinHandle, spawn};
+
     use super::*;
-    use ratatui::{Terminal, backend::TestBackend};
+    use crate::git::{ChangeContext, GitContextFingerprint, RepositoryRemote};
+    use ratatui::{
+        DefaultTerminal, Terminal, TerminalOptions, Viewport, backend::TestBackend, layout::Rect,
+    };
 
     fn review_app() -> TestApp {
         let mut app = TestApp::new();
@@ -2641,6 +2963,786 @@ mod tests {
         app.phase = TestPhase::Revisao;
         app.create_initial = true;
         app
+    }
+
+    fn test_terminal() -> DefaultTerminal {
+        Terminal::with_options(
+            ratatui::backend::CrosstermBackend::new(std::io::stdout()),
+            TerminalOptions {
+                viewport: Viewport::Fixed(Rect::new(0, 0, 100, 30)),
+            },
+        )
+        .expect("terminal de teste")
+    }
+
+    fn published_request() -> TestCardRequest {
+        let remote = RepositoryRemote {
+            organization: "org".to_owned(),
+            project: "project".to_owned(),
+            repository: "repo".to_owned(),
+        };
+        let parent: WorkItem = serde_json::from_value(serde_json::json!({
+            "id": 11763,
+            "fields": {
+                "System.Title": "Mudança funcional",
+                "System.WorkItemType": "User Story",
+                "System.IterationPath": "project\\Sprint 12"
+            }
+        }))
+        .expect("snapshot do pai");
+        TestCardRequest::PublishedPr(crate::features::test_card::TestCardLaunchContext {
+            published_pr: crate::azure::pull_requests::PublishedPr {
+                target: "dev".to_owned(),
+                id: 99,
+                url: "https://dev.azure.com/org/project/_git/repo/pullrequest/99".to_owned(),
+            },
+            remote,
+            work_item_id: Some(11763),
+            work_item: Some(parent),
+            source_ref_name: "refs/heads/feature/11763-exemplo".to_owned(),
+            target_ref_name: "refs/heads/dev".to_owned(),
+            config: crate::config::Config {
+                azure_pat: "pat".to_owned(),
+                test_team: "DevOps".to_owned(),
+                test_program: "Agrotrace".to_owned(),
+                ..crate::config::Config::default()
+            },
+            settings: TestSettings {
+                area_path: "project\\QA".to_owned(),
+                assigned_to: "qa@example.com".to_owned(),
+                iteration_path: "project\\Sprint 12".to_owned(),
+                priority: 2.0,
+                team: "DevOps".to_owned(),
+                program: "Agrotrace".to_owned(),
+            },
+            fingerprint: GitContextFingerprint::default(),
+        })
+    }
+
+    fn published_prep() -> TestCardPrep {
+        let TestCardRequest::PublishedPr(context) = published_request() else {
+            unreachable!();
+        };
+        TestCardPrep {
+            config: context.config,
+            context: ChangeContext {
+                branch: "feature/11763-exemplo".to_owned(),
+                source_ref: context.source_ref_name,
+                base_branch: context.target_ref_name,
+                sprint_branch: String::new(),
+                diff: "diff".to_owned(),
+                diff_original_lines: 1,
+                log: "log".to_owned(),
+                work_item_id: "11763".to_owned(),
+                remote: Some(context.remote),
+            },
+            parent: context.work_item.expect("pai"),
+            pr_id: Some(context.published_pr.id.to_string()),
+            settings: Some(context.settings),
+            pr_changes: "changes".to_owned(),
+            examples_text: "- #5 Exemplo".to_owned(),
+            prompt: "prompt com PR e refs".to_owned(),
+        }
+    }
+
+    fn spawn_http_error_server(
+        status: u16,
+        body: &str,
+    ) -> (String, Receiver<(String, String)>, JoinHandle<()>) {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("listener");
+        let address = listener.local_addr().expect("endereço");
+        let (sender, receiver) = channel();
+        let body = body.to_owned();
+        let handle = spawn(move || {
+            let (mut stream, _) = listener.accept().expect("conexão");
+            let mut bytes = Vec::new();
+            loop {
+                let mut chunk = [0_u8; 4096];
+                let read = stream.read(&mut chunk).expect("leitura");
+                assert!(read > 0, "cliente encerrou antes dos cabeçalhos");
+                bytes.extend_from_slice(&chunk[..read]);
+                if let Some(end) = bytes.windows(4).position(|window| window == b"\r\n\r\n") {
+                    let line = String::from_utf8_lossy(&bytes[..end]);
+                    let mut parts = line
+                        .lines()
+                        .next()
+                        .expect("request line")
+                        .split_whitespace();
+                    sender
+                        .send((
+                            parts.next().expect("método").to_owned(),
+                            parts.next().expect("target").to_owned(),
+                        ))
+                        .expect("captura");
+                    break;
+                }
+            }
+            let reason = match status {
+                401 => "Unauthorized",
+                403 => "Forbidden",
+                _ => "Error",
+            };
+            let response = format!(
+                "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            stream.write_all(response.as_bytes()).expect("resposta");
+        });
+        (format!("http://{address}/org"), receiver, handle)
+    }
+
+    fn render_text(app: &TestApp) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).expect("terminal");
+        terminal
+            .draw(|f| f.render_widget(app, f.area()))
+            .expect("render");
+        let buffer = terminal.backend().buffer();
+        let width = usize::from(buffer.area.width);
+        let mut text = String::new();
+        for (index, cell) in buffer.content().iter().enumerate() {
+            if index > 0 && index % width == 0 {
+                text.push('\n');
+            }
+            text.push_str(cell.symbol());
+        }
+        text
+    }
+
+    #[tokio::test]
+    async fn published_preparation_failure_should_not_start_generation_or_remote_writes() {
+        let mut request = published_request();
+        if let TestCardRequest::PublishedPr(context) = &mut request {
+            context.settings.team.clear();
+        }
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        backend_prepare_generate(request, tx).await;
+        let mut backend_failed = false;
+        let mut backend_generated = false;
+        while let Ok(event) = rx.try_recv() {
+            match &event {
+                TestEvent::Failed(message) => {
+                    backend_failed = true;
+                    assert!(message.contains("Custom.Team"));
+                }
+                TestEvent::Generated { .. } => backend_generated = true,
+                _ => {}
+            }
+        }
+        assert!(backend_failed);
+        assert!(!backend_generated);
+
+        for status in [401, 403] {
+            let (base_url, request_rx, server) =
+                spawn_http_error_server(status, r#"{"message":"access denied"}"#);
+            let context = match published_request() {
+                TestCardRequest::PublishedPr(context) => context,
+                TestCardRequest::Cli(_) => unreachable!(),
+            };
+            let client = crate::azure::AzureClient::new_for_test(&base_url, "pat");
+            let request = TestCardRequest::PublishedPr(context.clone());
+            let (tx, mut rx) = mpsc::unbounded_channel();
+            backend_prepare_generate_with(
+                request,
+                tx,
+                move |_| async move {
+                    crate::features::test_card::prepare_published_pr_with(
+                        &context,
+                        context.config.clone(),
+                        &client,
+                        |_, _| panic!("Git não pode começar após falha de autenticação"),
+                    )
+                    .await
+                },
+                |_| async { panic!("IA não pode começar após falha de autenticação") },
+            )
+            .await;
+            let mut backend_failed = false;
+            let mut backend_generated = false;
+            let mut app = TestApp::for_request(&published_request());
+            while let Ok(event) = rx.try_recv() {
+                backend_failed |= matches!(event, TestEvent::Failed(_));
+                backend_generated |= matches!(event, TestEvent::Generated { .. });
+                app.on_event(event);
+            }
+            assert!(backend_failed);
+            assert!(!backend_generated);
+            assert_eq!(app.phase, TestPhase::Erro);
+            assert!(
+                app.error
+                    .as_deref()
+                    .is_some_and(|message| message.contains(&status.to_string()))
+            );
+            assert!(app.prep.is_none());
+            assert!(app.created.is_none());
+            assert!(app.last_create_settings.is_none());
+            assert!(!app.parent_updated);
+            let (method, target) = request_rx.recv().expect("lookup do PR");
+            assert_eq!(method, "GET");
+            assert!(target.contains("pullRequests/99"));
+            server.join().expect("servidor de autenticação");
+        }
+    }
+
+    #[test]
+    fn matching_git_fingerprint_should_skip_divergence_gate() {
+        let fingerprint = GitContextFingerprint::capture("", &[]).expect("fingerprint atual");
+        let mut request = published_request();
+        let TestCardRequest::PublishedPr(context) = &mut request else {
+            unreachable!();
+        };
+        context.fingerprint = fingerprint;
+        assert!(!published_context_diverged(&request));
+        let mut app = TestApp::for_request(&request);
+        assert!(app.dialog.is_none());
+        assert!(!app.start_after_divergence);
+        app.on_event(TestEvent::Generated {
+            prep: Box::new(published_prep()),
+            title: "Card remoto".to_owned(),
+            body: "## Objetivo\nPR remoto".to_owned(),
+            initial: [
+                "project\\QA".to_owned(),
+                "qa@example.com".to_owned(),
+                "project\\Sprint 12".to_owned(),
+                "2".to_owned(),
+                "DevOps".to_owned(),
+                "Agrotrace".to_owned(),
+            ],
+        });
+        assert_eq!(app.phase, TestPhase::Revisao);
+        assert_eq!(
+            app.prep.as_ref().and_then(|prep| prep.pr_id.as_deref()),
+            Some("99")
+        );
+        assert_eq!(app.prep.as_ref().map(|prep| prep.parent.id), Some(11763));
+    }
+
+    #[test]
+    fn changed_git_fingerprint_should_open_remote_snapshot_gate() {
+        let mut request = published_request();
+        let TestCardRequest::PublishedPr(_) = &mut request else {
+            unreachable!();
+        };
+        let matching =
+            GitContextFingerprint::capture("", &["main".to_owned()]).expect("fingerprint base");
+        let mutations: [fn(&mut GitContextFingerprint); 4] = [
+            |fingerprint: &mut GitContextFingerprint| {
+                fingerprint.repository = "outro-checkout".to_owned();
+            },
+            |fingerprint: &mut GitContextFingerprint| {
+                fingerprint.source_branch = "outra-branch".to_owned();
+            },
+            |fingerprint: &mut GitContextFingerprint| {
+                fingerprint.source_oid = "outro-source-oid".to_owned();
+            },
+            |fingerprint: &mut GitContextFingerprint| {
+                fingerprint
+                    .target_oids
+                    .insert("main".to_owned(), "outro-target-oid".to_owned());
+            },
+        ];
+        for mutate in mutations {
+            {
+                let TestCardRequest::PublishedPr(context) = &mut request else {
+                    unreachable!();
+                };
+                context.fingerprint = matching.clone();
+                mutate(&mut context.fingerprint);
+            }
+            assert!(published_context_diverged(&request));
+        }
+
+        let mut app = TestApp::for_request(&request);
+        app.dialog = Some(TestDialog::PublishedContextDivergence(false));
+        let rendered = render_text(&app);
+        assert!(rendered.contains("continuar com snapshot remoto"));
+        assert!(rendered.contains("voltar"));
+        assert!(rendered.contains("O checkout mudou desde a publicação"));
+    }
+
+    #[test]
+    fn remote_snapshot_choice_should_never_use_current_checkout_as_context() {
+        let request = published_request();
+        let TestCardRequest::PublishedPr(context) = &request else {
+            unreachable!();
+        };
+        let mut app = TestApp::for_request(&request);
+        app.dialog = Some(TestDialog::PublishedContextDivergence(false));
+        let action = handle_published_context_divergence_key(
+            &mut app,
+            false,
+            event::KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE),
+        );
+        assert!(matches!(action, TestKeyAction::Continue(true)));
+        let action = handle_published_context_divergence_key(
+            &mut app,
+            true,
+            event::KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        );
+        assert!(matches!(action, TestKeyAction::Continue(true)));
+        assert!(app.start_after_divergence);
+        assert!(app.prep.is_none());
+        assert!(app.created.is_none());
+        assert_eq!(context.source_ref_name, "refs/heads/feature/11763-exemplo");
+        assert_eq!(context.target_ref_name, "refs/heads/dev");
+
+        app.on_event(TestEvent::Generated {
+            prep: Box::new(published_prep()),
+            title: "Card remoto".to_owned(),
+            body: "## Objetivo\nSnapshot remoto".to_owned(),
+            initial: [
+                "project\\QA".to_owned(),
+                "qa@example.com".to_owned(),
+                "project\\Sprint 12".to_owned(),
+                "2".to_owned(),
+                "DevOps".to_owned(),
+                "Agrotrace".to_owned(),
+            ],
+        });
+        let prep = app.prep.as_ref().expect("prep do PR remoto");
+        assert_eq!(prep.context.source_ref, "refs/heads/feature/11763-exemplo");
+        assert_eq!(prep.context.base_branch, "refs/heads/dev");
+        assert_eq!(prep.context.diff, "diff");
+        assert_eq!(prep.context.log, "log");
+        assert!(prep.prompt.contains("PR e refs"));
+
+        let mut cancelled = TestApp::for_request(&request);
+        cancelled.dialog = Some(TestDialog::PublishedContextDivergence(false));
+        let action = handle_published_context_divergence_key(
+            &mut cancelled,
+            false,
+            event::KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+        );
+        assert!(matches!(
+            action,
+            TestKeyAction::Done(TestFlowOutcome::Aborted)
+        ));
+        assert!(cancelled.prep.is_none());
+        assert!(cancelled.created.is_none());
+        assert!(!cancelled.parent_updated);
+        let TestCardRequest::PublishedPr(context) = request else {
+            unreachable!();
+        };
+        assert_eq!(context.published_pr.id, 99);
+        assert_eq!(context.published_pr.target, "dev");
+        assert_eq!(
+            context.published_pr.url,
+            "https://dev.azure.com/org/project/_git/repo/pullrequest/99"
+        );
+    }
+
+    #[tokio::test]
+    async fn published_request_should_enter_review_without_reprompting_context() {
+        let request = published_request();
+        let started = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let started_by_backend = started.clone();
+        let generated = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let generated_by_backend = generated.clone();
+        let mut input = std::collections::VecDeque::from([
+            Event::Key(event::KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE)),
+            Event::Key(event::KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+        ]);
+        let mut idle_cycles = 0;
+        let mut terminal = test_terminal();
+        let outcome = run_loop_with(
+            &mut terminal,
+            request,
+            move || {
+                if let Some(event) = input.pop_front() {
+                    return Ok(Some(event));
+                }
+                if idle_cycles < 500 {
+                    idle_cycles += 1;
+                    return Ok(None);
+                }
+                Ok(Some(Event::Key(event::KeyEvent::new(
+                    KeyCode::Char('q'),
+                    KeyModifiers::NONE,
+                ))))
+            },
+            move |request, tx| {
+                let started = started_by_backend.clone();
+                let generated = generated_by_backend.clone();
+                tokio::spawn(backend_prepare_generate_with(
+                    request,
+                    tx,
+                    move |request| {
+                        started.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        async move {
+                            assert!(matches!(request, TestCardRequest::PublishedPr(_)));
+                            let prep = published_prep();
+                            assert_eq!(prep.pr_id.as_deref(), Some("99"));
+                            assert_eq!(prep.context.source_ref, "refs/heads/feature/11763-exemplo");
+                            assert_eq!(prep.context.base_branch, "refs/heads/dev");
+                            assert_eq!(prep.parent.id, 11763);
+                            assert_eq!(
+                                prep.settings
+                                    .as_ref()
+                                    .map(|settings| settings.team.as_str()),
+                                Some("DevOps")
+                            );
+                            Ok(prep)
+                        }
+                    },
+                    move |_| {
+                        generated.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        async {
+                            Ok(PrDescription {
+                                title: "Card do PR".to_owned(),
+                                body: "## Objetivo\nValidar o PR".to_owned(),
+                            })
+                        }
+                    },
+                ));
+            },
+        )
+        .await
+        .expect("loop do handoff publicado");
+        assert!(matches!(outcome, TestFlowOutcome::Reviewed));
+        assert_eq!(started.load(std::sync::atomic::Ordering::Relaxed), 1);
+        assert_eq!(generated.load(std::sync::atomic::Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn one_handoff_activation_should_prepare_one_test_case_for_multiple_targets() {
+        let receipt = [
+            crate::azure::pull_requests::PublishedPr {
+                target: "sprint/12".to_owned(),
+                id: 98,
+                url: "https://dev.azure.com/org/project/_git/repo/pullrequest/98".to_owned(),
+            },
+            crate::azure::pull_requests::PublishedPr {
+                target: "dev".to_owned(),
+                id: 99,
+                url: "https://dev.azure.com/org/project/_git/repo/pullrequest/99".to_owned(),
+            },
+        ];
+        assert_eq!(receipt.len(), 2);
+        let request = published_request();
+        let TestCardRequest::PublishedPr(context) = request else {
+            unreachable!();
+        };
+        assert_eq!(context.published_pr.id, 99);
+        assert_eq!(context.published_pr.target, "dev");
+        assert_eq!(
+            context.published_pr.url,
+            "https://dev.azure.com/org/project/_git/repo/pullrequest/99"
+        );
+        assert_eq!(context.source_ref_name, "refs/heads/feature/11763-exemplo");
+        assert_eq!(context.target_ref_name, "refs/heads/dev");
+        assert_eq!(context.work_item_id, Some(11763));
+        assert_eq!(context.published_pr.id, receipt[1].id);
+        let app = TestApp::for_request(&TestCardRequest::PublishedPr(context));
+        assert!(!app.create_initial);
+        assert!(!app.no_create);
+        assert_eq!(app.phase, TestPhase::Preparando);
+        assert!(app.prep.is_none());
+        assert!(app.created.is_none());
+        assert!(!app.parent_updated);
+    }
+
+    #[tokio::test]
+    async fn cancelled_test_case_handoff_should_preserve_published_receipt() {
+        let request = published_request();
+        let TestCardRequest::PublishedPr(context) = &request else {
+            unreachable!();
+        };
+        let published = [
+            crate::azure::pull_requests::PublishedPr {
+                target: "sprint/12".to_owned(),
+                id: 98,
+                url: "https://dev.azure.com/org/project/_git/repo/pullrequest/98".to_owned(),
+            },
+            context.published_pr.clone(),
+        ];
+        let receipt = published
+            .iter()
+            .map(|item| format!("PR #{} · {} · {}", item.id, item.target, item.url))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let mut gate_request = request.clone();
+        if let TestCardRequest::PublishedPr(context) = &mut gate_request {
+            context.fingerprint.repository = "outro-checkout".to_owned();
+        }
+        let backend_starts = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let starts = backend_starts.clone();
+        let mut gate_input = std::collections::VecDeque::from([Event::Key(event::KeyEvent::new(
+            KeyCode::Esc,
+            KeyModifiers::NONE,
+        ))]);
+        let mut gate_terminal = test_terminal();
+        let gate_outcome = run_loop_with(
+            &mut gate_terminal,
+            gate_request,
+            move || Ok(gate_input.pop_front()),
+            move |_, _| {
+                starts.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            },
+        )
+        .await
+        .expect("cancelamento do gate");
+        assert!(matches!(gate_outcome, TestFlowOutcome::Aborted));
+        assert_eq!(backend_starts.load(std::sync::atomic::Ordering::Relaxed), 0);
+        for item in &published {
+            assert!(receipt.contains(&format!("PR #{}", item.id)));
+            assert!(receipt.contains(&item.target));
+            assert!(receipt.contains(&item.url));
+        }
+
+        let mut review_input = std::collections::VecDeque::from([
+            Event::Key(event::KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE)),
+            Event::Key(event::KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+        ]);
+        let mut idle_cycles = 0;
+        let mut review_terminal = test_terminal();
+        let generated = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let generated_by_backend = generated.clone();
+        let review_outcome = run_loop_with(
+            &mut review_terminal,
+            request,
+            move || {
+                if let Some(event) = review_input.pop_front() {
+                    return Ok(Some(event));
+                }
+                if idle_cycles < 500 {
+                    idle_cycles += 1;
+                    return Ok(None);
+                }
+                Ok(Some(Event::Key(event::KeyEvent::new(
+                    KeyCode::Esc,
+                    KeyModifiers::NONE,
+                ))))
+            },
+            move |request, tx| {
+                let generated = generated_by_backend.clone();
+                tokio::spawn(backend_prepare_generate_with(
+                    request,
+                    tx,
+                    |_| async { Ok(published_prep()) },
+                    move |_| {
+                        generated.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        async {
+                            Ok(PrDescription {
+                                title: "Card".to_owned(),
+                                body: "## Objetivo\nX".to_owned(),
+                            })
+                        }
+                    },
+                ));
+            },
+        )
+        .await
+        .expect("cancelamento na revisão");
+        assert!(matches!(review_outcome, TestFlowOutcome::Reviewed));
+        assert_eq!(generated.load(std::sync::atomic::Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn failed_test_case_handoff_should_preserve_published_receipt_and_writers() {
+        let (base_url, request_rx, server) =
+            spawn_http_error_server(403, r#"{"message":"access denied"}"#);
+        let context = match published_request() {
+            TestCardRequest::PublishedPr(context) => context,
+            TestCardRequest::Cli(_) => unreachable!(),
+        };
+        let client = crate::azure::AzureClient::new_for_test(&base_url, "pat");
+        let request = TestCardRequest::PublishedPr(context.clone());
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        backend_prepare_generate_with(
+            request.clone(),
+            tx,
+            move |_| async move {
+                crate::features::test_card::prepare_published_pr_with(
+                    &context,
+                    context.config.clone(),
+                    &client,
+                    |_, _| panic!("Git não pode começar após lookup recusado"),
+                )
+                .await
+            },
+            |_| async { panic!("IA não pode começar após lookup recusado") },
+        )
+        .await;
+        let mut app = TestApp::for_request(&request);
+        while let Ok(event) = rx.try_recv() {
+            app.on_event(event);
+        }
+        let TestCardRequest::PublishedPr(context) = &request else {
+            unreachable!();
+        };
+        assert_eq!(app.phase, TestPhase::Erro);
+        assert!(
+            app.error
+                .as_deref()
+                .is_some_and(|message| message.contains("403"))
+        );
+        assert!(app.created.is_none());
+        assert!(!app.parent_updated);
+        assert_eq!(context.published_pr.id, 99);
+        assert_eq!(context.published_pr.target, "dev");
+        assert!(context.published_pr.url.ends_with("/99"));
+        let receipt = format!(
+            "PR #{} · {} · {}",
+            context.published_pr.id, context.published_pr.target, context.published_pr.url
+        );
+        let reported = format!(
+            "{}
+
+{}",
+            app.error.as_deref().unwrap_or_default(),
+            receipt
+        );
+        assert!(reported.contains("PR #99 · dev"));
+        assert!(reported.contains("pullrequest/99"));
+        assert!(!reported.contains("criado:"));
+        let (method, target) = request_rx.recv().expect("lookup do PR");
+        assert_eq!(method, "GET");
+        assert!(target.contains("pullRequests/99"));
+        server.join().expect("servidor de erro do handoff");
+    }
+
+    #[tokio::test]
+    async fn published_flow_should_keep_create_and_test_qa_confirmations_separate() {
+        let mut app = TestApp::for_request(&published_request());
+        app.on_event(TestEvent::Generated {
+            prep: Box::new(published_prep()),
+            title: "Card do PR".to_owned(),
+            body: "## Objetivo\nValidar o PR".to_owned(),
+            initial: [
+                "project\\QA".to_owned(),
+                "qa@example.com".to_owned(),
+                "project\\Sprint 12".to_owned(),
+                "2".to_owned(),
+                "DevOps".to_owned(),
+                "Agrotrace".to_owned(),
+            ],
+        });
+        let pr_before_edit = app.prep.as_ref().and_then(|prep| prep.pr_id.clone());
+        assert!(app.open_content_edit());
+        assert!(matches!(
+            handle_content_edit_key(
+                &mut app,
+                event::KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+            ),
+            TestKeyAction::Continue(true)
+        ));
+        assert_eq!(
+            app.prep.as_ref().and_then(|prep| prep.pr_id.clone()),
+            pr_before_edit
+        );
+        app.create_recovery = CreateRecoveryState::Available;
+        app.dialog = Some(TestDialog::CreateRecovery(0));
+        assert!(matches!(
+            handle_create_recovery_key(
+                &mut app,
+                &mpsc::unbounded_channel().0,
+                0,
+                event::KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+            ),
+            TestKeyAction::Continue(true)
+        ));
+        assert_eq!(
+            app.prep.as_ref().and_then(|prep| prep.pr_id.clone()),
+            pr_before_edit
+        );
+        let retry_prep = app.prep.clone().expect("prep para recovery");
+        let retry_settings = app.build_settings().expect("settings para recovery");
+        let (failure_tx, mut failure_rx) = mpsc::unbounded_channel();
+        backend_create_with(
+            retry_prep,
+            retry_settings,
+            app.title.clone(),
+            app.body.clone(),
+            failure_tx,
+            |_, _, _, _| async {
+                Err(crate::error::AppError::Azure {
+                    status: 504,
+                    message: "gateway timeout".to_owned(),
+                })
+            },
+        )
+        .await;
+        while let Ok(event) = failure_rx.try_recv() {
+            app.on_event(event);
+        }
+        assert_eq!(app.phase, TestPhase::Revisao);
+        assert_eq!(app.dialog, Some(TestDialog::CreateRecovery(0)));
+        assert_eq!(
+            app.prep.as_ref().and_then(|prep| prep.pr_id.clone()),
+            pr_before_edit
+        );
+        assert_eq!(app.create_recovery, CreateRecoveryState::Available);
+        app.create_recovery = CreateRecoveryState::Unavailable;
+        app.panel = Panel::Preview;
+        assert!(matches!(
+            handle_review_preview_key(
+                &mut app,
+                event::KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            ),
+            TestKeyAction::Continue(true)
+        ));
+        assert_eq!(app.dialog, Some(TestDialog::ConfirmCreate(false)));
+        assert!(app.created.is_none());
+        assert!(!app.parent_updated);
+
+        let settings = app.build_settings().expect("settings para criação");
+        let prep = app.prep.clone().expect("prep para criação");
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        backend_create_with(
+            prep,
+            settings,
+            app.title.clone(),
+            app.body.clone(),
+            tx,
+            |_, _, _, _| async {
+                Ok(WorkItem {
+                    id: 123,
+                    fields: std::collections::HashMap::new(),
+                    relations: Vec::new(),
+                })
+            },
+        )
+        .await;
+        while let Ok(event) = rx.try_recv() {
+            app.on_event(event);
+        }
+        assert_eq!(app.dialog, Some(TestDialog::ConfirmTestQa(false)));
+        assert!(app.created.is_some());
+        assert!(!app.parent_updated);
+        assert_eq!(
+            app.prep.as_ref().and_then(|prep| prep.pr_id.as_deref()),
+            Some("99")
+        );
+
+        assert!(matches!(
+            handle_confirm_qa_key(
+                &mut app,
+                false,
+                event::KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE),
+            ),
+            TestKeyAction::Continue(true)
+        ));
+        assert_eq!(app.dialog, Some(TestDialog::QaEfforts));
+        assert!(!app.parent_updated);
+
+        run_qa_update_with(
+            &mut app,
+            "1".to_owned(),
+            "1".to_owned(),
+            |prep, effort, real| async move {
+                assert_eq!(prep.parent.id, 11763);
+                assert_eq!(effort.as_deref(), Some("1"));
+                assert_eq!(real.as_deref(), Some("1"));
+                Ok(())
+            },
+        )
+        .await
+        .expect("update QA");
+        assert!(app.parent_updated);
+        assert_eq!(
+            app.parent_msg.as_deref(),
+            Some("pai atualizado p/ Test QA ✓")
+        );
     }
 
     #[test]

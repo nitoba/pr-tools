@@ -12,7 +12,10 @@ use super::events::BackendEvent;
 use super::shimmer::u16_from_i32_clamped;
 use crate::ai::PrDescription;
 use crate::azure::pull_requests::{PublishedPr, PullRequestCandidate};
-use crate::features::describe::{FunctionalContextStatus, PublishFailure, PublishFailureKind};
+use crate::features::describe::{
+    DescribePrep, FunctionalContextStatus, PublishFailure, PublishFailureKind,
+};
+use crate::features::test_card::TestCardLaunchContext;
 
 /// Fase do fluxo.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -69,6 +72,11 @@ pub enum PublishDialog {
     /// Possíveis PRs retornados pela busca de duplicidade.
     CandidateList {
         /// Índice do candidato focado.
+        selected: usize,
+    },
+    /// Seleção local de um PR já publicado.
+    PublishedPrPicker {
+        /// Índice do PR focado.
         selected: usize,
     },
 }
@@ -161,6 +169,8 @@ pub struct DescribeApp {
     pub(crate) candidate_activity: CandidateActivity,
     /// Mensagem da busca de candidatos.
     pub candidate_message: Option<String>,
+    /// Preparação original retida para construir o handoff sem reconsulta.
+    pub(crate) launch_prep: Option<DescribePrep>,
 }
 
 impl DescribeApp {
@@ -213,6 +223,7 @@ impl DescribeApp {
             candidates: Vec::new(),
             candidate_activity: CandidateActivity::Idle,
             candidate_message: None,
+            launch_prep: None,
         }
     }
 
@@ -228,6 +239,49 @@ impl DescribeApp {
                 self.functional_context_status.display_label()
             ));
         }
+    }
+
+    /// Retém a preparação de `desc` para o handoff após a publicação.
+    pub fn set_launch_prep(&mut self, prep: DescribePrep) {
+        self.launch_prep = Some(prep);
+    }
+
+    /// Abre a seleção local quando a receipt contém mais de um PR.
+    pub fn open_published_pr_picker(&mut self) -> bool {
+        if self.phase != Phase::Done || self.published.len() < 2 {
+            return false;
+        }
+        self.publish_dialog = Some(PublishDialog::PublishedPrPicker { selected: 0 });
+        true
+    }
+
+    /// Move o foco do picker finito sem tocar no Azure.
+    pub fn move_published_pr_picker(&mut self, down: bool) -> bool {
+        let Some(PublishDialog::PublishedPrPicker { selected }) = self.publish_dialog else {
+            return false;
+        };
+        let count = self.published.len();
+        if count == 0 {
+            return false;
+        }
+        let selected = if down {
+            (selected + 1) % count
+        } else if selected == 0 {
+            count - 1
+        } else {
+            selected - 1
+        };
+        self.publish_dialog = Some(PublishDialog::PublishedPrPicker { selected });
+        true
+    }
+
+    /// Retorna o contexto do PR selecionado e fecha o picker.
+    pub fn selected_published_pr(&mut self, selected: usize) -> Option<TestCardLaunchContext> {
+        let item = self.published.get(selected)?.clone();
+        let prep = self.launch_prep.as_ref()?;
+        let context = TestCardLaunchContext::from_describe(prep, &item).ok()?;
+        self.publish_dialog = None;
+        Some(context)
     }
 
     /// Retorna se a TUI aguarda uma decisão de fallback.
