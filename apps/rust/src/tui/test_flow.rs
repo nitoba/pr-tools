@@ -2893,8 +2893,29 @@ mod tests {
         text
     }
 
-    #[test]
-    fn published_preparation_failure_should_not_start_generation_or_remote_writes() {
+    #[tokio::test]
+    async fn published_preparation_failure_should_not_start_generation_or_remote_writes() {
+        let mut request = published_request();
+        if let TestCardRequest::PublishedPr(context) = &mut request {
+            context.settings.team.clear();
+        }
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        backend_prepare_generate(request, tx).await;
+        let mut backend_failed = false;
+        let mut backend_generated = false;
+        while let Ok(event) = rx.try_recv() {
+            match &event {
+                TestEvent::Failed(message) => {
+                    backend_failed = true;
+                    assert!(message.contains("Custom.Team"));
+                }
+                TestEvent::Generated { .. } => backend_generated = true,
+                _ => {}
+            }
+        }
+        assert!(backend_failed);
+        assert!(!backend_generated);
+
         for message in [
             "PR #99 não foi encontrado (HTTP 404)",
             "o PR pertence a outro repositório",
@@ -3152,6 +3173,129 @@ mod tests {
     }
 
     #[test]
+    fn cancelled_test_case_handoff_should_preserve_published_receipt() {
+        let request = published_request();
+        let TestCardRequest::PublishedPr(context) = &request else {
+            unreachable!();
+        };
+        let published = [
+            crate::azure::pull_requests::PublishedPr {
+                target: "sprint/12".to_owned(),
+                id: 98,
+                url: "https://dev.azure.com/org/project/_git/repo/pullrequest/98".to_owned(),
+            },
+            context.published_pr.clone(),
+        ];
+        let receipt = published
+            .iter()
+            .map(|item| format!("PR #{} · {} · {}", item.id, item.target, item.url))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let mut gate = TestApp::for_request(&request);
+        gate.dialog = Some(TestDialog::PublishedContextDivergence(false));
+        let action = handle_published_context_divergence_key(
+            &mut gate,
+            false,
+            event::KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+        );
+        assert!(matches!(
+            action,
+            TestKeyAction::Done(TestFlowOutcome::Aborted)
+        ));
+        assert!(gate.prep.is_none());
+        assert!(gate.created.is_none());
+        assert!(!gate.parent_updated);
+        for item in &published {
+            assert!(receipt.contains(&format!("PR #{}", item.id)));
+            assert!(receipt.contains(&item.target));
+            assert!(receipt.contains(&item.url));
+        }
+
+        let mut review = TestApp::for_request(&request);
+        review.on_event(TestEvent::Generated {
+            prep: Box::new(published_prep()),
+            title: "Card".to_owned(),
+            body: "## Objetivo\nX".to_owned(),
+            initial: [
+                "project\\QA".to_owned(),
+                "qa@example.com".to_owned(),
+                "project\\Sprint 12".to_owned(),
+                "2".to_owned(),
+                "DevOps".to_owned(),
+                "Agrotrace".to_owned(),
+            ],
+        });
+        let action = handle_review_preview_key(
+            &mut review,
+            event::KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+        );
+        assert!(matches!(
+            action,
+            TestKeyAction::Done(TestFlowOutcome::Reviewed)
+        ));
+        assert!(review.created.is_none());
+        assert!(!review.parent_updated);
+        assert_eq!(
+            review.prep.as_ref().and_then(|prep| prep.pr_id.as_deref()),
+            Some("99")
+        );
+    }
+
+    #[test]
+    fn failed_test_case_handoff_should_preserve_published_receipt_and_writers() {
+        let request = published_request();
+        let TestCardRequest::PublishedPr(context) = &request else {
+            unreachable!();
+        };
+        let mut app = TestApp::for_request(&request);
+        app.on_event(TestEvent::Generated {
+            prep: Box::new(published_prep()),
+            title: "Card".to_owned(),
+            body: "## Objetivo\nX".to_owned(),
+            initial: [
+                "project\\QA".to_owned(),
+                "qa@example.com".to_owned(),
+                "project\\Sprint 12".to_owned(),
+                "2".to_owned(),
+                "DevOps".to_owned(),
+                "Agrotrace".to_owned(),
+            ],
+        });
+        app.on_event(TestEvent::Failed(
+            "Azure DevOps recusou a preparação (HTTP 403)".to_owned(),
+        ));
+        assert_eq!(app.phase, TestPhase::Erro);
+        assert_eq!(
+            app.error.as_deref(),
+            Some("Azure DevOps recusou a preparação (HTTP 403)")
+        );
+        assert!(app.created.is_none());
+        assert!(!app.parent_updated);
+        assert_eq!(
+            app.prep.as_ref().and_then(|prep| prep.pr_id.as_deref()),
+            Some("99")
+        );
+        assert_eq!(context.published_pr.id, 99);
+        assert_eq!(context.published_pr.target, "dev");
+        assert!(context.published_pr.url.ends_with("/99"));
+        let receipt = format!(
+            "PR #{} · {} · {}",
+            context.published_pr.id, context.published_pr.target, context.published_pr.url
+        );
+        let reported = format!(
+            "{}
+
+{}",
+            app.error.as_deref().unwrap_or_default(),
+            receipt
+        );
+        assert!(reported.contains("PR #99 · dev"));
+        assert!(reported.contains("pullrequest/99"));
+        assert!(!reported.contains("criado:"));
+    }
+
+    #[test]
     fn published_flow_should_keep_create_and_test_qa_confirmations_separate() {
         let mut app = TestApp::for_request(&published_request());
         app.on_event(TestEvent::Generated {
@@ -3167,6 +3311,36 @@ mod tests {
                 "Agrotrace".to_owned(),
             ],
         });
+        let pr_before_edit = app.prep.as_ref().and_then(|prep| prep.pr_id.clone());
+        assert!(app.open_content_edit());
+        assert!(matches!(
+            handle_content_edit_key(
+                &mut app,
+                event::KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+            ),
+            TestKeyAction::Continue(true)
+        ));
+        assert_eq!(
+            app.prep.as_ref().and_then(|prep| prep.pr_id.clone()),
+            pr_before_edit
+        );
+        app.create_recovery = CreateRecoveryState::Available;
+        app.dialog = Some(TestDialog::CreateRecovery(0));
+        assert!(matches!(
+            handle_create_recovery_key(
+                &mut app,
+                &mpsc::unbounded_channel().0,
+                0,
+                event::KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+            ),
+            TestKeyAction::Continue(true)
+        ));
+        assert_eq!(
+            app.prep.as_ref().and_then(|prep| prep.pr_id.clone()),
+            pr_before_edit
+        );
+        app.create_recovery = CreateRecoveryState::Unavailable;
+        app.panel = Panel::Preview;
         assert!(matches!(
             handle_review_preview_key(
                 &mut app,

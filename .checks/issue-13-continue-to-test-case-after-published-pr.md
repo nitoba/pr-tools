@@ -53,7 +53,7 @@ Proof: `cargo test --manifest-path apps/rust/Cargo.toml --locked tui::live::test
 ### S2 - Contrato estruturado e preparação orientada ao PR · 4 arquivos · ~141kB · ~36k
 
 **C6** - `TestCardRequest::Cli(CliOptions)` preserva o `prt test` standalone, incluindo `git::collect`, precedência CLI/branch/PR, flags e `TestCardPrep` consumido pelo fluxo atual.
-Proof: `cargo test --manifest-path apps/rust/Cargo.toml --locked features::test_card::tests::cli_request_should_preserve_standalone_preparation`
+Proof: `cargo test --manifest-path apps/rust/Cargo.toml --locked features::test_card::tests::cli_request_should_run_the_existing_preparation_adapter`
 
 **C7** - Request publicado busca o PR pelo ID retido no remote atual e valida repository, target e refs não vazios antes de gerar.
 Proof: `cargo test --manifest-path apps/rust/Cargo.toml --locked features::test_card::tests::published_request_should_lookup_and_validate_selected_pr`
@@ -96,16 +96,16 @@ Proof: `cargo test --manifest-path apps/rust/Cargo.toml --locked tests::desc_pre
 Proof: `cargo test --manifest-path apps/rust/Cargo.toml --locked tui::test_flow::tests::published_request_should_enter_review_without_reprompting_context`
 
 **C19** - Uma ativação de `t`/`T` em receipt multi-target produz uma única preparação/geração/revisão e no máximo uma criação confirmada.
-Proof: `cargo test --manifest-path apps/rust/Cargo.toml --locked tui::test_flow::tests::one_handoff_activation_should_prepare_one_test_case_for_multiple_targets`
+Proof: `cargo test --manifest-path apps/rust/Cargo.toml --locked tui::live::tests::one_handoff_activation_should_prepare_one_test_case_for_multiple_targets`
 
 **C20** - Cancelamento no picker, gate ou revisão antes da criação não chama writers e reporta todos os PRs intactos.
-Proof: `cargo test --manifest-path apps/rust/Cargo.toml --locked tests::cancelled_test_case_handoff_should_preserve_published_receipt`
+Proof: `cargo test --manifest-path apps/rust/Cargo.toml --locked tui::test_flow::tests::cancelled_test_case_handoff_should_preserve_published_receipt`
 
 **C21** - Revisão publicada mantém confirmação separada de criação e de `Test QA`; recovery, edição e retry continuam usando o mesmo `TestCardPrep`.
 Proof: `cargo test --manifest-path apps/rust/Cargo.toml --locked tui::test_flow::tests::published_flow_should_keep_create_and_test_qa_confirmations_separate`
 
 **C22** - Falha após handoff não vira sucesso/criação parcial, não altera PR publicado e preserva a receipt reportada.
-Proof: `cargo test --manifest-path apps/rust/Cargo.toml --locked tests::failed_test_case_handoff_should_preserve_published_receipt_and_writes`
+Proof: `cargo test --manifest-path apps/rust/Cargo.toml --locked tui::test_flow::tests::failed_test_case_handoff_should_preserve_published_receipt_and_writers`
 
 ### S5 - Provas da fronteira · 3 arquivos · ~107kB · ~27k
 

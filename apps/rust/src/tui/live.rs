@@ -2556,7 +2556,7 @@ mod tests {
             title: "   ".to_owned(),
             body: "corpo".to_owned(),
         });
-        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = mpsc::unbounded_channel();
         let base = PublishBase {
             pat: String::new(),
             remote: None,
@@ -2568,7 +2568,6 @@ mod tests {
         assert!(app.content_edit.is_some());
         assert_eq!(app.phase, Phase::Review);
         assert_eq!(app.error.as_deref(), Some("título é obrigatório"));
-        assert!(rx.try_recv().is_err());
     }
 
     #[test]
@@ -2946,6 +2945,27 @@ mod tests {
         assert_eq!(error.published[0].id, 42);
         assert_eq!(error.published[0].target, "dev");
         assert_eq!(error.published[0].url, published(42, "dev").url);
+        let mut terminal = test_terminal();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let mut needs_draw = false;
+        let outcome = handle_key_event(
+            &mut error,
+            KeyEvent::new(KeyCode::Char('T'), KeyModifiers::NONE),
+            &PublishBase {
+                pat: String::new(),
+                remote: None,
+                branch: String::new(),
+                work_item_id: String::new(),
+            },
+            &tx,
+            &mut terminal,
+            &mut needs_draw,
+        )
+        .expect("tecla T após erro");
+        assert!(outcome.is_none());
+        assert!(rx.try_recv().is_err());
+        assert_eq!(error.phase, Phase::Error);
+        assert!(error.publish_dialog.is_none());
     }
 
     #[test]
@@ -3063,6 +3083,68 @@ mod tests {
     }
 
     #[test]
+    fn one_handoff_activation_should_prepare_one_test_case_for_multiple_targets() {
+        let mut app = review_app();
+        app.set_launch_prep(launch_prep());
+        app.on_backend(BackendEvent::Published(vec![
+            published(42, "sprint/12"),
+            published(43, "dev"),
+        ]));
+        let mut terminal = test_terminal();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut needs_draw = false;
+        let open = handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE),
+            &PublishBase {
+                pat: String::new(),
+                remote: None,
+                branch: String::new(),
+                work_item_id: String::new(),
+            },
+            &tx,
+            &mut terminal,
+            &mut needs_draw,
+        )
+        .expect("ativação do handoff");
+        assert!(open.is_none());
+        assert!(matches!(
+            app.publish_dialog,
+            Some(PublishDialog::PublishedPrPicker { selected: 0 })
+        ));
+
+        let selected = handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            &PublishBase {
+                pat: String::new(),
+                remote: None,
+                branch: String::new(),
+                work_item_id: String::new(),
+            },
+            &tx,
+            &mut terminal,
+            &mut needs_draw,
+        )
+        .expect("seleção única do handoff");
+        let mut preparation_count = 0;
+        match selected {
+            Some(LiveOutcome::PrepareTestCase {
+                launch_context,
+                published,
+                ..
+            }) => {
+                preparation_count += 1;
+                assert_eq!(launch_context.published_pr.id, 42);
+                assert_eq!(published.len(), 2);
+            }
+            _ => panic!("ativação multi-target não entregou o handoff"),
+        }
+        assert_eq!(preparation_count, 1);
+        assert!(app.publish_dialog.is_none());
+    }
+
+    #[test]
     fn published_pr_picker_cancel_should_return_without_handoff() {
         let mut app = review_app();
         app.set_launch_prep(launch_prep());
@@ -3072,7 +3154,7 @@ mod tests {
         ]));
         app.open_published_pr_picker();
         let mut terminal = test_terminal();
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, mut rx) = mpsc::unbounded_channel();
         let mut needs_draw = false;
         let outcome = handle_key_event(
             &mut app,
@@ -3091,6 +3173,7 @@ mod tests {
         assert!(outcome.is_none());
         assert_eq!(app.phase, Phase::Done);
         assert!(app.publish_dialog.is_none());
+        assert!(rx.try_recv().is_err());
         assert_eq!(
             app.published.iter().map(|item| item.id).collect::<Vec<_>>(),
             [42, 43]

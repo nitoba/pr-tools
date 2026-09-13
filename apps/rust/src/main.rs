@@ -7,6 +7,7 @@ use anyhow::Context;
 use clap::CommandFactory as _;
 use prt::features::test_card::TestCardRequest;
 use prt::tui::test_flow::{TestFlowOutcome, run_test_flow_request};
+use std::future::Future;
 use tracing_subscriber::{EnvFilter, fmt};
 
 #[tokio::main]
@@ -204,6 +205,19 @@ fn build_done_receipt(
     receipt
 }
 
+async fn run_published_test_flow<F, Fut>(
+    receipt: String,
+    launch_context: prt::features::test_card::TestCardLaunchContext,
+    run_flow: F,
+) -> (String, anyhow::Result<TestFlowOutcome>)
+where
+    F: FnOnce(TestCardRequest) -> Fut,
+    Fut: Future<Output = anyhow::Result<TestFlowOutcome>>,
+{
+    let result = run_flow(TestCardRequest::PublishedPr(launch_context)).await;
+    (receipt, result)
+}
+
 async fn run_desc(options: &prt::cli::CliOptions) -> anyhow::Result<()> {
     use prt::features::describe;
     use prt::tui::{
@@ -255,8 +269,8 @@ async fn run_desc(options: &prt::cli::CliOptions) -> anyhow::Result<()> {
             published,
         } => {
             let receipt = build_done_receipt(&desc, &targets, &published);
-            let test_result =
-                run_test_flow_request(TestCardRequest::PublishedPr(launch_context)).await;
+            let (receipt, test_result) =
+                run_published_test_flow(receipt, launch_context, run_test_flow_request).await;
             match test_result {
                 Ok(TestFlowOutcome::Created { id, url }) => {
                     println!("{receipt}");
@@ -656,14 +670,37 @@ mod tests {
         assert!(!raw.contains("Enriquecer a descrição"));
     }
 
-    #[test]
-    fn desc_prepare_test_case_should_start_flow_after_terminal_restoration() {
+    #[tokio::test]
+    async fn desc_prepare_test_case_should_start_flow_after_terminal_restoration() {
         let desc = prt::ai::PrDescription {
             title: "Descrição".to_owned(),
             body: "## Objetivo\nValidar".to_owned(),
         };
         let context = published_launch_context();
         let published = vec![context.published_pr.clone()];
+        let receipt = build_done_receipt(&desc, &["dev".to_owned()], &published);
+        let expected_context = context.clone();
+        let (actual_receipt, test_result) =
+            run_published_test_flow(receipt.clone(), context.clone(), |request| async move {
+                match request {
+                    TestCardRequest::PublishedPr(actual) => {
+                        assert_eq!(actual.published_pr.id, expected_context.published_pr.id);
+                        assert_eq!(
+                            actual.published_pr.target,
+                            expected_context.published_pr.target
+                        );
+                        assert_eq!(actual.source_ref_name, expected_context.source_ref_name);
+                        assert_eq!(actual.target_ref_name, expected_context.target_ref_name);
+                        assert!(!actual.settings.team.is_empty());
+                    }
+                    TestCardRequest::Cli(_) => panic!("handoff publicado virou request CLI"),
+                }
+                Ok(TestFlowOutcome::ReviewedNoCreate)
+            })
+            .await;
+        assert_eq!(actual_receipt, receipt);
+        assert!(matches!(test_result, Ok(TestFlowOutcome::ReviewedNoCreate)));
+
         let outcome = prt::tui::events::LiveOutcome::PrepareTestCase {
             desc: desc.clone(),
             launch_context: context,
