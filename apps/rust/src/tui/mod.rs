@@ -106,8 +106,8 @@ pub fn ascii_only() -> bool {
 
     #[cfg(not(test))]
     {
-        return std::env::var("TERM").is_ok_and(|v| v == "dumb")
-            && std::io::IsTerminal::is_terminal(&std::io::stdout());
+        std::env::var("TERM").is_ok_and(|v| v == "dumb")
+            && std::io::IsTerminal::is_terminal(&std::io::stdout())
     }
 
     #[cfg(test)]
