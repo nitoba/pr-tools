@@ -14,7 +14,7 @@ use crate::azure::{self, work_items::FunctionalWorkItemContext};
 use crate::cli::CliOptions;
 use crate::config::{self, Config};
 use crate::error::{AppError, Result};
-use crate::git::{self, ChangeContext};
+use crate::git::{self, ChangeContext, GitContextFingerprint};
 
 /// Limite das operações Azure acionadas pela recuperação da TUI.
 pub const TUI_AZURE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -60,7 +60,7 @@ impl FunctionalContextStatus {
 }
 
 /// Contexto preparado para geração.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DescribePrep {
     /// Config resolvida (com overrides CLI).
     pub config: Config,
@@ -72,6 +72,10 @@ pub struct DescribePrep {
     pub work_item_id: String,
     /// Estado e projeção do contexto funcional.
     pub functional_context: FunctionalContextStatus,
+    /// Snapshot bruto do Work Item carregado para reutilização no handoff.
+    pub work_item: Option<azure::WorkItem>,
+    /// Fingerprint do checkout capturado antes da publicação.
+    pub fingerprint: GitContextFingerprint,
     /// Prompt de usuário.
     pub prompt: String,
 }
@@ -104,8 +108,14 @@ pub async fn prepare(options: &CliOptions) -> Result<DescribePrep> {
         .work_item
         .as_ref()
         .map_or_else(|| context.work_item_id.clone(), |w| w.as_str().to_owned());
-    let functional_context =
-        load_functional_context(context.remote.as_ref(), &config.azure_pat, &work_item_id).await;
+    let (functional_context, work_item) = load_functional_context_with_snapshot(
+        context.remote.as_ref(),
+        &config.azure_pat,
+        &work_item_id,
+    )
+    .await;
+    let fingerprint =
+        git::GitContextFingerprint::capture(&context.branch, &targets).unwrap_or_default();
     let prompt = ai::build_describe_prompt(
         &context.branch,
         &targets,
@@ -120,27 +130,49 @@ pub async fn prepare(options: &CliOptions) -> Result<DescribePrep> {
         targets,
         work_item_id,
         functional_context,
+        work_item,
+        fingerprint,
         prompt,
     })
 }
 
+#[cfg(test)]
 async fn load_functional_context(
     remote: Option<&git::RepositoryRemote>,
     pat: &str,
     work_item_id: &str,
 ) -> FunctionalContextStatus {
+    load_functional_context_with_snapshot(remote, pat, work_item_id)
+        .await
+        .0
+}
+
+async fn load_functional_context_with_snapshot(
+    remote: Option<&git::RepositoryRemote>,
+    pat: &str,
+    work_item_id: &str,
+) -> (FunctionalContextStatus, Option<azure::WorkItem>) {
     if work_item_id.trim().is_empty() {
-        return FunctionalContextStatus::NotRequested;
+        return (FunctionalContextStatus::NotRequested, None);
     }
     let client = match azure::client_for(remote, pat) {
         Ok(client) => client,
-        Err(error) => return FunctionalContextStatus::Unavailable(safe_azure_error(&error)),
+        Err(error) => {
+            return (
+                FunctionalContextStatus::Unavailable(safe_azure_error(&error)),
+                None,
+            );
+        }
     };
     match azure::get_work_item(&client, work_item_id.trim()).await {
-        Ok(item) => {
-            FunctionalContextStatus::Loaded(FunctionalWorkItemContext::from_work_item(&item))
-        }
-        Err(error) => FunctionalContextStatus::Unavailable(safe_azure_error(&error)),
+        Ok(item) => (
+            FunctionalContextStatus::Loaded(FunctionalWorkItemContext::from_work_item(&item)),
+            Some(item),
+        ),
+        Err(error) => (
+            FunctionalContextStatus::Unavailable(safe_azure_error(&error)),
+            None,
+        ),
     }
 }
 

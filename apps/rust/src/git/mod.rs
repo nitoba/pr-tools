@@ -4,6 +4,7 @@
 //! em 8000 linhas, log (50 oneline) e remote Azure DevOps.
 
 use regex::Regex;
+use std::collections::BTreeMap;
 use std::process::Command as ProcCommand;
 use std::sync::OnceLock;
 
@@ -21,6 +22,88 @@ pub struct RepositoryRemote {
     pub project: String,
     /// Repositório.
     pub repository: String,
+}
+
+/// Snapshot mínimo do checkout usado para detectar divergência antes de uma
+/// geração iniciada a partir de uma receipt publicada.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct GitContextFingerprint {
+    /// Identidade absoluta do repositório local.
+    pub repository: String,
+    /// Branch efetivamente selecionada para a origem.
+    pub source_branch: String,
+    /// OID observado na ref da origem.
+    pub source_oid: String,
+    /// OID observado por target, na ordem lexical dos nomes.
+    pub target_oids: BTreeMap<String, String>,
+}
+
+impl GitContextFingerprint {
+    /// Captura o checkout atual e os OIDs das refs source/target.
+    ///
+    /// Refs ausentes são representadas por texto vazio. Isso preserva a
+    /// capacidade de comparar o estado mesmo quando uma ref remota ainda não
+    /// foi materializada localmente, sem impedir a publicação existente.
+    ///
+    /// # Errors
+    ///
+    /// Retorna erro quando o Git não consegue identificar o repositório ou a
+    /// branch atualmente checked out.
+    pub fn capture(source_branch: &str, targets: &[String]) -> Result<Self> {
+        let repository = git(&["rev-parse", "--show-toplevel"])?;
+        let current_branch = git(&["branch", "--show-current"])?;
+        let source_branch = if source_branch.trim().is_empty() {
+            current_branch
+        } else {
+            source_branch.trim().to_owned()
+        };
+        let source_oid = ref_oid(&source_branch);
+        let target_oids = targets
+            .iter()
+            .map(|target| (target.clone(), ref_oid(target)))
+            .collect();
+        Ok(Self {
+            repository,
+            source_branch,
+            source_oid,
+            target_oids,
+        })
+    }
+
+    /// Compara este snapshot com o checkout atual.
+    #[must_use]
+    pub fn matches_current(&self) -> bool {
+        let Ok(repository) = git(&["rev-parse", "--show-toplevel"]) else {
+            return false;
+        };
+        let Ok(current_branch) = git(&["branch", "--show-current"]) else {
+            return false;
+        };
+        if repository != self.repository || current_branch != self.source_branch {
+            return false;
+        }
+        if ref_oid(&self.source_branch) != self.source_oid {
+            return false;
+        }
+        self.target_oids
+            .iter()
+            .all(|(target, expected)| ref_oid(target) == *expected)
+    }
+}
+
+/// OID da ref local ou de sua correspondente `origin/<branch>`.
+fn ref_oid(branch: &str) -> String {
+    let branch = branch.strip_prefix("refs/heads/").unwrap_or(branch).trim();
+    if branch.is_empty() {
+        return String::new();
+    }
+    let local = format!("refs/heads/{branch}");
+    git(&["rev-parse", "--verify", &local])
+        .or_else(|_| {
+            let origin = format!("origin/{branch}");
+            git(&["rev-parse", "--verify", &origin])
+        })
+        .unwrap_or_default()
 }
 
 /// Contexto de mudanças coletado do Git.
@@ -519,5 +602,25 @@ mod tests {
                 matches!(arg.as_str(), "dev" | "main" | "master") || arg.starts_with("sprint/")
             })
         }));
+    }
+
+    #[test]
+    fn fingerprint_should_capture_repository_branch_and_requested_ref_oids() {
+        let branch = git(&["branch", "--show-current"]).expect("branch do teste");
+        assert!(
+            !branch.is_empty(),
+            "os testes precisam de uma branch checked out"
+        );
+        let fingerprint = GitContextFingerprint::capture("", std::slice::from_ref(&branch))
+            .expect("fingerprint do checkout");
+
+        assert!(!fingerprint.repository.is_empty());
+        assert_eq!(fingerprint.source_branch, branch);
+        assert!(!fingerprint.source_oid.is_empty());
+        assert_eq!(fingerprint.target_oids.len(), 1);
+        assert_eq!(
+            fingerprint.target_oids.get(&branch),
+            Some(&fingerprint.source_oid)
+        );
     }
 }

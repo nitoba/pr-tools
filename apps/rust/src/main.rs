@@ -5,6 +5,8 @@
 
 use anyhow::Context;
 use clap::CommandFactory as _;
+use prt::features::test_card::TestCardRequest;
+use prt::tui::test_flow::{TestFlowOutcome, run_test_flow_request};
 use tracing_subscriber::{EnvFilter, fmt};
 
 #[tokio::main]
@@ -170,7 +172,7 @@ fn build_done_lines(
             lines.push(Line::from(vec![
                 Span::styled("✓ ", ratatui::style::Style::new()),
                 Span::styled(
-                    format!("PR {} criado: {}", item.target, item.url),
+                    format!("PR #{} · {} · {}", item.id, item.target, item.url),
                     ratatui::style::Style::new(),
                 ),
             ]));
@@ -193,7 +195,11 @@ fn build_done_receipt(
         targets.join(", ")
     );
     for item in published {
-        let _ = write!(receipt, "\n✓ PR {} criado: {}", item.target, item.url);
+        let _ = write!(
+            receipt,
+            "\n✓ PR #{} · {} · {}",
+            item.id, item.target, item.url
+        );
     }
     receipt
 }
@@ -242,6 +248,47 @@ async fn run_desc(options: &prt::cli::CliOptions) -> anyhow::Result<()> {
             // fica vazio depois de `ratatui::restore()`. Não remove a notice.
             println!("{}", build_done_receipt(&desc, &targets, &published));
             Ok(())
+        }
+        LiveOutcome::PrepareTestCase {
+            desc,
+            launch_context,
+            published,
+        } => {
+            let receipt = build_done_receipt(&desc, &targets, &published);
+            let test_result =
+                run_test_flow_request(TestCardRequest::PublishedPr(launch_context)).await;
+            match test_result {
+                Ok(TestFlowOutcome::Created { id, url }) => {
+                    println!("{receipt}");
+                    println!("✓ Test Case #{id} criado: {url}");
+                    Ok(())
+                }
+                Ok(TestFlowOutcome::ReviewedNoCreate | TestFlowOutcome::Reviewed) => {
+                    println!("{receipt}");
+                    println!("✓ Test Case revisado; nenhum PR publicado foi alterado.");
+                    Ok(())
+                }
+                Ok(TestFlowOutcome::Aborted) => {
+                    show_notice(
+                        "PRs publicados preservados",
+                        Text::from(receipt.clone()),
+                        NoticeKind::Warning,
+                    )
+                    .await?;
+                    println!("{receipt}");
+                    std::process::exit(130);
+                }
+                Err(error) => {
+                    show_notice(
+                        "Preparação do Test Case falhou",
+                        Text::from(format!("{error}\n\n{receipt}")),
+                        NoticeKind::Warning,
+                    )
+                    .await?;
+                    println!("{receipt}");
+                    Err(error)
+                }
+            }
         }
         LiveOutcome::Aborted => {
             show_notice(
@@ -482,6 +529,46 @@ async fn run_doctor(options: &prt::cli::CliOptions) -> anyhow::Result<()> {
 mod tests {
     use super::*;
 
+    fn published_launch_context() -> prt::features::test_card::TestCardLaunchContext {
+        let remote = prt::git::RepositoryRemote {
+            organization: "org".to_owned(),
+            project: "project".to_owned(),
+            repository: "repo".to_owned(),
+        };
+        let parent: prt::azure::WorkItem = serde_json::from_value(serde_json::json!({
+            "id": 11763,
+            "fields": {"System.Title": "Mudança", "System.WorkItemType": "Task"}
+        }))
+        .expect("pai");
+        prt::features::test_card::TestCardLaunchContext {
+            published_pr: prt::azure::pull_requests::PublishedPr {
+                target: "dev".to_owned(),
+                id: 42,
+                url: "https://dev.azure.com/org/project/_git/repo/pullrequest/42".to_owned(),
+            },
+            remote,
+            work_item_id: Some(11763),
+            work_item: Some(parent),
+            source_ref_name: "refs/heads/feature/11763-mudanca".to_owned(),
+            target_ref_name: "refs/heads/dev".to_owned(),
+            config: prt::config::Config {
+                azure_pat: "pat".to_owned(),
+                test_team: "DevOps".to_owned(),
+                test_program: "Agrotrace".to_owned(),
+                ..prt::config::Config::default()
+            },
+            settings: prt::features::test_card::TestSettings {
+                area_path: String::new(),
+                assigned_to: String::new(),
+                iteration_path: String::new(),
+                priority: 2.0,
+                team: "DevOps".to_owned(),
+                program: "Agrotrace".to_owned(),
+            },
+            fingerprint: prt::git::GitContextFingerprint::default(),
+        }
+    }
+
     fn update_prep() -> prt::features::update_pull_request::UpdatePrep {
         let remote = prt::git::RepositoryRemote {
             organization: "org".to_owned(),
@@ -567,5 +654,86 @@ mod tests {
         assert_eq!(raw, desc.body);
         assert!(!raw.contains("Contexto funcional"));
         assert!(!raw.contains("Enriquecer a descrição"));
+    }
+
+    #[test]
+    fn desc_prepare_test_case_should_start_flow_after_terminal_restoration() {
+        let desc = prt::ai::PrDescription {
+            title: "Descrição".to_owned(),
+            body: "## Objetivo\nValidar".to_owned(),
+        };
+        let context = published_launch_context();
+        let published = vec![context.published_pr.clone()];
+        let outcome = prt::tui::events::LiveOutcome::PrepareTestCase {
+            desc: desc.clone(),
+            launch_context: context,
+            published: published.clone(),
+        };
+        match outcome {
+            prt::tui::events::LiveOutcome::PrepareTestCase {
+                desc: actual_desc,
+                launch_context,
+                published: receipt,
+            } => {
+                assert_eq!(actual_desc.title, desc.title);
+                assert_eq!(launch_context.published_pr.id, 42);
+                assert_eq!(
+                    receipt.iter().map(|item| item.id).collect::<Vec<_>>(),
+                    published.iter().map(|item| item.id).collect::<Vec<_>>()
+                );
+            }
+            _ => panic!("handoff não carregou o contexto publicado"),
+        }
+    }
+
+    #[test]
+    fn cancelled_test_case_handoff_should_preserve_published_receipt() {
+        let desc = prt::ai::PrDescription {
+            title: "Descrição".to_owned(),
+            body: "body".to_owned(),
+        };
+        let published = vec![
+            prt::azure::pull_requests::PublishedPr {
+                target: "sprint/12".to_owned(),
+                id: 41,
+                url: "https://dev.azure.com/org/project/_git/repo/pullrequest/41".to_owned(),
+            },
+            prt::azure::pull_requests::PublishedPr {
+                target: "dev".to_owned(),
+                id: 42,
+                url: "https://dev.azure.com/org/project/_git/repo/pullrequest/42".to_owned(),
+            },
+        ];
+        let receipt = build_done_receipt(
+            &desc,
+            &["sprint/12".to_owned(), "dev".to_owned()],
+            &published,
+        );
+        for item in &published {
+            assert!(receipt.contains(&format!("PR #{}", item.id)));
+            assert!(receipt.contains(&item.target));
+            assert!(receipt.contains(&item.url));
+        }
+        assert!(!receipt.contains("Test Case #"));
+    }
+
+    #[test]
+    fn failed_test_case_handoff_should_preserve_published_receipt_and_writes() {
+        let desc = prt::ai::PrDescription {
+            title: "Descrição".to_owned(),
+            body: "body".to_owned(),
+        };
+        let published = vec![prt::azure::pull_requests::PublishedPr {
+            target: "dev".to_owned(),
+            id: 42,
+            url: "https://dev.azure.com/org/project/_git/repo/pullrequest/42".to_owned(),
+        }];
+        let receipt = build_done_receipt(&desc, &["dev".to_owned()], &published);
+        let error = "Azure DevOps recusou a preparação (HTTP 403)";
+        let reported = format!("{error}\n\n{receipt}");
+        assert!(reported.contains(error));
+        assert!(reported.contains("PR #42 · dev"));
+        assert!(reported.contains("pullrequest/42"));
+        assert!(!reported.contains("criado: https://"));
     }
 }

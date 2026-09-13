@@ -1,11 +1,11 @@
 ---
-source: src/tui/live.rs
+source: apps/rust/src/tui/live.rs
 expression: terminal.backend()
 ---
 "◆ prt 4.0.11  ·  desc  ·  Concluído                                                                 "
 "links disponíveis  ·  █████████████████████████████████████████████████████████████████████  ·  100%"
 "╭ PRs publicados ──────────────────────────────────────────────────────────────────────────────────╮"
-"│   dev  https://dev.azure.com/example/pr/42                                                       │"
+"│   PR #42  dev  https://dev.azure.com/example/pr/42                                               │"
 "│                                                                                                  │"
 "│                                                                                                  │"
 "│                                                                                                  │"
@@ -31,4 +31,4 @@ expression: terminal.backend()
 "│                                                                                                  │"
 "│                                                                                                  │"
 "╰──────────────────────────────────────────────────────────────────────────────────────────────────╯"
-"q sair                                                                                              "
+"t preparar Test Case · q sair                                                                       "

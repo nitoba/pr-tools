@@ -3,6 +3,7 @@
 use crate::ai::PrDescription;
 use crate::azure::pull_requests::{PublishedPr, PullRequestCandidate};
 use crate::features::describe::PublishFailure;
+use crate::features::test_card::TestCardLaunchContext;
 
 /// Evento emitido pela tarefa de geração para a UI.
 #[derive(Debug)]
@@ -37,6 +38,7 @@ pub enum BackendEvent {
 }
 
 /// Resultado final do runner interativo.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub enum LiveOutcome {
     /// Usuário saiu com a descrição pronta (+ PRs publicados, se houver).
@@ -44,6 +46,15 @@ pub enum LiveOutcome {
         /// Descrição gerada.
         desc: PrDescription,
         /// PRs publicados (vazio se saiu sem publicar).
+        published: Vec<PublishedPr>,
+    },
+    /// Handoff explícito da receipt publicada para um único Test Case.
+    PrepareTestCase {
+        /// Descrição original, usada para reportar a receipt após o segundo fluxo.
+        desc: PrDescription,
+        /// Contexto estruturado do PR selecionado.
+        launch_context: TestCardLaunchContext,
+        /// Todos os PRs publicados, inclusive os não selecionados.
         published: Vec<PublishedPr>,
     },
     /// Usuário abortou (q/Esc/Ctrl-C).

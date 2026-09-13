@@ -1088,4 +1088,17 @@ mod tests {
         assert_eq!(list.value[0].links.web.href, "https://web/pr/42");
         assert_eq!(list.value[0].creation_date, "2026-09-11T20:00:00Z");
     }
+
+    #[test]
+    fn published_pr_receipt_should_remain_minimal() {
+        let item = PublishedPr {
+            target: "dev".to_owned(),
+            id: 42,
+            url: "https://dev.azure.com/org/project/_git/repo/pullrequest/42".to_owned(),
+        };
+        let PublishedPr { target, id, url } = item;
+        assert_eq!(target, "dev");
+        assert_eq!(id, 42);
+        assert!(url.ends_with("/42"));
+    }
 }

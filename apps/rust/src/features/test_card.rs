@@ -12,16 +12,50 @@ use std::time::Duration;
 use tracing::info;
 
 use crate::ai::{self, PrDescription};
-use crate::azure::pull_requests::PullRequest;
+use crate::azure::pull_requests::{PublishedPr, PullRequest};
 use crate::azure::work_items::TestCaseInput;
 use crate::azure::{self, WorkItem, pull_requests, work_items};
 use crate::cli::CliOptions;
 use crate::config::{self, Config};
 use crate::error::{AppError, Result};
+use crate::features::describe::DescribePrep;
 use crate::git::{self, ChangeContext};
 
 /// Limite das operações Azure acionadas pela recuperação da TUI.
 const TUI_AZURE_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Entrada de preparação do Test Case.
+#[allow(clippy::large_enum_variant)]
+#[derive(Debug, Clone)]
+pub enum TestCardRequest {
+    /// Entrada pública do comando `prt test`.
+    Cli(CliOptions),
+    /// Entrada interna continuando uma publicação completa de `prt desc`.
+    PublishedPr(TestCardLaunchContext),
+}
+
+/// Contexto congelado na fronteira entre a publicação do PR e o Test Case.
+#[derive(Debug, Clone)]
+pub struct TestCardLaunchContext {
+    /// Receipt mínima do PR escolhido.
+    pub published_pr: PublishedPr,
+    /// Remote Azure usado pela publicação.
+    pub remote: git::RepositoryRemote,
+    /// ID do Work Item confirmado por `desc`, quando havia um.
+    pub work_item_id: Option<i64>,
+    /// Snapshot do Work Item confirmado por `desc`, quando havia um.
+    pub work_item: Option<WorkItem>,
+    /// Ref source retornada/esperada pelo PR.
+    pub source_ref_name: String,
+    /// Ref target retornada/esperada pelo PR.
+    pub target_ref_name: String,
+    /// Configuração resolvida para a preparação.
+    pub config: Config,
+    /// Os seis valores de configuração de Test Case resolvidos na origem.
+    pub settings: TestSettings,
+    /// Fingerprint do checkout no momento da publicação.
+    pub fingerprint: git::GitContextFingerprint,
+}
 
 /// Valida `examples` (0-5, default 2).
 ///
@@ -72,6 +106,8 @@ pub struct TestCardPrep {
     pub parent: WorkItem,
     /// ID do PR pedido (`--pr`, se informado).
     pub pr_id: Option<String>,
+    /// Configuração resolvida para a entrada publicada, quando disponível.
+    pub settings: Option<TestSettings>,
     /// Alterações do PR já resumidas em texto.
     pub pr_changes: String,
     /// Exemplos de Test Case (`- #id título` por linha).
@@ -183,18 +219,25 @@ async fn fetch_examples_text(
     options: &CliOptions,
 ) -> Result<String> {
     let count = parse_examples_count(options.examples.as_deref())?;
+    Ok(fetch_examples_text_count(client, remote, count).await)
+}
+
+/// Busca a quantidade já validada de exemplos para uma entrada estruturada.
+async fn fetch_examples_text_count(
+    client: &azure::AzureClient,
+    remote: &git::RepositoryRemote,
+    count: usize,
+) -> String {
     if count == 0 {
-        return Ok(String::new());
+        return String::new();
     }
-    Ok(
-        work_items::get_test_case_examples(client, &remote.project, count)
-            .await
-            .unwrap_or_default()
-            .iter()
-            .map(|item| format!("- #{} {}", item.id, item.title()))
-            .collect::<Vec<_>>()
-            .join("\n"),
-    )
+    work_items::get_test_case_examples(client, &remote.project, count)
+        .await
+        .unwrap_or_default()
+        .iter()
+        .map(|item| format!("- #{} {}", item.id, item.title()))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Prepara dados do card: config → PAT → Git → remote → PR → pai
@@ -215,6 +258,23 @@ async fn fetch_examples_text(
 /// [`AppError::Cli`] com IDs inválidos, `--examples` fora de 0-5 ou pai
 /// indeterminável; [`AppError::Azure`] em falha de rede.
 pub async fn prepare(options: &CliOptions) -> Result<TestCardPrep> {
+    prepare_request(TestCardRequest::Cli(options.clone())).await
+}
+
+/// Prepara o card a partir do comando standalone ou de um PR publicado.
+///
+/// # Errors
+///
+/// Retorna as falhas de configuração, Git, Azure e validação específicas da
+/// entrada escolhida.
+pub async fn prepare_request(request: TestCardRequest) -> Result<TestCardPrep> {
+    match request {
+        TestCardRequest::Cli(options) => prepare_cli(&options).await,
+        TestCardRequest::PublishedPr(context) => prepare_published_pr(&context).await,
+    }
+}
+
+async fn prepare_cli(options: &CliOptions) -> Result<TestCardPrep> {
     let mut config = config::load_config()?;
     config::apply_cli_overrides(
         &mut config,
@@ -246,10 +306,189 @@ pub async fn prepare(options: &CliOptions) -> Result<TestCardPrep> {
         context: change,
         parent,
         pr_id: options.pr.as_ref().map(|id| id.as_str().to_owned()),
+        settings: None,
         pr_changes,
         examples_text,
         prompt,
     })
+}
+
+/// Prepara um Test Case a partir do PR selecionado na receipt publicada.
+async fn prepare_published_pr(context: &TestCardLaunchContext) -> Result<TestCardPrep> {
+    let config = context.config.clone();
+    if config.azure_pat.trim().is_empty() {
+        return Err(AppError::Config {
+            message: "o handoff do PR requer AZURE_PAT ou AZURE_DEVOPS_PAT configurado".to_owned(),
+        });
+    }
+    if context.settings.team.trim().is_empty() {
+        return Err(AppError::cli(
+            "Custom.Team é obrigatório para preparar o test case.",
+        ));
+    }
+    if context.settings.program.trim().is_empty() {
+        return Err(AppError::cli(
+            "Custom.ProgramasAgrotrace é obrigatório para preparar o test case.",
+        ));
+    }
+    if !context.settings.priority.is_finite() || context.settings.priority <= 0.0 {
+        return Err(AppError::cli(
+            "prioridade deve ser um número positivo para preparar o test case.",
+        ));
+    }
+    let client = azure::client_for(Some(&context.remote), config.azure_pat.trim())?;
+    let published = &context.published_pr;
+    if published.id <= 0 {
+        return Err(AppError::cli("id de PR publicado inválido"));
+    }
+    let pr = pull_requests::get_pull_request(
+        &client,
+        &context.remote.project,
+        &context.remote.repository,
+        published.id,
+    )
+    .await?;
+    validate_published_pr(context, &pr)?;
+
+    let linked_ids = pull_requests::get_pull_request_work_item_ids(
+        &client,
+        &context.remote.project,
+        &context.remote.repository,
+        published.id,
+    )
+    .await?;
+    let (parent_id, parent) = if let Some(expected_id) = context.work_item_id {
+        (
+            expected_id,
+            validate_published_work_item(
+                published.id,
+                expected_id,
+                &linked_ids,
+                context.work_item.as_ref(),
+            )?,
+        )
+    } else {
+        let mut linked_items = Vec::with_capacity(linked_ids.len());
+        for id in linked_ids {
+            linked_items.push(azure::get_work_item(&client, &id.to_string()).await?);
+        }
+        let parent_id = select_parent_work_item(&linked_items).ok_or_else(|| {
+            AppError::cli(
+                "não foi possível resolver o work item pai vinculado ao PR; nenhuma escrita foi iniciada",
+            )
+        })?;
+        let parent = linked_items
+            .into_iter()
+            .find(|item| item.id == parent_id)
+            .ok_or_else(|| AppError::cli("Work Item pai não encontrado após a resolução"))?;
+        (parent_id, parent)
+    };
+
+    let mut change = git::collect_for_refs(&pr.source_ref_name, &pr.target_ref_name)?;
+    if change.remote.as_ref() != Some(&context.remote) {
+        return Err(AppError::Git {
+            message: "o remote local não corresponde ao repositório Azure do PR selecionado"
+                .to_owned(),
+        });
+    }
+    // A autoridade do prompt é o PR remoto, mesmo quando a ref foi resolvida
+    // localmente ou sob `origin/` pelo coletor exato.
+    change.base_branch = pr.target_ref_name.clone();
+    change.source_ref = pr.source_ref_name.clone();
+    change.work_item_id = parent_id.to_string();
+    let pr_changes = fetch_pr_changes_text(&client, &context.remote, Some(&pr)).await;
+    let examples_text = fetch_examples_text_count(&client, &context.remote, 2).await;
+    let prompt = build_test_card_prompt(&parent, &change, Some(&pr), &pr_changes, &examples_text);
+    Ok(TestCardPrep {
+        config,
+        context: change,
+        parent,
+        pr_id: Some(published.id.to_string()),
+        settings: Some(context.settings.clone()),
+        pr_changes,
+        examples_text,
+        prompt,
+    })
+}
+
+fn validate_published_pr(context: &TestCardLaunchContext, pr: &PullRequest) -> Result<()> {
+    let published = &context.published_pr;
+    if pr.pull_request_id != published.id {
+        return Err(AppError::cli(format!(
+            "Azure retornou PR #{} em vez do PR #{} selecionado",
+            pr.pull_request_id, published.id
+        )));
+    }
+    if !pr.repository.name.trim().is_empty()
+        && pr.repository.name.trim() != context.remote.repository.trim()
+    {
+        return Err(AppError::Git {
+            message: format!(
+                "o PR #{} pertence ao repositório {}, não a {}",
+                published.id, pr.repository.name, context.remote.repository
+            ),
+        });
+    }
+    if !pr.repository.project.name.trim().is_empty()
+        && pr.repository.project.name.trim() != context.remote.project.trim()
+    {
+        return Err(AppError::Git {
+            message: format!(
+                "o PR #{} pertence ao projeto {}, não a {}",
+                published.id, pr.repository.project.name, context.remote.project
+            ),
+        });
+    }
+    if pr.source_ref_name.trim().is_empty() || pr.target_ref_name.trim().is_empty() {
+        return Err(AppError::Git {
+            message: format!(
+                "o PR #{} não retornou sourceRefName/targetRefName válidos",
+                published.id
+            ),
+        });
+    }
+    let expected_target = format!("refs/heads/{}", published.target.trim());
+    if pr.target_ref_name != expected_target || pr.target_ref_name != context.target_ref_name {
+        return Err(AppError::Git {
+            message: format!(
+                "o target remoto do PR #{} ({}) não corresponde ao target publicado {}",
+                published.id, pr.target_ref_name, published.target
+            ),
+        });
+    }
+    if !context.source_ref_name.trim().is_empty() && pr.source_ref_name != context.source_ref_name {
+        return Err(AppError::Git {
+            message: format!(
+                "a source ref do PR #{} divergiu do snapshot publicado",
+                published.id
+            ),
+        });
+    }
+    Ok(())
+}
+
+fn validate_published_work_item(
+    pr_id: i64,
+    expected_id: i64,
+    linked_ids: &[i64],
+    snapshot: Option<&WorkItem>,
+) -> Result<WorkItem> {
+    if !linked_ids.contains(&expected_id) {
+        return Err(AppError::cli(format!(
+            "Work Item #{expected_id} não está vinculado ao PR #{pr_id}; a preparação foi interrompida"
+        )));
+    }
+    let parent = snapshot.ok_or_else(|| {
+        AppError::cli(format!(
+            "snapshot do Work Item #{expected_id} não está disponível; a preparação foi interrompida"
+        ))
+    })?;
+    if parent.id != expected_id {
+        return Err(AppError::cli(format!(
+            "snapshot do Work Item diverge do ID esperado #{expected_id}"
+        )));
+    }
+    Ok(parent.clone())
 }
 
 /// Lê campo de texto do Work Item (`""` se ausente/não-texto; espelha `workItemText`).
@@ -531,6 +770,92 @@ impl TestSettings {
             priority: parse_priority(options.priority.as_deref())?,
             team,
             program,
+        })
+    }
+
+    /// Resolve os seis campos a partir da configuração já carregada.
+    ///
+    /// Esta variante é usada pelo handoff publicado, que não possui uma nova
+    /// linha de comando para re-resolver os valores.
+    ///
+    /// # Errors
+    ///
+    /// Retorna erro quando `Custom.Team` ou `Custom.ProgramasAgrotrace` está
+    /// ausente na configuração.
+    pub fn from_config(config: &Config, parent: &WorkItem) -> Result<Self> {
+        if config.test_team.trim().is_empty() {
+            return Err(AppError::cli(
+                "Custom.Team é obrigatório para criar o test case.",
+            ));
+        }
+        if config.test_program.trim().is_empty() {
+            return Err(AppError::cli(
+                "Custom.ProgramasAgrotrace é obrigatório para criar o test case.",
+            ));
+        }
+        Ok(Self {
+            area_path: config.test_area_path.clone(),
+            assigned_to: config.test_assigned_to.clone(),
+            iteration_path: work_item_field(parent, "System.IterationPath").to_owned(),
+            priority: 2.0,
+            team: config.test_team.clone(),
+            program: config.test_program.clone(),
+        })
+    }
+}
+
+impl TestCardLaunchContext {
+    /// Monta o contexto interno a partir da preparação de `desc`.
+    ///
+    /// O Work Item é carregado uma única vez em `desc`; se a leitura falhou,
+    /// o ID não é convertido silenciosamente em outro pai no handoff.
+    ///
+    /// # Errors
+    ///
+    /// Retorna erro quando o remote Azure ou o ID do Work Item não pode ser
+    /// representado no contrato publicado.
+    pub fn from_describe(prep: &DescribePrep, published_pr: &PublishedPr) -> Result<Self> {
+        let remote = prep.context.remote.clone().ok_or_else(|| AppError::Git {
+            message: "remote Azure DevOps não encontrado para continuar ao Test Case".to_owned(),
+        })?;
+        let work_item_id = if prep.work_item_id.trim().is_empty() {
+            None
+        } else {
+            Some(
+                prep.work_item_id
+                    .trim()
+                    .parse::<i64>()
+                    .map_err(|_| AppError::cli("Work Item resolvido por desc não é numérico"))?,
+            )
+        };
+        let parent = prep.work_item.clone();
+        let fallback_parent = WorkItem {
+            id: 0,
+            fields: std::collections::HashMap::new(),
+            relations: Vec::new(),
+        };
+        let settings =
+            TestSettings::from_config(&prep.config, parent.as_ref().unwrap_or(&fallback_parent))
+                .unwrap_or_else(|_| TestSettings {
+                    area_path: prep.config.test_area_path.clone(),
+                    assigned_to: prep.config.test_assigned_to.clone(),
+                    iteration_path: parent.as_ref().map_or_else(String::new, |item| {
+                        work_item_field(item, "System.IterationPath").to_owned()
+                    }),
+                    priority: 2.0,
+                    team: prep.config.test_team.clone(),
+                    program: prep.config.test_program.clone(),
+                });
+        Ok(Self {
+            published_pr: published_pr.clone(),
+            remote,
+            work_item_id,
+            work_item: parent,
+            source_ref_name: prep.context.source_ref.clone(),
+            target_ref_name: format!("refs/heads/{}", published_pr.target),
+            config: prep.config.clone(),
+            settings,
+            fingerprint: prep.fingerprint.clone(),
         })
     }
 }
@@ -1286,6 +1611,44 @@ mod tests {
         }
     }
 
+    fn published_context() -> TestCardLaunchContext {
+        let remote = RepositoryRemote {
+            organization: "org".to_owned(),
+            project: "project".to_owned(),
+            repository: "repo".to_owned(),
+        };
+        let parent = test_work_item(11763, "User Story", "Mudança funcional");
+        TestCardLaunchContext {
+            published_pr: PublishedPr {
+                target: "dev".to_owned(),
+                id: 99,
+                url: "https://dev.azure.com/org/project/_git/repo/pullrequest/99".to_owned(),
+            },
+            remote,
+            work_item_id: Some(parent.id),
+            work_item: Some(parent),
+            source_ref_name: "refs/heads/feat".to_owned(),
+            target_ref_name: "refs/heads/dev".to_owned(),
+            config: Config {
+                azure_pat: "pat".to_owned(),
+                test_area_path: "project\\QA".to_owned(),
+                test_assigned_to: "qa@example.com".to_owned(),
+                test_team: "DevOps".to_owned(),
+                test_program: "Agrotrace".to_owned(),
+                ..Config::default()
+            },
+            settings: TestSettings {
+                area_path: "project\\QA".to_owned(),
+                assigned_to: "qa@example.com".to_owned(),
+                iteration_path: "project\\Sprint 12".to_owned(),
+                priority: 2.0,
+                team: "DevOps".to_owned(),
+                program: "Agrotrace".to_owned(),
+            },
+            fingerprint: crate::git::GitContextFingerprint::default(),
+        }
+    }
+
     #[test]
     fn system_prompt_should_define_card_sections() {
         assert!(TEST_CARD_SYSTEM.contains("analista de QA"));
@@ -1473,6 +1836,107 @@ mod tests {
         let err =
             TestSettings::from_cli_or_config(&options, &Config::default(), &parent).unwrap_err();
         assert!(err.to_string().contains("--priority"));
+    }
+
+    #[test]
+    fn cli_request_should_preserve_standalone_preparation() {
+        let mut options = test_options();
+        options.create = true;
+        options.no_create = false;
+        options.examples = Some("5".to_owned());
+        let request = TestCardRequest::Cli(options);
+        match request {
+            TestCardRequest::Cli(actual) => {
+                assert!(actual.create);
+                assert!(!actual.no_create);
+                assert_eq!(actual.examples.as_deref(), Some("5"));
+                assert_eq!(actual.command, Command::Test);
+            }
+            TestCardRequest::PublishedPr(_) => panic!("request standalone foi convertido"),
+        }
+    }
+
+    #[test]
+    fn published_request_should_lookup_and_validate_selected_pr() {
+        let context = published_context();
+        assert!(validate_published_pr(&context, &test_pr()).is_ok());
+
+        let mut wrong_repository = test_pr();
+        wrong_repository.repository.name = "outro-repo".to_owned();
+        assert!(validate_published_pr(&context, &wrong_repository).is_err());
+
+        let mut missing_target = test_pr();
+        missing_target.target_ref_name.clear();
+        assert!(validate_published_pr(&context, &missing_target).is_err());
+
+        let mut wrong_id = test_pr();
+        wrong_id.pull_request_id = 100;
+        assert!(validate_published_pr(&context, &wrong_id).is_err());
+    }
+
+    #[test]
+    fn published_request_should_use_exact_remote_source_and_target_context() {
+        let context = published_context();
+        let change = test_change();
+        let prompt = build_test_card_prompt(
+            context.work_item.as_ref().expect("snapshot do pai"),
+            &ChangeContext {
+                source_ref: context.source_ref_name.clone(),
+                base_branch: context.target_ref_name.clone(),
+                ..change
+            },
+            Some(&test_pr()),
+            "- [edit] /src/checkout.rs",
+            "- #5 Exemplo",
+        );
+        assert!(prompt.contains("PR ID: 99"));
+        assert!(prompt.contains("Branch origem: refs/heads/feat"));
+        assert!(prompt.contains("Branch destino: refs/heads/dev"));
+        assert!(!prompt.contains("Base: sprint/"));
+        assert!(!prompt.contains("Base: main"));
+    }
+
+    #[test]
+    fn published_request_should_reject_incompatible_work_item_without_fallback() {
+        let context = published_context();
+        let snapshot = context.work_item.as_ref();
+        let error = validate_published_work_item(99, 11763, &[42], snapshot).unwrap_err();
+        assert!(error.to_string().contains("não está vinculado"));
+
+        let wrong_snapshot = test_work_item(42, "Task", "Outro pai");
+        let error =
+            validate_published_work_item(99, 11763, &[11763], Some(&wrong_snapshot)).unwrap_err();
+        assert!(error.to_string().contains("diverge"));
+    }
+
+    #[test]
+    fn published_request_should_resolve_parent_from_pr_links_only_when_needed() {
+        let items = vec![
+            test_work_item(11763, "User Story", "Pai"),
+            test_work_item(12000, "Test Case", "Caso"),
+        ];
+        assert_eq!(select_parent_work_item(&items), Some(11763));
+        assert_eq!(select_parent_work_item(&[]), None);
+    }
+
+    #[test]
+    fn published_request_should_expose_complete_launch_context_and_prompt() {
+        let context = published_context();
+        let parent = context.work_item.as_ref().expect("Work Item preservado");
+        let prompt = build_test_card_prompt(
+            parent,
+            &test_change(),
+            Some(&test_pr()),
+            "- [edit] /src/checkout.rs",
+            "- #5 Exemplo",
+        );
+        assert_eq!(context.published_pr.id, 99);
+        assert_eq!(context.remote.repository, "repo");
+        assert_eq!(parent.id, 11763);
+        assert_eq!(context.settings.team, "DevOps");
+        assert_eq!(context.settings.program, "Agrotrace");
+        assert!(prompt.contains("PR ID: 99"));
+        assert!(prompt.contains("- #5 Exemplo"));
     }
 
     #[test]
