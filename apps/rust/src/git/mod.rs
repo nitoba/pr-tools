@@ -607,11 +607,10 @@ mod tests {
     #[test]
     fn fingerprint_should_capture_repository_branch_and_requested_ref_oids() {
         let branch = git(&["branch", "--show-current"]).expect("branch do teste");
-        let targets = if branch.is_empty() {
-            vec!["main".to_owned()]
-        } else {
-            vec!["main".to_owned(), branch.clone()]
-        };
+        let mut targets = vec!["main".to_owned()];
+        if !branch.is_empty() && branch != "main" {
+            targets.push(branch.clone());
+        }
         let fingerprint =
             GitContextFingerprint::capture("", &targets).expect("fingerprint do checkout");
 
