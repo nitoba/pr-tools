@@ -37,6 +37,12 @@
       "skillPath": "packages/skills-catalog/skills/(development)/tlc-plan/SKILL.md",
       "computedHash": "17640023a6aa10ede7dfbb734a1686b16e26593a5737a32a439bd77bc9e7de2e"
     },
+    "tlc-spec-lean": {
+      "source": "tech-leads-club/agent-skills",
+      "sourceType": "github",
+      "skillPath": "packages/skills-catalog/skills/(development)/tlc-spec-lean/SKILL.md",
+      "computedHash": "ccbafcdef238ed8974d3b3e6ef7e487d738b97ed4faf084f664d43b4e662fc48"
+    },
     "tui-design": {
       "source": "gfargo/tui-design-skill",
       "sourceType": "github",

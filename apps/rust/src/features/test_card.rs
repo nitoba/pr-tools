@@ -1684,6 +1684,8 @@ mod tests {
             command: Command::Test,
             source: None,
             targets: Vec::new(),
+            resume: false,
+            session: None,
             work_item: None,
             provider: None,
             model: None,

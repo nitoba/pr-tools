@@ -314,6 +314,10 @@ pub fn classify_publish_error(error: &AppError, target: Option<&str>) -> Publish
             };
             (kind, append_detail(text, detail.as_str()))
         }
+        AppError::Session { message } => (
+            PublishFailureKind::OutcomeUnknown,
+            format!("não foi possível persistir o estado da publicação: {message}"),
+        ),
         _ => (PublishFailureKind::Confirmed, error.to_string()),
     };
     let target = target.map(str::to_owned);
@@ -475,5 +479,23 @@ mod tests {
         assert!(failure.message.contains("PAT"));
         assert!(failure.message.contains("permissão"));
         assert!(failure.message.contains("not allowed"));
+    }
+
+    #[test]
+    fn ambiguous_publish_errors_never_auto_retry() {
+        for status in [200, 201, 408, 429, 500, 503, 599] {
+            let failure = classify_publish_error(
+                &AppError::Azure {
+                    status,
+                    message: "ambiguous".to_owned(),
+                },
+                Some("dev"),
+            );
+            assert_eq!(
+                failure.kind,
+                PublishFailureKind::OutcomeUnknown,
+                "HTTP {status}"
+            );
+        }
     }
 }

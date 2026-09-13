@@ -556,6 +556,11 @@ pub struct PublishedPr {
     pub url: String,
 }
 
+/// Callback que confirma a persistência de uma receipt antes do próximo target.
+pub type DurablePublishedCallback<'a> = &'a (dyn Fn(&PublishedPr) -> Result<()> + Sync);
+/// Callback que confirma a persistência do estado incerto antes do POST.
+pub type DurableTargetStartedCallback<'a> = &'a (dyn Fn(&str) -> Result<()> + Sync);
+
 /// Entrada da publicação (evita lista longa de parâmetros).
 pub struct PublishInput<'a> {
     /// Remote Azure.
@@ -577,8 +582,12 @@ pub struct PublishInput<'a> {
     /// Permite que uma UI mostre progresso real e preserve sucessos parciais
     /// quando um target posterior falhar.
     pub on_published: Option<&'a (dyn Fn(&PublishedPr) + Sync)>,
+    /// Persiste a receipt antes de permitir o próximo target.
+    pub on_published_durable: Option<DurablePublishedCallback<'a>>,
     /// Notifica a UI antes de qualquer chamada remota para um target.
     pub on_target_started: Option<&'a (dyn Fn(&str) + Sync)>,
+    /// Persiste o estado `attempting_or_uncertain` antes de qualquer chamada.
+    pub on_target_started_durable: Option<DurableTargetStartedCallback<'a>>,
 }
 
 /// Publica a descrição em todos os targets (espelha o publisher Dart).
@@ -613,6 +622,9 @@ pub async fn publish_pull_requests(
     let mut resolved: HashMap<String, String> = HashMap::new();
     let mut published = Vec::with_capacity(input.targets.len());
     for target in input.targets {
+        if let Some(on_target_started_durable) = input.on_target_started_durable {
+            on_target_started_durable(target)?;
+        }
         if let Some(on_target_started) = input.on_target_started {
             on_target_started(target);
         }
@@ -648,6 +660,9 @@ pub async fn publish_pull_requests(
             url: created.web_link().to_owned(),
         };
         published.push(item.clone());
+        if let Some(on_published_durable) = input.on_published_durable {
+            on_published_durable(&item)?;
+        }
         if let Some(on_published) = input.on_published {
             on_published(&item);
         }
@@ -1139,7 +1154,9 @@ mod tests {
                     String::new()
                 },
                 on_published: Some(&|item| published.lock().unwrap().push(item.clone())),
+                on_published_durable: None,
                 on_target_started: None,
+                on_target_started_durable: None,
             },
         )
         .await
@@ -1172,5 +1189,140 @@ mod tests {
         assert_eq!(first_body["targetRefName"], "refs/heads/sprint/12");
         assert_eq!(second_body["targetRefName"], "refs/heads/dev");
         server.join().unwrap();
+    }
+
+    #[tokio::test]
+    async fn confirmed_receipt_is_persisted_before_next_target() {
+        let (base_url, requests, server) = spawn_json_server(vec![
+            serde_json::to_string(&serde_json::json!({"id": "repo-id"})).unwrap(),
+            serde_json::to_string(&serde_json::json!({
+                "pullRequestId": 101,
+                "webUrl": "https://web/pr/101"
+            }))
+            .unwrap(),
+            serde_json::to_string(&serde_json::json!({
+                "pullRequestId": 102,
+                "webUrl": "https://web/pr/102"
+            }))
+            .unwrap(),
+        ]);
+        let client = AzureClient::new_for_test(&base_url, "pat");
+        let remote = crate::git::RepositoryRemote {
+            organization: "org".to_owned(),
+            project: "project".to_owned(),
+            repository: "repo".to_owned(),
+        };
+        let targets = ["dev".to_owned(), "sprint/12".to_owned()];
+        let directory = tempfile::tempdir().expect("tempdir");
+        let paths = crate::config::ConfigPaths {
+            directory: directory.path().join("pr-tools"),
+            config_file: directory.path().join("pr-tools/config.json"),
+            env_file: directory.path().join("pr-tools/.env"),
+            template_file: directory.path().join("pr-tools/pr-template.md"),
+        };
+        let fingerprint = crate::git::GitContextFingerprint {
+            repository: "C:\\repo".to_owned(),
+            source_branch: "feature/42".to_owned(),
+            source_oid: "a".repeat(40),
+            target_oids: std::collections::BTreeMap::from([
+                ("dev".to_owned(), "b".repeat(40)),
+                ("sprint/12".to_owned(), "c".repeat(40)),
+            ]),
+        };
+        let snapshot = crate::features::session::SessionSnapshot::new(
+            fingerprint.repository.clone(),
+            Some(&remote),
+            fingerprint.source_branch.clone(),
+            "refs/heads/feature/42".to_owned(),
+            &fingerprint,
+            "Título".to_owned(),
+            "Descrição".to_owned(),
+            String::new(),
+            vec![String::new(), String::new()],
+            targets.to_vec(),
+        );
+        let id = uuid::Uuid::parse_str(&snapshot.session_id).expect("uuid");
+        let (store, saved) =
+            crate::features::session::SessionStore::create(&paths, snapshot).expect("session");
+        let durable = std::sync::Arc::new(std::sync::Mutex::new((store, saved)));
+        let durable_started = std::sync::Arc::clone(&durable);
+        let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let events_started = std::sync::Arc::clone(&events);
+        let on_started = move |target: &str| {
+            if target == "sprint/12" {
+                let guard = durable_started.lock().unwrap();
+                assert!(matches!(
+                    guard.1.targets[0].state,
+                    crate::features::session::TargetState::Confirmed { id: 101, .. }
+                ));
+            }
+            events_started
+                .lock()
+                .unwrap()
+                .push(format!("start:{target}"));
+        };
+        let durable_confirmed = std::sync::Arc::clone(&durable);
+        let events_confirmed = std::sync::Arc::clone(&events);
+        let on_confirmed = move |item: &PublishedPr| {
+            let mut guard = durable_confirmed.lock().unwrap();
+            let mut next = guard.1.clone();
+            let target = next
+                .targets
+                .iter_mut()
+                .find(|target| target.target == item.target)
+                .expect("target persistido");
+            target.state = crate::features::session::TargetState::Confirmed {
+                id: item.id,
+                url: item.url.clone(),
+            };
+            guard.1 = guard.0.save(next).expect("receipt durável");
+            events_confirmed
+                .lock()
+                .unwrap()
+                .push(format!("confirmed:{}", item.target));
+            Ok(())
+        };
+        publish_pull_requests(
+            &client,
+            &PublishInput {
+                remote: &remote,
+                branch: "feature/42",
+                targets: &targets,
+                title: "Título",
+                body: "Descrição",
+                work_item_ids: &[],
+                reviewer_for: &|_| String::new(),
+                on_published: None,
+                on_published_durable: Some(&on_confirmed),
+                on_target_started: Some(&on_started),
+                on_target_started_durable: None,
+            },
+        )
+        .await
+        .expect("publicação");
+        assert_eq!(
+            *events.lock().unwrap(),
+            [
+                "start:dev",
+                "confirmed:dev",
+                "start:sprint/12",
+                "confirmed:sprint/12"
+            ]
+        );
+        let requests = (0..3)
+            .map(|_| requests.recv().expect("requisição"))
+            .collect::<Vec<_>>();
+        assert_eq!(requests[1].method, "POST");
+        assert_eq!(requests[2].method, "POST");
+        server.join().expect("servidor");
+        drop(on_started);
+        drop(on_confirmed);
+        drop(durable);
+        let (_store, loaded) =
+            crate::features::session::SessionStore::open(&paths, id).expect("snapshot final");
+        assert!(matches!(
+            loaded.targets[0].state,
+            crate::features::session::TargetState::Confirmed { id: 101, .. }
+        ));
     }
 }
