@@ -10,12 +10,12 @@ use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Layout, Rect},
     style::{Modifier, Style},
-    text::{Line, Span, Text},
+    text::{Line, Span},
     widgets::{Paragraph, Widget, Wrap},
 };
 use unicode_width::UnicodeWidthChar;
 
-use super::{modal_frame, theme};
+use super::{ascii_only, modal_frame, theme};
 use crate::ai::PrDescription;
 
 /// Campo de conteúdo que recebe texto e navegação.
@@ -561,14 +561,34 @@ impl ContentEditState {
 
 /// Renderiza o modal compartilhado de edição de conteúdo.
 pub fn render_content_editor(state: &ContentEditState, area: Rect, buf: &mut Buffer) {
-    let inner = modal_frame(area, buf, " Editar conteúdo ", theme().accent, 94, 16);
+    // O editor é um modal de uso prolongado: ocupar a maior parte da tela
+    // deixa o Markdown legível sem esconder completamente o contexto.
+    let modal_width = area.width.clamp(56, 120);
+    let modal_content_height = usize::from(area.height.saturating_sub(4)).clamp(10, 32);
+    let inner = modal_frame(
+        area,
+        buf,
+        " Editar conteúdo ",
+        theme().accent,
+        modal_width,
+        modal_content_height,
+    );
     if inner.width == 0 || inner.height == 0 {
         return;
     }
     let error_height = usize::from(state.error.is_some());
-    let [hint, title_label, title_area, body_label, body_area, footer] = Layout::vertical([
+    let [
+        header,
+        title_label,
+        title_area,
+        divider,
+        body_label,
+        body_area,
+        footer,
+    ] = Layout::vertical([
+        Constraint::Length(2),
         Constraint::Length(1),
-        Constraint::Length(1),
+        Constraint::Length(2),
         Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Min(1),
@@ -576,38 +596,78 @@ pub fn render_content_editor(state: &ContentEditState, area: Rect, buf: &mut Buf
     ])
     .areas(inner);
 
-    Paragraph::new("Tab alterna título/corpo · Ctrl+S salva · Esc cancela")
-        .style(theme().muted)
-        .render(hint, buf);
+    render_editor_header(state, header, buf);
+    let title_error = field_has_error(state, ContentField::Title);
     render_field_label(
         title_label,
         "Título",
+        &format!("{} caracteres", state.title.value().chars().count()),
         state.field == ContentField::Title,
-        state
-            .error
-            .as_ref()
-            .is_some_and(|error| error.field() == ContentField::Title),
+        title_error,
         buf,
     );
-    Paragraph::new(state.title.visible_lines(usize::from(title_area.width), 1))
-        .wrap(Wrap { trim: false })
-        .render(title_area, buf);
+    render_editor_value(
+        &state.title,
+        title_area,
+        state.field == ContentField::Title,
+        title_error,
+        buf,
+    );
+    render_divider(divider, buf);
+    let body_detail = match state.validation {
+        ContentValidation::PullRequest => {
+            format!("{} / 3999 caracteres", state.body.value().chars().count())
+        }
+        ContentValidation::TestCase => {
+            format!("{} caracteres", state.body.value().chars().count())
+        }
+    };
     render_field_label(
         body_label,
         "Body Markdown",
+        body_detail.as_str(),
         state.field == ContentField::Body,
-        state
-            .error
-            .as_ref()
-            .is_some_and(|error| error.field() == ContentField::Body),
+        field_has_error(state, ContentField::Body),
         buf,
     );
-    Paragraph::new(Text::from(state.body.visible_lines(
-        usize::from(body_area.width),
-        usize::from(body_area.height),
-    )))
-    .wrap(Wrap { trim: false })
-    .render(body_area, buf);
+    render_editor_value(
+        &state.body,
+        body_area,
+        state.field == ContentField::Body,
+        field_has_error(state, ContentField::Body),
+        buf,
+    );
+    render_editor_footer(state, footer, buf);
+}
+
+fn field_has_error(state: &ContentEditState, field: ContentField) -> bool {
+    state
+        .error
+        .as_ref()
+        .is_some_and(|error| error.field() == field)
+}
+
+fn render_editor_header(state: &ContentEditState, area: Rect, buf: &mut Buffer) {
+    let context = match state.validation {
+        ContentValidation::PullRequest => "Pull Request",
+        ContentValidation::TestCase => "Test Case",
+    };
+    Paragraph::new(vec![
+        Line::from(vec![
+            Span::styled("RASCUNHO", theme().app_title),
+            Span::styled("  ·  ", theme().muted),
+            Span::styled(context, theme().accent.add_modifier(Modifier::BOLD)),
+        ]),
+        Line::from(Span::styled(
+            "Tab muda campo · Enter cria linha no body · setas navegam",
+            theme().muted,
+        )),
+    ])
+    .style(theme().muted)
+    .render(area, buf);
+}
+
+fn render_editor_footer(state: &ContentEditState, area: Rect, buf: &mut Buffer) {
     let footer_lines = if let Some(error) = &state.error {
         vec![
             Line::from(Span::styled(format!("✘ {error}"), theme().error)),
@@ -621,10 +681,17 @@ pub fn render_content_editor(state: &ContentEditState, area: Rect, buf: &mut Buf
     };
     Paragraph::new(footer_lines)
         .wrap(Wrap { trim: false })
-        .render(footer, buf);
+        .render(area, buf);
 }
 
-fn render_field_label(area: Rect, label: &str, focused: bool, has_error: bool, buf: &mut Buffer) {
+fn render_field_label(
+    area: Rect,
+    label: &str,
+    detail: &str,
+    focused: bool,
+    has_error: bool,
+    buf: &mut Buffer,
+) {
     let marker = if has_error {
         "✘"
     } else if focused {
@@ -639,10 +706,69 @@ fn render_field_label(area: Rect, label: &str, focused: bool, has_error: bool, b
     } else {
         theme().muted
     };
-    Paragraph::new(Line::from(vec![
+    let mut spans = vec![
         Span::styled(format!("{marker} {label}"), style),
-        Span::styled(if focused { "  (foco ativo)" } else { "" }, theme().muted),
-    ]))
+        Span::styled(format!("  ·  {detail}"), theme().muted),
+    ];
+    if focused {
+        spans.push(Span::styled("  ·  EDITANDO", theme().accent));
+    }
+    if has_error {
+        spans.push(Span::styled("  ·  CORRIGIR", theme().error));
+    }
+    Paragraph::new(Line::from(spans))
+        .style(theme().root)
+        .render(area, buf);
+}
+
+fn render_editor_value(
+    editor: &TextEditor,
+    area: Rect,
+    focused: bool,
+    has_error: bool,
+    buf: &mut Buffer,
+) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+    let rail_style = if has_error {
+        theme().error
+    } else if focused {
+        theme().accent
+    } else {
+        theme().muted
+    };
+    let rail = if has_error {
+        "!"
+    } else if focused {
+        "▌"
+    } else {
+        "│"
+    };
+    for row in area.y..area.y.saturating_add(area.height) {
+        buf.set_string(area.x, row, rail, rail_style);
+    }
+    let content_area = Rect {
+        x: area.x.saturating_add(2),
+        y: area.y,
+        width: area.width.saturating_sub(2),
+        height: area.height,
+    };
+    Paragraph::new(editor.visible_lines(
+        usize::from(content_area.width),
+        usize::from(content_area.height),
+    ))
+    .style(theme().root)
+    .wrap(Wrap { trim: false })
+    .render(content_area, buf);
+}
+
+fn render_divider(area: Rect, buf: &mut Buffer) {
+    let glyph = if ascii_only() { "-" } else { "─" };
+    Paragraph::new(Line::from(Span::styled(
+        glyph.repeat(usize::from(area.width)),
+        theme().border,
+    )))
     .render(area, buf);
 }
 

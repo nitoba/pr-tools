@@ -1,0 +1,29 @@
+---
+source: apps/rust/src/tui/live.rs
+assertion_line: 2306
+expression: terminal.backend()
+---
+"◆ prt 4.0.11  ·  desc  ·  Revisão                                               "
+"╭ Editar conteúdo ─────────────────────────────────────────────────────────────╮"
+"│ RASCUNHO  ·  Pull Request                                                    │"
+"│ Tab muda campo · Enter cria linha no body · setas navegam                    │"
+"│ ▸ Título  ·  26 caracteres  ·  EDITANDO                                      │"
+"│ ▌ Atualiza fluxo de checkout                                                 │"
+"│ ▌                                                                            │"
+"│ ──────────────────────────────────────────────────────────────────────────── │"
+"│   Body Markdown  ·  159 / 3999 caracteres                                    │"
+"│ │ ## Descrição                                                               │"
+"│ │ Atualiza o fluxo de checkout para validar o carrinho.                      │"
+"│ │                                                                            │"
+"│ │ ## Checklist                                                               │"
+"│ │ - [x] Testes locais                                                        │"
+"│ │ - [ ] Review                                                               │"
+"│ │                                                                            │"
+"│ │ ```diff                                                                    │"
+"│ │ + valida carrinho                                                          │"
+"│ │ - ignora erro                                                              │"
+"│ │ ```                                                                        │"
+"│ │                                                                            │"
+"│ Ctrl+S salva · Esc cancela                                                   │"
+"╰──────────────────────────────────────────────────────────────────────────────╯"
+"Tab alterna título/corpo · Ctrl+S salvar · Esc cancelar                         "

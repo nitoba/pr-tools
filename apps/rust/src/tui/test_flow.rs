@@ -2842,6 +2842,17 @@ mod tests {
     }
 
     #[test]
+    fn test_content_editor_80x24() -> anyhow::Result<()> {
+        let mut app = review_app();
+        app.open_content_edit();
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend)?;
+        terminal.draw(|f| f.render_widget(&app, f.area()))?;
+        insta::assert_snapshot!("test_content_editor_80x24", terminal.backend());
+        Ok(())
+    }
+
+    #[test]
     fn qa_efforts_should_reject_empty_and_negative() {
         let app = TestApp::new();
         assert!(app.validate_qa_efforts().is_err());

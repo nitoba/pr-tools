@@ -2297,6 +2297,17 @@ mod tests {
     }
 
     #[test]
+    fn desc_content_editor_80x24() -> anyhow::Result<()> {
+        let mut app = review_app();
+        app.open_content_edit();
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend)?;
+        terminal.draw(|f| f.render_widget(&app, f.area()))?;
+        insta::assert_snapshot!("desc_content_editor_80x24", terminal.backend());
+        Ok(())
+    }
+
+    #[test]
     fn desc_review_80x24() -> anyhow::Result<()> {
         let app = review_app();
         let backend = TestBackend::new(80, 24);
