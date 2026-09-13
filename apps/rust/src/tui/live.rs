@@ -2826,7 +2826,10 @@ mod tests {
     fn done_screen_should_render_published_ids_targets_urls_and_test_action() {
         let mut app = review_app();
         app.set_launch_prep(launch_prep());
-        app.on_backend(BackendEvent::Published(vec![published(42, "dev")]));
+        app.on_backend(BackendEvent::Published(vec![
+            published(42, "dev"),
+            published(43, "sprint/12"),
+        ]));
         let mut terminal = Terminal::new(TestBackend::new(100, 30)).expect("terminal");
         terminal
             .draw(|f| f.render_widget(&app, f.area()))
@@ -2835,6 +2838,9 @@ mod tests {
         assert!(rendered.contains("PR #42"));
         assert!(rendered.contains("dev"));
         assert!(rendered.contains("pullrequest/42"));
+        assert!(rendered.contains("PR #43"));
+        assert!(rendered.contains("sprint/12"));
+        assert!(rendered.contains("pullrequest/43"));
         assert!(rendered.contains("t preparar Test Case"));
 
         let mut t = test_terminal();
@@ -2854,7 +2860,45 @@ mod tests {
             &mut needs_draw,
         )
         .expect("tecla T");
-        assert!(matches!(outcome, Some(LiveOutcome::PrepareTestCase { .. })));
+        assert!(outcome.is_none());
+        assert!(matches!(
+            app.publish_dialog,
+            Some(PublishDialog::PublishedPrPicker { .. })
+        ));
+
+        let mut needs_draw = false;
+        let outcome = handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE),
+            &PublishBase {
+                pat: String::new(),
+                remote: None,
+                branch: String::new(),
+                work_item_id: String::new(),
+            },
+            &tx,
+            &mut t,
+            &mut needs_draw,
+        )
+        .expect("cancelamento pelo q");
+        assert!(outcome.is_none());
+        assert!(app.publish_dialog.is_none());
+
+        let outcome = handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE),
+            &PublishBase {
+                pat: String::new(),
+                remote: None,
+                branch: String::new(),
+                work_item_id: String::new(),
+            },
+            &tx,
+            &mut t,
+            &mut needs_draw,
+        )
+        .expect("saída do Done");
+        assert!(matches!(outcome, Some(LiveOutcome::Done { .. })));
     }
 
     #[test]
@@ -2870,6 +2914,8 @@ mod tests {
         ));
         assert!(app.publish_failure.is_some());
         assert_eq!(app.published[0].id, 42);
+        assert_eq!(app.published[0].target, "dev");
+        assert_eq!(app.published[0].url, published(42, "dev").url);
         let mut terminal = test_terminal();
         let (tx, _rx) = mpsc::unbounded_channel();
         let mut needs_draw = false;
@@ -2892,6 +2938,14 @@ mod tests {
             app.publish_dialog,
             Some(PublishDialog::PublishRecovery(_))
         ));
+
+        let mut error = review_app();
+        error.on_backend(BackendEvent::PublishedOne(published(42, "dev")));
+        error.on_backend(BackendEvent::Failed("falha final".to_owned()));
+        assert_eq!(error.phase, Phase::Error);
+        assert_eq!(error.published[0].id, 42);
+        assert_eq!(error.published[0].target, "dev");
+        assert_eq!(error.published[0].url, published(42, "dev").url);
     }
 
     #[test]
@@ -2924,7 +2978,12 @@ mod tests {
             }) => {
                 assert_eq!(launch_context.published_pr.id, 42);
                 assert_eq!(launch_context.published_pr.target, "dev");
+                assert_eq!(
+                    launch_context.published_pr.url,
+                    "https://dev.azure.com/org/project/_git/repo/pullrequest/42"
+                );
                 assert_eq!(published.len(), 1);
+                assert!(app.publish_dialog.is_none());
             }
             _ => panic!("PR único não seguiu o fast path"),
         }
@@ -2949,7 +3008,28 @@ mod tests {
             Some(PublishDialog::PublishedPrPicker { selected: 1 })
         );
 
-        let mut terminal = test_terminal();
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).expect("terminal");
+        terminal
+            .draw(|f| f.render_widget(&app, f.area()))
+            .expect("render picker");
+        let rendered = buffer_text(&terminal);
+        assert!(rendered.contains("PR #42  sprint/12"));
+        assert!(rendered.contains(&published(42, "sprint/12").url));
+        assert!(rendered.contains("PR #43  dev"));
+        assert!(rendered.contains(&published(43, "dev").url));
+        assert_eq!(app.published.len(), 2);
+        assert!(app.move_published_pr_picker(true));
+        assert_eq!(
+            app.publish_dialog,
+            Some(PublishDialog::PublishedPrPicker { selected: 0 })
+        );
+        assert!(app.move_published_pr_picker(false));
+        assert_eq!(
+            app.publish_dialog,
+            Some(PublishDialog::PublishedPrPicker { selected: 1 })
+        );
+
+        let mut handler_terminal = test_terminal();
         let (tx, _rx) = mpsc::unbounded_channel();
         let mut needs_draw = false;
         let outcome = handle_key_event(
@@ -2962,7 +3042,7 @@ mod tests {
                 work_item_id: String::new(),
             },
             &tx,
-            &mut terminal,
+            &mut handler_terminal,
             &mut needs_draw,
         )
         .expect("seleção do PR");
@@ -3015,6 +3095,27 @@ mod tests {
             app.published.iter().map(|item| item.id).collect::<Vec<_>>(),
             [42, 43]
         );
+
+        app.open_published_pr_picker();
+        let mut no_side_effects = mpsc::unbounded_channel();
+        let mut needs_draw = false;
+        let outcome = handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE),
+            &PublishBase {
+                pat: String::new(),
+                remote: None,
+                branch: String::new(),
+                work_item_id: String::new(),
+            },
+            &no_side_effects.0,
+            &mut terminal,
+            &mut needs_draw,
+        )
+        .expect("q no picker");
+        assert!(outcome.is_none());
+        assert!(no_side_effects.1.try_recv().is_err());
+        assert!(app.publish_dialog.is_none());
 
         let mut needs_draw = false;
         let exit = handle_key_event(

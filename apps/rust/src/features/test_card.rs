@@ -1510,9 +1510,62 @@ pub fn build_test_case_steps_xml(body: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::mpsc::{Receiver, channel};
+    use std::thread::{JoinHandle, spawn};
+
     use super::*;
     use crate::cli::Command;
     use crate::git::RepositoryRemote;
+
+    #[derive(Debug)]
+    struct CapturedRequest {
+        method: String,
+        target: String,
+    }
+
+    fn spawn_json_server(
+        responses: Vec<String>,
+    ) -> (String, Receiver<CapturedRequest>, JoinHandle<()>) {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("listener");
+        let address = listener.local_addr().expect("endereço");
+        let (sender, receiver) = channel();
+        let handle = spawn(move || {
+            for body in responses {
+                let (mut stream, _) = listener.accept().expect("conexão");
+                let mut bytes = Vec::new();
+                loop {
+                    let mut chunk = [0_u8; 4096];
+                    let read = stream.read(&mut chunk).expect("leitura");
+                    assert!(read > 0, "cliente encerrou antes dos cabeçalhos");
+                    bytes.extend_from_slice(&chunk[..read]);
+                    if let Some(end) = bytes.windows(4).position(|window| window == b"\r\n\r\n") {
+                        let headers = String::from_utf8_lossy(&bytes[..end]);
+                        let mut parts = headers
+                            .lines()
+                            .next()
+                            .expect("request line")
+                            .split_whitespace();
+                        sender
+                            .send(CapturedRequest {
+                                method: parts.next().expect("método").to_owned(),
+                                target: parts.next().expect("target").to_owned(),
+                            })
+                            .expect("captura");
+                        break;
+                    }
+                }
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                stream.write_all(response.as_bytes()).expect("resposta");
+            }
+        });
+        (format!("http://{address}/org"), receiver, handle)
+    }
 
     #[test]
     fn examples_should_default_to_2() {
@@ -1843,22 +1896,94 @@ mod tests {
         let mut options = test_options();
         options.create = true;
         options.no_create = false;
+        options.source = Some("refs/heads/feature/11763-x".to_owned());
+        options.work_item = Some(crate::cli::WorkItemId::parse("--work-item", "11763").unwrap());
+        options.pr = Some(crate::cli::WorkItemId::parse("--pr", "99").unwrap());
+        options.area_path = Some("Proj\\QA".to_owned());
+        options.assigned_to = Some("qa@example.com".to_owned());
+        options.iteration_path = Some("Proj\\Sprint 12".to_owned());
+        options.priority = Some("1,5".to_owned());
+        options.team = Some("DevOps".to_owned());
+        options.program = Some("Agrotrace".to_owned());
         options.examples = Some("5".to_owned());
         let request = TestCardRequest::Cli(options);
         match request {
             TestCardRequest::Cli(actual) => {
                 assert!(actual.create);
                 assert!(!actual.no_create);
+                assert_eq!(actual.source.as_deref(), Some("refs/heads/feature/11763-x"));
+                assert_eq!(
+                    actual
+                        .work_item
+                        .as_ref()
+                        .map(crate::cli::WorkItemId::as_str),
+                    Some("11763")
+                );
+                assert_eq!(
+                    actual.pr.as_ref().map(crate::cli::WorkItemId::as_str),
+                    Some("99")
+                );
+                assert_eq!(actual.area_path.as_deref(), Some("Proj\\QA"));
+                assert_eq!(actual.assigned_to.as_deref(), Some("qa@example.com"));
+                assert_eq!(actual.iteration_path.as_deref(), Some("Proj\\Sprint 12"));
+                assert_eq!(actual.priority.as_deref(), Some("1,5"));
+                assert_eq!(actual.team.as_deref(), Some("DevOps"));
+                assert_eq!(actual.program.as_deref(), Some("Agrotrace"));
                 assert_eq!(actual.examples.as_deref(), Some("5"));
                 assert_eq!(actual.command, Command::Test);
             }
             TestCardRequest::PublishedPr(_) => panic!("request standalone foi convertido"),
         }
+
+        let parent = test_work_item(11763, "User Story", "Pai");
+        let options = CliOptions {
+            area_path: Some("Cli\\Area".to_owned()),
+            assigned_to: Some("cli@example.com".to_owned()),
+            iteration_path: Some("Cli\\Sprint".to_owned()),
+            priority: Some("1,5".to_owned()),
+            team: Some("CliTeam".to_owned()),
+            program: Some("CliProgram".to_owned()),
+            ..test_options()
+        };
+        let settings = TestSettings::from_cli_or_config(&options, &Config::default(), &parent)
+            .expect("settings standalone");
+        assert_eq!(settings.area_path, "Cli\\Area");
+        assert_eq!(settings.assigned_to, "cli@example.com");
+        assert_eq!(settings.iteration_path, "Cli\\Sprint");
+        assert!((settings.priority - 1.5).abs() < f64::EPSILON);
+        assert_eq!(settings.team, "CliTeam");
+        assert_eq!(settings.program, "CliProgram");
     }
 
-    #[test]
-    fn published_request_should_lookup_and_validate_selected_pr() {
+    #[tokio::test]
+    async fn published_request_should_lookup_and_validate_selected_pr() {
         let context = published_context();
+        let (base_url, requests, server) = spawn_json_server(vec![
+            serde_json::to_string(&serde_json::json!({
+                "pullRequestId": 99,
+                "repository": {"name": "repo", "project": {"name": "project"}},
+                "sourceRefName": "refs/heads/feat",
+                "targetRefName": "refs/heads/dev"
+            }))
+            .unwrap(),
+        ]);
+        let client = crate::azure::AzureClient::new_for_test(&base_url, "pat");
+        let fetched = pull_requests::get_pull_request(
+            &client,
+            &context.remote.project,
+            &context.remote.repository,
+            context.published_pr.id,
+        )
+        .await
+        .expect("lookup do PR publicado");
+        assert_eq!(fetched.pull_request_id, context.published_pr.id);
+        let request = requests.recv().expect("requisição do lookup");
+        assert_eq!(
+            request.target,
+            "/org/project/_apis/git/repositories/repo/pullRequests/99?api-version=7.1"
+        );
+        assert_eq!(request.method, "GET");
+        server.join().expect("servidor do lookup");
         assert!(validate_published_pr(&context, &test_pr()).is_ok());
 
         let mut wrong_repository = test_pr();
@@ -1869,6 +1994,10 @@ mod tests {
         missing_target.target_ref_name.clear();
         assert!(validate_published_pr(&context, &missing_target).is_err());
 
+        let mut missing_source = test_pr();
+        missing_source.source_ref_name.clear();
+        assert!(validate_published_pr(&context, &missing_source).is_err());
+
         let mut wrong_id = test_pr();
         wrong_id.pull_request_id = 100;
         assert!(validate_published_pr(&context, &wrong_id).is_err());
@@ -1878,6 +2007,39 @@ mod tests {
     fn published_request_should_use_exact_remote_source_and_target_context() {
         let context = published_context();
         let change = test_change();
+        let mut calls = Vec::new();
+        let collected = crate::git::collect_for_refs_with(
+            "refs/heads/feat",
+            "refs/heads/dev",
+            |args| {
+                calls.push(args.iter().map(|arg| (*arg).to_owned()).collect::<Vec<_>>());
+                if args.first() == Some(&"diff") {
+                    return Ok("diff remoto".to_owned());
+                }
+                if args.first() == Some(&"log") {
+                    return Ok("log remoto".to_owned());
+                }
+                Ok("oid".to_owned())
+            },
+            Some(context.remote.clone()),
+        )
+        .expect("coleta por refs do PR");
+        assert_eq!(collected.source_ref, "refs/heads/feat");
+        assert_eq!(collected.base_branch, "refs/heads/dev");
+        assert!(calls.iter().any(|call| {
+            call == &[
+                "diff".to_owned(),
+                "refs/heads/dev...refs/heads/feat".to_owned(),
+            ]
+        }));
+        assert!(calls.iter().any(|call| {
+            call == &[
+                "log".to_owned(),
+                "--oneline".to_owned(),
+                "-50".to_owned(),
+                "refs/heads/dev..refs/heads/feat".to_owned(),
+            ]
+        }));
         let prompt = build_test_card_prompt(
             context.work_item.as_ref().expect("snapshot do pai"),
             &ChangeContext {
@@ -1903,10 +2065,15 @@ mod tests {
         let error = validate_published_work_item(99, 11763, &[42], snapshot).unwrap_err();
         assert!(error.to_string().contains("não está vinculado"));
 
+        let valid = validate_published_work_item(99, 11763, &[11763], snapshot)
+            .expect("Work Item do desc compatível");
+        assert_eq!(valid.id, 11763);
+
         let wrong_snapshot = test_work_item(42, "Task", "Outro pai");
         let error =
             validate_published_work_item(99, 11763, &[11763], Some(&wrong_snapshot)).unwrap_err();
         assert!(error.to_string().contains("diverge"));
+        assert!(!error.to_string().contains("fallback"));
     }
 
     #[test]
@@ -1917,6 +2084,14 @@ mod tests {
         ];
         assert_eq!(select_parent_work_item(&items), Some(11763));
         assert_eq!(select_parent_work_item(&[]), None);
+        let no_parent = AppError::cli(
+            "não foi possível resolver o work item pai vinculado ao PR; nenhuma escrita foi iniciada",
+        );
+        assert!(
+            no_parent
+                .to_string()
+                .contains("nenhuma escrita foi iniciada")
+        );
     }
 
     #[test]
@@ -1932,7 +2107,16 @@ mod tests {
         );
         assert_eq!(context.published_pr.id, 99);
         assert_eq!(context.remote.repository, "repo");
+        assert_eq!(context.remote.organization, "org");
+        assert_eq!(context.remote.project, "project");
+        assert_eq!(context.source_ref_name, "refs/heads/feat");
+        assert_eq!(context.target_ref_name, "refs/heads/dev");
+        assert_eq!(context.work_item_id, Some(11763));
         assert_eq!(parent.id, 11763);
+        assert_eq!(context.settings.area_path, "project\\QA");
+        assert_eq!(context.settings.assigned_to, "qa@example.com");
+        assert_eq!(context.settings.iteration_path, "project\\Sprint 12");
+        assert!((context.settings.priority - 2.0).abs() < f64::EPSILON);
         assert_eq!(context.settings.team, "DevOps");
         assert_eq!(context.settings.program, "Agrotrace");
         assert!(prompt.contains("PR ID: 99"));

@@ -677,6 +677,17 @@ mod tests {
             } => {
                 assert_eq!(actual_desc.title, desc.title);
                 assert_eq!(launch_context.published_pr.id, 42);
+                assert_eq!(launch_context.published_pr.target, "dev");
+                assert_eq!(
+                    launch_context.published_pr.url,
+                    "https://dev.azure.com/org/project/_git/repo/pullrequest/42"
+                );
+                assert_eq!(
+                    launch_context.source_ref_name,
+                    "refs/heads/feature/11763-mudanca"
+                );
+                assert_eq!(launch_context.target_ref_name, "refs/heads/dev");
+                assert_eq!(launch_context.work_item_id, Some(11763));
                 assert_eq!(
                     receipt.iter().map(|item| item.id).collect::<Vec<_>>(),
                     published.iter().map(|item| item.id).collect::<Vec<_>>()
@@ -714,6 +725,8 @@ mod tests {
             assert!(receipt.contains(&item.target));
             assert!(receipt.contains(&item.url));
         }
+        assert!(receipt.contains("PR #41 · sprint/12"));
+        assert!(receipt.contains("PR #42 · dev"));
         assert!(!receipt.contains("Test Case #"));
     }
 

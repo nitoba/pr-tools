@@ -90,7 +90,7 @@ Proof: `cargo test --manifest-path apps/rust/Cargo.toml --locked tui::test_flow:
 ### S4 - Handoff entre ciclos de vida e confirmações · 4 arquivos · ~139kB · ~35k
 
 **C17** - `PrepareTestCase` carrega launch context e receipt, e `main::run_desc` só inicia `test_flow` após restauração do terminal.
-Proof: `cargo test --manifest-path apps/rust/Cargo.toml --locked main::tests::desc_prepare_test_case_should_start_flow_after_terminal_restoration`
+Proof: `cargo test --manifest-path apps/rust/Cargo.toml --locked tests::desc_prepare_test_case_should_start_flow_after_terminal_restoration`
 
 **C18** - Entrada publicada inicia `TestApp` com `create_initial = false` e alcança a revisão com PR/refs, pai e config resolvidos, sem reentrada.
 Proof: `cargo test --manifest-path apps/rust/Cargo.toml --locked tui::test_flow::tests::published_request_should_enter_review_without_reprompting_context`
@@ -99,13 +99,13 @@ Proof: `cargo test --manifest-path apps/rust/Cargo.toml --locked tui::test_flow:
 Proof: `cargo test --manifest-path apps/rust/Cargo.toml --locked tui::test_flow::tests::one_handoff_activation_should_prepare_one_test_case_for_multiple_targets`
 
 **C20** - Cancelamento no picker, gate ou revisão antes da criação não chama writers e reporta todos os PRs intactos.
-Proof: `cargo test --manifest-path apps/rust/Cargo.toml --locked main::tests::cancelled_test_case_handoff_should_preserve_published_receipt`
+Proof: `cargo test --manifest-path apps/rust/Cargo.toml --locked tests::cancelled_test_case_handoff_should_preserve_published_receipt`
 
 **C21** - Revisão publicada mantém confirmação separada de criação e de `Test QA`; recovery, edição e retry continuam usando o mesmo `TestCardPrep`.
 Proof: `cargo test --manifest-path apps/rust/Cargo.toml --locked tui::test_flow::tests::published_flow_should_keep_create_and_test_qa_confirmations_separate`
 
 **C22** - Falha após handoff não vira sucesso/criação parcial, não altera PR publicado e preserva a receipt reportada.
-Proof: `cargo test --manifest-path apps/rust/Cargo.toml --locked main::tests::failed_test_case_handoff_should_preserve_published_receipt_and_writes`
+Proof: `cargo test --manifest-path apps/rust/Cargo.toml --locked tests::failed_test_case_handoff_should_preserve_published_receipt_and_writes`
 
 ### S5 - Provas da fronteira · 3 arquivos · ~107kB · ~27k
 

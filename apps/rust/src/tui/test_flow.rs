@@ -2881,30 +2881,39 @@ mod tests {
         terminal
             .draw(|f| f.render_widget(app, f.area()))
             .expect("render");
-        terminal
-            .backend()
-            .buffer()
-            .content()
-            .iter()
-            .map(ratatui::buffer::Cell::symbol)
-            .collect()
+        let buffer = terminal.backend().buffer();
+        let width = usize::from(buffer.area.width);
+        let mut text = String::new();
+        for (index, cell) in buffer.content().iter().enumerate() {
+            if index > 0 && index % width == 0 {
+                text.push('\n');
+            }
+            text.push_str(cell.symbol());
+        }
+        text
     }
 
     #[test]
     fn published_preparation_failure_should_not_start_generation_or_remote_writes() {
-        let mut app = TestApp::for_request(&published_request());
-        app.on_event(TestEvent::Failed(
-            "Azure DevOps recusou o PR selecionado (HTTP 403)".to_owned(),
-        ));
-        assert_eq!(app.phase, TestPhase::Erro);
-        assert!(
-            app.error
-                .as_deref()
-                .is_some_and(|message| message.contains("403"))
-        );
-        assert!(app.prep.is_none());
-        assert!(app.created.is_none());
-        assert!(app.last_create_settings.is_none());
+        for message in [
+            "PR #99 não foi encontrado (HTTP 404)",
+            "o PR pertence a outro repositório",
+            "sourceRefName ausente",
+            "Work Item não está vinculado ao PR",
+            "ref target não encontrada localmente",
+            "Custom.Team é obrigatório",
+            "Azure DevOps recusou o PR selecionado (HTTP 401)",
+            "Azure DevOps recusou o PR selecionado (HTTP 403)",
+        ] {
+            let mut app = TestApp::for_request(&published_request());
+            app.on_event(TestEvent::Failed(message.to_owned()));
+            assert_eq!(app.phase, TestPhase::Erro);
+            assert_eq!(app.error.as_deref(), Some(message));
+            assert!(app.prep.is_none());
+            assert!(app.created.is_none());
+            assert!(app.last_create_settings.is_none());
+            assert!(!app.parent_updated);
+        }
     }
 
     #[test]
@@ -2923,16 +2932,64 @@ mod tests {
         };
         context.fingerprint = fingerprint;
         assert!(!published_context_diverged(&request));
+        let mut app = TestApp::for_request(&request);
+        assert!(app.dialog.is_none());
+        assert!(!app.start_after_divergence);
+        app.on_event(TestEvent::Generated {
+            prep: Box::new(published_prep()),
+            title: "Card remoto".to_owned(),
+            body: "## Objetivo\nPR remoto".to_owned(),
+            initial: [
+                "project\\QA".to_owned(),
+                "qa@example.com".to_owned(),
+                "project\\Sprint 12".to_owned(),
+                "2".to_owned(),
+                "DevOps".to_owned(),
+                "Agrotrace".to_owned(),
+            ],
+        });
+        assert_eq!(app.phase, TestPhase::Revisao);
+        assert_eq!(
+            app.prep.as_ref().and_then(|prep| prep.pr_id.as_deref()),
+            Some("99")
+        );
+        assert_eq!(app.prep.as_ref().map(|prep| prep.parent.id), Some(11763));
     }
 
     #[test]
     fn changed_git_fingerprint_should_open_remote_snapshot_gate() {
         let mut request = published_request();
-        let TestCardRequest::PublishedPr(context) = &mut request else {
+        let TestCardRequest::PublishedPr(_) = &mut request else {
             unreachable!();
         };
-        context.fingerprint.repository = "outro-checkout".to_owned();
-        assert!(published_context_diverged(&request));
+        let matching =
+            GitContextFingerprint::capture("", &["main".to_owned()]).expect("fingerprint base");
+        let mutations: [fn(&mut GitContextFingerprint); 4] = [
+            |fingerprint: &mut GitContextFingerprint| {
+                fingerprint.repository = "outro-checkout".to_owned();
+            },
+            |fingerprint: &mut GitContextFingerprint| {
+                fingerprint.source_branch = "outra-branch".to_owned();
+            },
+            |fingerprint: &mut GitContextFingerprint| {
+                fingerprint.source_oid = "outro-source-oid".to_owned();
+            },
+            |fingerprint: &mut GitContextFingerprint| {
+                fingerprint
+                    .target_oids
+                    .insert("main".to_owned(), "outro-target-oid".to_owned());
+            },
+        ];
+        for mutate in mutations {
+            {
+                let TestCardRequest::PublishedPr(context) = &mut request else {
+                    unreachable!();
+                };
+                context.fingerprint = matching.clone();
+                mutate(&mut context.fingerprint);
+            }
+            assert!(published_context_diverged(&request));
+        }
 
         let mut app = TestApp::for_request(&request);
         app.dialog = Some(TestDialog::PublishedContextDivergence(false));
@@ -2968,6 +3025,26 @@ mod tests {
         assert_eq!(context.source_ref_name, "refs/heads/feature/11763-exemplo");
         assert_eq!(context.target_ref_name, "refs/heads/dev");
 
+        app.on_event(TestEvent::Generated {
+            prep: Box::new(published_prep()),
+            title: "Card remoto".to_owned(),
+            body: "## Objetivo\nSnapshot remoto".to_owned(),
+            initial: [
+                "project\\QA".to_owned(),
+                "qa@example.com".to_owned(),
+                "project\\Sprint 12".to_owned(),
+                "2".to_owned(),
+                "DevOps".to_owned(),
+                "Agrotrace".to_owned(),
+            ],
+        });
+        let prep = app.prep.as_ref().expect("prep do PR remoto");
+        assert_eq!(prep.context.source_ref, "refs/heads/feature/11763-exemplo");
+        assert_eq!(prep.context.base_branch, "refs/heads/dev");
+        assert_eq!(prep.context.diff, "diff");
+        assert_eq!(prep.context.log, "log");
+        assert!(prep.prompt.contains("PR e refs"));
+
         let mut cancelled = TestApp::for_request(&request);
         cancelled.dialog = Some(TestDialog::PublishedContextDivergence(false));
         let action = handle_published_context_divergence_key(
@@ -2981,6 +3058,16 @@ mod tests {
         ));
         assert!(cancelled.prep.is_none());
         assert!(cancelled.created.is_none());
+        assert!(!cancelled.parent_updated);
+        let TestCardRequest::PublishedPr(context) = request else {
+            unreachable!();
+        };
+        assert_eq!(context.published_pr.id, 99);
+        assert_eq!(context.published_pr.target, "dev");
+        assert_eq!(
+            context.published_pr.url,
+            "https://dev.azure.com/org/project/_git/repo/pullrequest/99"
+        );
     }
 
     #[test]
@@ -3009,22 +3096,59 @@ mod tests {
             app.prep.as_ref().and_then(|prep| prep.pr_id.as_deref()),
             Some("99")
         );
+        assert_eq!(
+            app.prep
+                .as_ref()
+                .map(|prep| prep.context.source_ref.as_str()),
+            Some("refs/heads/feature/11763-exemplo")
+        );
+        assert_eq!(
+            app.prep
+                .as_ref()
+                .map(|prep| prep.context.base_branch.as_str()),
+            Some("refs/heads/dev")
+        );
+        assert_eq!(app.prep.as_ref().map(|prep| prep.parent.id), Some(11763));
         assert_eq!(app.fields[4].value, "DevOps");
         assert_eq!(app.fields[5].value, "Agrotrace");
     }
 
     #[test]
     fn one_handoff_activation_should_prepare_one_test_case_for_multiple_targets() {
+        let receipt = [
+            crate::azure::pull_requests::PublishedPr {
+                target: "sprint/12".to_owned(),
+                id: 98,
+                url: "https://dev.azure.com/org/project/_git/repo/pullrequest/98".to_owned(),
+            },
+            crate::azure::pull_requests::PublishedPr {
+                target: "dev".to_owned(),
+                id: 99,
+                url: "https://dev.azure.com/org/project/_git/repo/pullrequest/99".to_owned(),
+            },
+        ];
+        assert_eq!(receipt.len(), 2);
         let request = published_request();
         let TestCardRequest::PublishedPr(context) = request else {
             unreachable!();
         };
         assert_eq!(context.published_pr.id, 99);
         assert_eq!(context.published_pr.target, "dev");
-        assert!(!context.published_pr.target.is_empty());
+        assert_eq!(
+            context.published_pr.url,
+            "https://dev.azure.com/org/project/_git/repo/pullrequest/99"
+        );
+        assert_eq!(context.source_ref_name, "refs/heads/feature/11763-exemplo");
+        assert_eq!(context.target_ref_name, "refs/heads/dev");
+        assert_eq!(context.work_item_id, Some(11763));
+        assert_eq!(context.published_pr.id, receipt[1].id);
         let app = TestApp::for_request(&TestCardRequest::PublishedPr(context));
         assert!(!app.create_initial);
         assert!(!app.no_create);
+        assert_eq!(app.phase, TestPhase::Preparando);
+        assert!(app.prep.is_none());
+        assert!(app.created.is_none());
+        assert!(!app.parent_updated);
     }
 
     #[test]
@@ -3051,6 +3175,8 @@ mod tests {
             TestKeyAction::Continue(true)
         ));
         assert_eq!(app.dialog, Some(TestDialog::ConfirmCreate(false)));
+        assert!(app.created.is_none());
+        assert!(!app.parent_updated);
 
         app.on_event(TestEvent::CreatedItem(WorkItem {
             id: 123,
@@ -3058,10 +3184,23 @@ mod tests {
             relations: Vec::new(),
         }));
         assert_eq!(app.dialog, Some(TestDialog::ConfirmTestQa(false)));
+        assert!(app.created.is_some());
+        assert!(!app.parent_updated);
         assert_eq!(
             app.prep.as_ref().and_then(|prep| prep.pr_id.as_deref()),
             Some("99")
         );
+
+        assert!(matches!(
+            handle_confirm_qa_key(
+                &mut app,
+                false,
+                event::KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE),
+            ),
+            TestKeyAction::Continue(true)
+        ));
+        assert_eq!(app.dialog, Some(TestDialog::QaEfforts));
+        assert!(!app.parent_updated);
     }
 
     #[test]

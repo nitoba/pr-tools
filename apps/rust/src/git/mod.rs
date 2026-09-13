@@ -330,7 +330,7 @@ pub fn collect_for_refs(source_ref: &str, target_ref: &str) -> Result<ChangeCont
     collect_for_refs_with(source_ref, target_ref, git, remote)
 }
 
-fn collect_for_refs_with<F>(
+pub(crate) fn collect_for_refs_with<F>(
     source_ref: &str,
     target_ref: &str,
     mut command: F,
@@ -611,16 +611,17 @@ mod tests {
             !branch.is_empty(),
             "os testes precisam de uma branch checked out"
         );
-        let fingerprint = GitContextFingerprint::capture("", std::slice::from_ref(&branch))
-            .expect("fingerprint do checkout");
+        let targets = vec!["main".to_owned(), branch.clone()];
+        let fingerprint =
+            GitContextFingerprint::capture("", &targets).expect("fingerprint do checkout");
 
         assert!(!fingerprint.repository.is_empty());
         assert_eq!(fingerprint.source_branch, branch);
         assert!(!fingerprint.source_oid.is_empty());
-        assert_eq!(fingerprint.target_oids.len(), 1);
-        assert_eq!(
-            fingerprint.target_oids.get(&branch),
-            Some(&fingerprint.source_oid)
-        );
+        assert_eq!(fingerprint.target_oids.len(), targets.len());
+        for target in &targets {
+            assert!(fingerprint.target_oids.contains_key(target));
+            assert!(!fingerprint.target_oids[target].is_empty());
+        }
     }
 }
