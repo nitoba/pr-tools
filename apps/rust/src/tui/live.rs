@@ -3082,8 +3082,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn one_handoff_activation_should_prepare_one_test_case_for_multiple_targets() {
+    #[tokio::test]
+    async fn one_handoff_activation_should_prepare_one_test_case_for_multiple_targets() {
         let mut app = review_app();
         app.set_launch_prep(launch_prep());
         app.on_backend(BackendEvent::Published(vec![
@@ -3137,6 +3137,15 @@ mod tests {
                 preparation_count += 1;
                 assert_eq!(launch_context.published_pr.id, 42);
                 assert_eq!(published.len(), 2);
+                let (generated, reviewed, created, parent_updated) =
+                    crate::tui::test_flow::exercise_published_request_for_test(
+                        crate::features::test_card::TestCardRequest::PublishedPr(launch_context),
+                    )
+                    .await;
+                assert_eq!(generated, 1);
+                assert!(reviewed);
+                assert!(!created);
+                assert!(!parent_updated);
             }
             _ => panic!("ativação multi-target não entregou o handoff"),
         }

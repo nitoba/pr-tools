@@ -274,6 +274,36 @@ pub async fn prepare_request(request: TestCardRequest) -> Result<TestCardPrep> {
     }
 }
 
+/// Despacha uma request depois que suas dependências foram carregadas.
+///
+/// O dispatch fica separado do carregamento de configuração/Git para que o
+/// mesmo limite de entrada seja exercitado pelos dois fluxos e pelos testes
+/// com Azure/Git determinísticos.
+pub(crate) async fn prepare_request_with<F>(
+    request: TestCardRequest,
+    config: Config,
+    change: Option<ChangeContext>,
+    client: &azure::AzureClient,
+    collect: F,
+) -> Result<TestCardPrep>
+where
+    F: FnOnce(&str, &str) -> Result<ChangeContext>,
+{
+    match request {
+        TestCardRequest::Cli(options) => {
+            let Some(change) = change else {
+                return Err(AppError::Git {
+                    message: "request CLI sem contexto Git".to_owned(),
+                });
+            };
+            prepare_cli_with(&options, config, change, client).await
+        }
+        TestCardRequest::PublishedPr(context) => {
+            prepare_published_pr_with(&context, config, client, collect).await
+        }
+    }
+}
+
 async fn prepare_cli(options: &CliOptions) -> Result<TestCardPrep> {
     let mut config = config::load_config()?;
     config::apply_cli_overrides(
@@ -295,7 +325,14 @@ async fn prepare_cli(options: &CliOptions) -> Result<TestCardPrep> {
         });
     };
     let client = azure::client_for(Some(remote), config.azure_pat.trim())?;
-    prepare_cli_with(options, config, change, &client).await
+    prepare_request_with(
+        TestCardRequest::Cli(options.clone()),
+        config,
+        Some(change),
+        &client,
+        |_, _| Err(AppError::cli("coleta usada somente pelo request publicado")),
+    )
+    .await
 }
 
 async fn prepare_cli_with(
@@ -351,9 +388,13 @@ async fn prepare_published_pr(context: &TestCardLaunchContext) -> Result<TestCar
         ));
     }
     let client = azure::client_for(Some(&context.remote), config.azure_pat.trim())?;
-    prepare_published_pr_with(context, config, &client, |source, target| {
-        git::collect_for_refs(source, target)
-    })
+    prepare_request_with(
+        TestCardRequest::PublishedPr(context.clone()),
+        config,
+        None,
+        &client,
+        git::collect_for_refs,
+    )
     .await
 }
 
@@ -2103,9 +2144,15 @@ mod tests {
             azure_pat: "pat".to_owned(),
             ..Config::default()
         };
-        let prep = prepare_cli_with(&options, config, change, &client)
-            .await
-            .expect("preparação standalone");
+        let prep = prepare_request_with(
+            TestCardRequest::Cli(options.clone()),
+            config,
+            Some(change),
+            &client,
+            |_, _| Err(AppError::cli("coleta publicada não deveria ser usada")),
+        )
+        .await
+        .expect("preparação standalone");
         assert_eq!(prep.pr_id.as_deref(), Some("99"));
         assert_eq!(prep.parent.id, 11763);
         assert!(prep.settings.is_none());
@@ -2133,23 +2180,53 @@ mod tests {
             "/org/project/_apis/git/repositories/repo/pullRequests/99?api-version=7.1"
         );
         assert_eq!(request.method, "GET");
-        assert!(validate_published_pr(&context, &test_pr()).is_ok());
-
-        let mut wrong_repository = test_pr();
-        wrong_repository.repository.name = "outro-repo".to_owned();
-        assert!(validate_published_pr(&context, &wrong_repository).is_err());
-
-        let mut missing_target = test_pr();
-        missing_target.target_ref_name.clear();
-        assert!(validate_published_pr(&context, &missing_target).is_err());
-
-        let mut missing_source = test_pr();
-        missing_source.source_ref_name.clear();
-        assert!(validate_published_pr(&context, &missing_source).is_err());
-
-        let mut wrong_id = test_pr();
-        wrong_id.pull_request_id = 100;
-        assert!(validate_published_pr(&context, &wrong_id).is_err());
+        let invalid_payloads = [
+            serde_json::json!({
+                "pullRequestId": 100,
+                "repository": {"name": "repo", "project": {"name": "project"}},
+                "sourceRefName": "refs/heads/feat",
+                "targetRefName": "refs/heads/dev"
+            }),
+            serde_json::json!({
+                "pullRequestId": 99,
+                "repository": {"name": "outro-repo", "project": {"name": "project"}},
+                "sourceRefName": "refs/heads/feat",
+                "targetRefName": "refs/heads/dev"
+            }),
+            serde_json::json!({
+                "pullRequestId": 99,
+                "repository": {"name": "repo", "project": {"name": "outro-project"}},
+                "sourceRefName": "refs/heads/feat",
+                "targetRefName": "refs/heads/dev"
+            }),
+            serde_json::json!({
+                "pullRequestId": 99,
+                "repository": {"name": "repo", "project": {"name": "project"}},
+                "sourceRefName": "",
+                "targetRefName": "refs/heads/dev"
+            }),
+            serde_json::json!({
+                "pullRequestId": 99,
+                "repository": {"name": "repo", "project": {"name": "project"}},
+                "sourceRefName": "refs/heads/feat",
+                "targetRefName": "refs/heads/other"
+            }),
+        ];
+        for payload in invalid_payloads {
+            let (base_url, request_rx, server) =
+                spawn_json_server(vec![serde_json::to_string(&payload).unwrap()]);
+            let client = crate::azure::AzureClient::new_for_test(&base_url, "pat");
+            let error =
+                prepare_published_pr_with(&context, context.config.clone(), &client, |_, _| {
+                    panic!("coleta não pode começar após PR inválido")
+                })
+                .await
+                .expect_err("PR inválido deveria interromper a preparação");
+            assert!(!error.to_string().is_empty());
+            let request = request_rx.recv().expect("lookup do PR inválido");
+            assert!(request.target.contains("pullRequests/99"));
+            server.join().expect("servidor de validação");
+        }
     }
 
     #[tokio::test]
@@ -2220,25 +2297,44 @@ mod tests {
 
     #[tokio::test]
     async fn published_request_should_reject_incompatible_work_item_without_fallback() {
-        let (prep, _, _) = prepare_published_fixture().await;
-        assert_eq!(prep.pr_id.as_deref(), Some("99"));
-        assert_eq!(prep.parent.id, 11763);
-        assert_eq!(prep.context.work_item_id, "11763");
-
         let context = published_context();
-        let snapshot = context.work_item.as_ref();
-        let error = validate_published_work_item(99, 11763, &[42], snapshot).unwrap_err();
-        assert!(error.to_string().contains("não está vinculado"));
-
-        let valid = validate_published_work_item(99, 11763, &[11763], snapshot)
-            .expect("Work Item do desc compatível");
-        assert_eq!(valid.id, 11763);
-
-        let wrong_snapshot = test_work_item(42, "Task", "Outro pai");
-        let error =
-            validate_published_work_item(99, 11763, &[11763], Some(&wrong_snapshot)).unwrap_err();
-        assert!(error.to_string().contains("diverge"));
-        assert!(!error.to_string().contains("fallback"));
+        for (linked_id, expected_fragment) in [(42, "não está vinculado"), (11763, "diverge")] {
+            let mut mismatch_context = context.clone();
+            if linked_id == 11763 {
+                mismatch_context.work_item = Some(test_work_item(42, "Task", "Outro pai"));
+            }
+            let (base_url, request_rx, server) = spawn_json_server(vec![
+                serde_json::to_string(&serde_json::json!({
+                    "pullRequestId": 99,
+                    "repository": {"name": "repo", "project": {"name": "project"}},
+                    "sourceRefName": "refs/heads/feat",
+                    "targetRefName": "refs/heads/dev"
+                }))
+                .unwrap(),
+                serde_json::to_string(&serde_json::json!({
+                    "value": [{"id": linked_id}]
+                }))
+                .unwrap(),
+            ]);
+            let client = crate::azure::AzureClient::new_for_test(&base_url, "pat");
+            let error = prepare_published_pr_with(
+                &mismatch_context,
+                mismatch_context.config.clone(),
+                &client,
+                |_, _| panic!("coleta não pode começar após Work Item incompatível"),
+            )
+            .await
+            .expect_err("Work Item incompatível deveria interromper a preparação");
+            assert!(error.to_string().contains(expected_fragment));
+            assert!(!error.to_string().contains("fallback"));
+            for _ in 0..2 {
+                assert_eq!(
+                    request_rx.recv().expect("validação do Work Item").method,
+                    "GET"
+                );
+            }
+            server.join().expect("servidor de Work Item incompatível");
+        }
     }
 
     #[tokio::test]
@@ -2298,6 +2394,38 @@ mod tests {
         assert!(requests[4].target.contains("pullRequests/99/iterations"));
         assert!(requests[5].target.contains("_apis/wit/wiql"));
         server.join().expect("servidor de resolução");
+
+        let mut no_parent_context = published_context();
+        no_parent_context.work_item_id = None;
+        no_parent_context.work_item = None;
+        let (base_url, request_rx, server) = spawn_json_server(vec![
+            serde_json::to_string(&serde_json::json!({
+                "pullRequestId": 99,
+                "repository": {"name": "repo", "project": {"name": "project"}},
+                "sourceRefName": "refs/heads/feat",
+                "targetRefName": "refs/heads/dev"
+            }))
+            .unwrap(),
+            serde_json::to_string(&serde_json::json!({
+                "value": []
+            }))
+            .unwrap(),
+        ]);
+        let client = crate::azure::AzureClient::new_for_test(&base_url, "pat");
+        let error = prepare_published_pr_with(
+            &no_parent_context,
+            no_parent_context.config.clone(),
+            &client,
+            |_, _| panic!("coleta não pode começar sem pai resolvido"),
+        )
+        .await
+        .expect_err("PR sem pai deveria falhar antes de Git/Azure writes");
+        assert!(error.to_string().contains("nenhuma escrita foi iniciada"));
+        let requests = (0..2)
+            .map(|_| request_rx.recv().expect("lookup sem pai"))
+            .collect::<Vec<_>>();
+        assert!(requests.iter().all(|request| request.method == "GET"));
+        server.join().expect("servidor sem pai");
 
         let items = vec![
             test_work_item(11763, "User Story", "Pai"),

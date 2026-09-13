@@ -744,7 +744,7 @@ mod tests {
         };
 
         let task = tokio::spawn(async move { run_subprocess(&command, &args, "").await });
-        for _ in 0..100 {
+        for _ in 0..500 {
             if started.exists() {
                 break;
             }

@@ -205,15 +205,20 @@ fn build_done_receipt(
     receipt
 }
 
-async fn run_published_test_flow<F, Fut>(
+async fn run_desc_handoff<F, Fut>(
+    desc: prt::ai::PrDescription,
+    targets: Vec<String>,
     receipt: String,
     launch_context: prt::features::test_card::TestCardLaunchContext,
+    published: Vec<prt::azure::pull_requests::PublishedPr>,
     run_flow: F,
 ) -> (String, anyhow::Result<TestFlowOutcome>)
 where
     F: FnOnce(TestCardRequest) -> Fut,
     Fut: Future<Output = anyhow::Result<TestFlowOutcome>>,
 {
+    let expected_receipt = build_done_receipt(&desc, &targets, &published);
+    debug_assert_eq!(receipt, expected_receipt);
     let result = run_flow(TestCardRequest::PublishedPr(launch_context)).await;
     (receipt, result)
 }
@@ -269,8 +274,15 @@ async fn run_desc(options: &prt::cli::CliOptions) -> anyhow::Result<()> {
             published,
         } => {
             let receipt = build_done_receipt(&desc, &targets, &published);
-            let (receipt, test_result) =
-                run_published_test_flow(receipt, launch_context, run_test_flow_request).await;
+            let (receipt, test_result) = run_desc_handoff(
+                desc,
+                targets,
+                receipt,
+                launch_context,
+                published,
+                run_test_flow_request,
+            )
+            .await;
             match test_result {
                 Ok(TestFlowOutcome::Created { id, url }) => {
                     println!("{receipt}");
@@ -680,8 +692,13 @@ mod tests {
         let published = vec![context.published_pr.clone()];
         let receipt = build_done_receipt(&desc, &["dev".to_owned()], &published);
         let expected_context = context.clone();
-        let (actual_receipt, test_result) =
-            run_published_test_flow(receipt.clone(), context.clone(), |request| async move {
+        let (actual_receipt, test_result) = run_desc_handoff(
+            desc.clone(),
+            vec!["dev".to_owned()],
+            receipt.clone(),
+            context.clone(),
+            published.clone(),
+            |request| async move {
                 match request {
                     TestCardRequest::PublishedPr(actual) => {
                         assert_eq!(actual.published_pr.id, expected_context.published_pr.id);
@@ -696,8 +713,9 @@ mod tests {
                     TestCardRequest::Cli(_) => panic!("handoff publicado virou request CLI"),
                 }
                 Ok(TestFlowOutcome::ReviewedNoCreate)
-            })
-            .await;
+            },
+        )
+        .await;
         assert_eq!(actual_receipt, receipt);
         assert!(matches!(test_result, Ok(TestFlowOutcome::ReviewedNoCreate)));
 
