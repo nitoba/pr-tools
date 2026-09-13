@@ -281,6 +281,24 @@ pub fn build_describe_prompt(
     )
 }
 
+/// Monta o prompt de usuário para atualizar um PR existente.
+///
+/// O snapshot remoto fica explícito no prompt para que a proposta possa
+/// preservar informação humana que não está no diff Git.
+#[must_use]
+pub fn build_update_prompt(
+    source_ref: &str,
+    target_ref: &str,
+    current_title: &str,
+    current_description: &str,
+    log: &str,
+    diff: &str,
+) -> String {
+    format!(
+        "## PR existente\n\n**Source ref remoto:** {source_ref}\n**Target ref remoto:** {target_ref}\n\n### Conteúdo remoto atual\n\n**Título atual:** {current_title}\n\n**Descrição atual:**\n\n{current_description}\n\n### Git Log (target..source)\n\n```\n{log}\n```\n\n### Git Diff (target...source)\n\n```diff\n{diff}\n```\n\n### Instruções de saída\n\nProponha a atualização de título e descrição sem descartar informação útil do conteúdo atual. Gere somente o objeto JSON solicitado pelo prompt de sistema.\n{AZURE_PR_DESCRIPTION_PROMPT_RULES}\n",
+    )
+}
+
 /// Gera via `aisdk` contra endpoint OpenAI-compatible.
 ///
 /// Usa `LanguageModelRequest::builder()` (type-state) com `base_url`/`api_key`.

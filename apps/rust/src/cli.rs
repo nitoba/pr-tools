@@ -141,6 +141,9 @@ pub struct DescOpts {
     /// Work Item.
     #[arg(long = "work-item")]
     pub work_item: Option<String>,
+    /// PR Azure DevOps existente a atualizar.
+    #[arg(long, allow_hyphen_values = true)]
+    pub pr: Option<String>,
     /// Não copia o conteúdo.
     #[arg(long = "no-copy")]
     pub no_copy: bool,
@@ -159,7 +162,7 @@ pub struct TestOpts {
     #[arg(long = "work-item")]
     pub work_item: Option<String>,
     /// PR Azure DevOps para contexto do card.
-    #[arg(long)]
+    #[arg(long, allow_hyphen_values = true)]
     pub pr: Option<String>,
     /// `AreaPath` do Test Case.
     #[arg(long = "area-path")]
@@ -244,7 +247,7 @@ pub struct CliOptions {
     pub create: bool,
     /// Flag `--no-create`.
     pub no_create: bool,
-    /// PR id (`test`).
+    /// PR id (`desc` update ou contexto de `test`).
     pub pr: Option<WorkItemId>,
     /// Demais campos de `test` (espelham as flags de mesmo nome).
     /// `AreaPath` do Test Case.
@@ -393,6 +396,12 @@ fn empty_cli_options(command: Command) -> CliOptions {
 ///
 /// Retorna [`AppError::Cli`] se targets, work-item ou provider forem inválidos.
 fn desc_cli_options(o: DescOpts) -> Result<CliOptions> {
+    let pr = parse_optional_work_item(o.pr.as_deref(), "--pr")?;
+    if pr.is_some() && (o.shared.raw || o.shared.create || o.no_create) {
+        return Err(AppError::cli(
+            "atualização de PR requer revisão interativa: --pr não pode ser combinado com --raw, --create ou --no-create",
+        ));
+    }
     Ok(CliOptions {
         command: Command::Desc,
         source: o.shared.source,
@@ -404,7 +413,7 @@ fn desc_cli_options(o: DescOpts) -> Result<CliOptions> {
         api_key: o.shared.api_key,
         create: o.shared.create,
         no_create: o.no_create,
-        pr: None,
+        pr,
         area_path: None,
         assigned_to: None,
         iteration_path: None,
@@ -514,6 +523,24 @@ where
     build_options(sub)
 }
 
+/// Verifica se o fluxo de atualização pode iniciar a execução escolhida.
+///
+/// O update existente só gera/escreve dentro de uma TUI; sem terminal, apenas
+/// o dry-run é permitido e ele para antes de qualquer provider ou writer.
+///
+/// # Errors
+///
+/// Retorna [`AppError::Cli`] quando a operação pede escrita sem terminal e sem
+/// `--dry-run`.
+pub fn ensure_update_execution_mode(tty: bool, dry_run: bool) -> Result<()> {
+    if !tty && !dry_run {
+        return Err(AppError::cli(
+            "atualização de PR requer terminal interativo; use --dry-run para apenas visualizar o prompt",
+        ));
+    }
+    Ok(())
+}
+
 /// Texto de ajuda (espelha `helpText` do Dart).
 #[must_use]
 pub fn help_text() -> String {
@@ -524,7 +551,7 @@ pub fn help_text() -> String {
          --work-item <id>        Work Item\n  --provider <nome>       codex, opencode ou openai-compatible\n  \
          --model <nome>          Modelo do provider\n  --base-url <url>        Endpoint OpenAI-compatible\n  \
          --api-key <key>         API key do endpoint\n  --create                Confirma a criação após gerar o conteúdo\n  \
-         --no-create             Apenas gera o Test Case\n  --pr <id>               PR Azure DevOps para contexto do card\n  \
+         --no-create             Apenas gera o Test Case\n  --pr <id>               PR existente (desc) ou contexto do Test Case\n  \
          --area-path <path>      AreaPath do Test Case\n  --assigned-to <valor>   Responsável do Test Case\n  \
          --iteration-path <path> IterationPath do Test Case\n  --priority <n>          Prioridade do Test Case\n  \
          --team <nome>           Campo Custom.Team\n  --program <nome>        Campo Custom.ProgramasAgrotrace\n  \
@@ -609,5 +636,49 @@ mod tests {
     fn work_item_should_reject_non_numeric() {
         let err = parse_cli(["prt", "desc", "--work-item", "abc"]).unwrap_err();
         assert!(err.to_string().contains("--work-item inválido"));
+    }
+
+    #[test]
+    fn desc_pr_should_select_one_update_journey() {
+        let opts = parse_cli(["prt", "desc", "--pr", "42"]).unwrap();
+        assert_eq!(opts.command, Command::Desc);
+        assert_eq!(opts.pr.as_ref().map(WorkItemId::as_str), Some("42"));
+        assert!(opts.targets.is_empty());
+    }
+
+    #[test]
+    fn update_command_should_remain_binary_update() {
+        assert_eq!(
+            parse_cli(["prt", "update"]).unwrap().command,
+            Command::Update
+        );
+        assert_eq!(
+            parse_cli(["prt", "updade"]).unwrap().command,
+            Command::Update
+        );
+    }
+
+    #[test]
+    fn desc_pr_should_reject_invalid_ids_before_external_effects() {
+        for value in ["", "abc", "0", "-1"] {
+            let error = parse_cli(["prt", "desc", "--pr", value]).unwrap_err();
+            assert_eq!(error.exit_code(), 2);
+            assert!(error.to_string().contains("--pr inválido"));
+        }
+    }
+
+    #[test]
+    fn cli_should_reject_update_output_combinations() {
+        let options = parse_cli(["prt", "desc", "--pr", "42", "--dry-run"]).unwrap();
+        assert!(options.output.dry_run);
+        assert!(ensure_update_execution_mode(false, options.output.dry_run).is_ok());
+        assert!(ensure_update_execution_mode(true, false).is_ok());
+        let non_interactive = ensure_update_execution_mode(false, false).unwrap_err();
+        assert_eq!(non_interactive.exit_code(), 2);
+        assert!(non_interactive.to_string().contains("terminal interativo"));
+        for extra in ["--raw", "--create", "--no-create"] {
+            let error = parse_cli(["prt", "desc", "--pr", "42", extra]).unwrap_err();
+            assert_eq!(error.exit_code(), 2);
+        }
     }
 }

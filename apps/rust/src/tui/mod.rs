@@ -17,6 +17,7 @@ pub mod notice;
 pub mod shimmer;
 pub mod suspend;
 pub mod test_flow;
+pub mod update_flow;
 
 use ratatui::{
     buffer::Buffer,
@@ -94,14 +95,23 @@ pub fn colors_enabled() -> bool {
 
 /// Diz se a TUI deve usar só ASCII (sem borda arredondada nem Braille).
 ///
-/// Verdadeiro quando `TERM == "dumb"` ou `PRT_ASCII == "1"`.
-/// Lido a cada chamada para respeitar o ambiente.
+/// Verdadeiro quando `PRT_ASCII == "1"` ou quando um terminal interativo
+/// anuncia `TERM == "dumb"`. Backends de teste não são tratados como um
+/// terminal dumb, para que snapshots não dependam do ambiente do runner.
 #[must_use]
 pub fn ascii_only() -> bool {
-    if std::env::var("TERM").is_ok_and(|v| v == "dumb") {
+    if std::env::var("PRT_ASCII").is_ok_and(|v| v == "1") {
         return true;
     }
-    std::env::var("PRT_ASCII").is_ok_and(|v| v == "1")
+
+    #[cfg(not(test))]
+    {
+        std::env::var("TERM").is_ok_and(|v| v == "dumb")
+            && std::io::IsTerminal::is_terminal(&std::io::stdout())
+    }
+
+    #[cfg(test)]
+    false
 }
 
 /// Tema sem cor — mesmo [`Theme`] com tudo zerado.

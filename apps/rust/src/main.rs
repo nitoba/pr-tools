@@ -206,6 +206,9 @@ async fn run_desc(options: &prt::cli::CliOptions) -> anyhow::Result<()> {
         notice::{NoticeKind, show_notice},
     };
     use ratatui::text::Text;
+    if options.pr.is_some() {
+        return run_update(options).await;
+    }
 
     let prep = describe::prepare(options)
         .await
@@ -251,6 +254,99 @@ async fn run_desc(options: &prt::cli::CliOptions) -> anyhow::Result<()> {
             std::process::exit(130);
         }
         LiveOutcome::Failed(msg) => anyhow::bail!("falha na tui: {msg}"),
+    }
+}
+
+async fn run_update(options: &prt::cli::CliOptions) -> anyhow::Result<()> {
+    let tty = std::io::IsTerminal::is_terminal(&std::io::stdout());
+    run_update_with_tty(options, tty).await
+}
+
+async fn run_update_with_tty(options: &prt::cli::CliOptions, tty: bool) -> anyhow::Result<()> {
+    use prt::features::update_pull_request;
+
+    prt::cli::ensure_update_execution_mode(tty, options.output.dry_run)
+        .map_err(anyhow::Error::new)?;
+    let prep = update_pull_request::prepare(options)
+        .await
+        .context("falha ao preparar atualização do PR")?;
+    run_update_prepared(options, tty, prep).await
+}
+
+fn update_dry_run_text(prompt: &str) -> String {
+    format!("PR existente · dry run\n\n{prompt}")
+}
+
+async fn run_update_prepared(
+    options: &prt::cli::CliOptions,
+    tty: bool,
+    prep: prt::features::update_pull_request::UpdatePrep,
+) -> anyhow::Result<()> {
+    run_update_prepared_with(options, tty, prep, |text| println!("{text}")).await
+}
+
+async fn run_update_prepared_with<F>(
+    options: &prt::cli::CliOptions,
+    tty: bool,
+    prep: prt::features::update_pull_request::UpdatePrep,
+    emit: F,
+) -> anyhow::Result<()>
+where
+    F: FnOnce(String),
+{
+    use prt::tui::notice::{NoticeKind, show_notice};
+    use prt::tui::update_flow::{UpdateTuiOutcome, run_update_tui};
+    use ratatui::text::Text;
+
+    if options.output.dry_run {
+        if tty {
+            show_notice(
+                "PR existente · dry run",
+                Text::from(prep.prompt),
+                NoticeKind::Info,
+            )
+            .await?;
+        } else {
+            emit(update_dry_run_text(&prep.prompt));
+        }
+        return Ok(());
+    }
+
+    match run_update_tui(&prep)? {
+        UpdateTuiOutcome::Updated { id } => {
+            show_notice(
+                "PR atualizado",
+                Text::from(format!(
+                    "Título e descrição do PR #{id} foram confirmados pelo Azure DevOps."
+                )),
+                NoticeKind::Success,
+            )
+            .await?;
+            println!("✓ PR #{id} atualizado e confirmado");
+            Ok(())
+        }
+        UpdateTuiOutcome::NoOp { id } => {
+            show_notice(
+                "PR sem alterações",
+                Text::from(format!(
+                    "O PR #{id} já contém exatamente a proposta aprovada."
+                )),
+                NoticeKind::Info,
+            )
+            .await?;
+            println!("✓ PR #{id} já estava atualizado");
+            Ok(())
+        }
+        UpdateTuiOutcome::Aborted => {
+            show_notice(
+                "Cancelado",
+                Text::from("Operação cancelada; o PR não foi alterado."),
+                NoticeKind::Warning,
+            )
+            .await?;
+            std::process::exit(130);
+        }
+        UpdateTuiOutcome::Failed(message) => anyhow::bail!("falha na atualização: {message}"),
     }
 }
 
@@ -385,6 +481,66 @@ async fn run_doctor(options: &prt::cli::CliOptions) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn update_prep() -> prt::features::update_pull_request::UpdatePrep {
+        let remote = prt::git::RepositoryRemote {
+            organization: "org".to_owned(),
+            project: "project".to_owned(),
+            repository: "repo".to_owned(),
+        };
+        let current = prt::azure::pull_requests::PullRequest {
+            pull_request_id: 42,
+            title: "Atual".to_owned(),
+            description: "Body".to_owned(),
+            source_ref_name: "refs/heads/feature/42".to_owned(),
+            target_ref_name: "refs/heads/dev".to_owned(),
+            status: "active".to_owned(),
+            repository: prt::azure::pull_requests::PullRequestRepository {
+                id: "repo-id".to_owned(),
+                name: "repo".to_owned(),
+                project: prt::azure::pull_requests::PullRequestProject {
+                    name: "project".to_owned(),
+                },
+            },
+        };
+        prt::features::update_pull_request::UpdatePrep {
+            config: prt::config::Config::default(),
+            remote: remote.clone(),
+            pr_id: 42,
+            current,
+            context: prt::git::ChangeContext {
+                branch: "feature/42".to_owned(),
+                source_ref: "refs/heads/feature/42".to_owned(),
+                base_branch: "origin/dev".to_owned(),
+                sprint_branch: String::new(),
+                diff: "diff".to_owned(),
+                diff_original_lines: 1,
+                log: "log".to_owned(),
+                work_item_id: String::new(),
+                remote: Some(remote),
+            },
+            prompt: "contexto preservado".to_owned(),
+        }
+    }
+
+    #[tokio::test]
+    async fn update_dry_run_and_non_interactive_combinations_should_not_start_provider_or_writer() {
+        let options = prt::cli::parse_cli(["prt", "desc", "--pr", "42"]).unwrap();
+        let error = run_update_with_tty(&options, false).await.unwrap_err();
+        assert!(error.to_string().contains("terminal interativo"));
+
+        let dry_run = prt::cli::parse_cli(["prt", "desc", "--pr", "42", "--dry-run"]).unwrap();
+        assert!(dry_run.output.dry_run);
+        let mut output = String::new();
+        run_update_prepared_with(&dry_run, false, update_prep(), |text| output = text)
+            .await
+            .unwrap();
+        assert_eq!(output, update_dry_run_text("contexto preservado"));
+        for extra in ["--raw", "--create", "--no-create"] {
+            let error = prt::cli::parse_cli(["prt", "desc", "--pr", "42", extra]).unwrap_err();
+            assert_eq!(error.exit_code(), 2);
+        }
+    }
 
     #[test]
     fn desc_output_should_show_functional_context_but_raw_should_be_body_only() {

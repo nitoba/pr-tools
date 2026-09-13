@@ -1,0 +1,28 @@
+---
+source: apps/rust/src/tui/update_flow.rs
+expression: terminal.backend()
+---
+"◆ prt 4.0.11  ·  desc --pr  ·  Revisão                                          "
+"proposta pronta — conteúdo atual preservado  ·  ███████████████████████  ·  100%"
+"╭ Atual ───────────────────────────────╮╭ Proposta ────────────────────────────╮"
+"│ # Título atual                       ││ # Título proposto                    │"
+"│                                      ││                                      │"
+"│ Descrição atual                      ││ Body proposto                        │"
+"│ - nota humana                        ││ - [ ] validar                        │"
+"│                                      ││                                      │"
+"│                                      ││                                      │"
+"│                                      ││                                      │"
+"│                                      ││                                      │"
+"│                                      ││                                      │"
+"│                                      ││                                      │"
+"│                                      ││                                      │"
+"│                                      ││                                      │"
+"│                                      ││                                      │"
+"│                                      ││                                      │"
+"│                                      ││                                      │"
+"│                                      ││                                      │"
+"│                                      ││                                      │"
+"│                                      ││                                      │"
+"│                                      ││                                      │"
+"╰──────────────────────────────────────╯╰──────────────────────────────────────╯"
+"e editar · Enter confirmar · q/Esc cancelar · j/k rolar · ? ajuda               "

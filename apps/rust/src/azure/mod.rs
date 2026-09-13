@@ -32,7 +32,7 @@ fn encode_segment(value: &str) -> String {
 #[derive(Debug, Clone)]
 pub struct AzureClient {
     inner: reqwest::Client,
-    organization: String,
+    base_url: String,
     pat: String,
     request_timeout: Option<Duration>,
 }
@@ -83,9 +83,29 @@ impl AzureClient {
     fn build(organization: &str, pat: &str, request_timeout: Option<Duration>) -> Self {
         Self {
             inner: reqwest::Client::new(),
-            organization: organization.to_owned(),
+            base_url: format!("https://dev.azure.com/{organization}/"),
             pat: pat.trim().to_owned(),
             request_timeout,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_for_test(base_url: &str, pat: &str) -> Self {
+        Self {
+            inner: reqwest::Client::new(),
+            base_url: format!("{}/", base_url.trim_end_matches('/')),
+            pat: pat.trim().to_owned(),
+            request_timeout: None,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_for_test_with_timeout(base_url: &str, pat: &str, timeout: Duration) -> Self {
+        Self {
+            inner: reqwest::Client::new(),
+            base_url: format!("{}/", base_url.trim_end_matches('/')),
+            pat: pat.trim().to_owned(),
+            request_timeout: Some(timeout),
         }
     }
 
@@ -103,8 +123,8 @@ impl AzureClient {
     fn url(&self, path: &str) -> String {
         let separator = if path.contains('?') { '&' } else { '?' };
         format!(
-            "https://dev.azure.com/{}/{}{}api-version=7.1",
-            self.organization,
+            "{}{}{}api-version=7.1",
+            self.base_url,
             path.trim_start_matches('/'),
             separator,
         )
@@ -117,7 +137,7 @@ impl AzureClient {
     /// Retorna [`AppError::Azure`] em status >= 300 ou falha de transporte.
     pub async fn get<T: for<'de> Deserialize<'de>>(&self, path: &str) -> Result<T> {
         let res = self
-            .apply_timeout(self.inner.get(self.url(path)))
+            .apply_timeout(self.get_builder(path))
             .header(ACCEPT, "application/json")
             .header(AUTHORIZATION, self.auth_header())
             .send()
@@ -131,6 +151,10 @@ impl AzureClient {
             });
         }
         decode_json(status, &body)
+    }
+
+    fn get_builder(&self, path: &str) -> reqwest::RequestBuilder {
+        self.inner.get(self.url(path))
     }
 
     /// GET em URL absoluta (ex.: `vssps` de identidades).
@@ -204,6 +228,31 @@ impl AzureClient {
             .patch(self.url(path))
             .header(CONTENT_TYPE, "application/json-patch+json");
         self.request(builder, body).await
+    }
+
+    /// PATCH com `Content-Type: application/json` (Git Pull Requests).
+    ///
+    /// Este método é separado de [`Self::patch`] porque Work Items exigem
+    /// `application/json-patch+json`, enquanto Git Pull Requests aceitam o
+    /// objeto JSON mínimo de atualização.
+    ///
+    /// # Errors
+    ///
+    /// Retorna [`AppError::Azure`] em status >= 300 ou payload inválido e
+    /// [`AppError::Http`] em falha de transporte.
+    pub async fn patch_json<B: Serialize, T: for<'de> Deserialize<'de>>(
+        &self,
+        path: &str,
+        body: &B,
+    ) -> Result<T> {
+        let builder = self.json_patch_builder(path);
+        self.request(builder, body).await
+    }
+
+    fn json_patch_builder(&self, path: &str) -> reqwest::RequestBuilder {
+        self.inner
+            .patch(self.url(path))
+            .header(CONTENT_TYPE, "application/json")
     }
 
     /// Executa um `DELETE` que não precisa de corpo de resposta.

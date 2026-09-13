@@ -144,6 +144,30 @@ fn resolve_ref(branch: &str) -> Option<String> {
         .then_some(remote_branch)
 }
 
+fn resolve_pull_request_ref_with<F>(remote_ref: &str, command: &mut F) -> Option<String>
+where
+    F: FnMut(&[&str]) -> Result<String>,
+{
+    let branch = remote_ref.strip_prefix("refs/heads/")?;
+    if branch.is_empty() {
+        return None;
+    }
+    if command(&["rev-parse", "--verify", remote_ref]).is_ok() {
+        return Some(remote_ref.to_owned());
+    }
+    let origin_ref = format!("origin/{branch}");
+    command(&["rev-parse", "--verify", &origin_ref])
+        .is_ok()
+        .then_some(origin_ref)
+}
+
+fn pull_request_ranges(source: &str, target: &str) -> (String, String) {
+    (
+        format!("{target}...{source}"),
+        format!("{target}..{source}"),
+    )
+}
+
 /// Faz parse do remote `origin` (ssh, modern e legacy) para Azure.
 #[must_use]
 pub fn parse_azure_remote(url: &str) -> Option<RepositoryRemote> {
@@ -196,6 +220,90 @@ pub fn parse_azure_remote(url: &str) -> Option<RepositoryRemote> {
     None
 }
 
+/// Lê o remote `origin` sem inferir branch ou base.
+///
+/// # Errors
+///
+/// Retorna [`AppError::Git`] somente quando o comando Git falha por uma razão
+/// diferente de `origin` ausente; um remote não parseável vira `None`.
+pub fn origin_remote() -> Result<Option<RepositoryRemote>> {
+    let Ok(url) = git(&["remote", "get-url", "origin"]) else {
+        return Ok(None);
+    };
+    Ok(parse_azure_remote(&url))
+}
+
+/// Coleta diff e log usando exclusivamente as refs retornadas pelo PR.
+///
+/// A resolução aceita a ref local `refs/heads/<branch>` ou a correspondente
+/// `origin/<branch>`. Não faz fetch e não escolhe uma base alternativa.
+///
+/// # Errors
+///
+/// Retorna [`AppError::Git`] quando source/target estão ausentes, quando uma
+/// ref não pode ser resolvida ou quando o Git falha ao coletar o contexto.
+pub fn collect_for_refs(source_ref: &str, target_ref: &str) -> Result<ChangeContext> {
+    let remote = origin_remote()?;
+    collect_for_refs_with(source_ref, target_ref, git, remote)
+}
+
+fn collect_for_refs_with<F>(
+    source_ref: &str,
+    target_ref: &str,
+    mut command: F,
+    remote: Option<RepositoryRemote>,
+) -> Result<ChangeContext>
+where
+    F: FnMut(&[&str]) -> Result<String>,
+{
+    let source_branch = source_ref
+        .strip_prefix("refs/heads/")
+        .filter(|branch| !branch.is_empty())
+        .ok_or_else(|| AppError::Git {
+            message: "sourceRefName ausente ou inválido; atualize/fetch das refs do PR".to_owned(),
+        })?;
+    if target_ref
+        .strip_prefix("refs/heads/")
+        .is_none_or(str::is_empty)
+    {
+        return Err(AppError::Git {
+            message: "targetRefName ausente ou inválido; atualize/fetch das refs do PR".to_owned(),
+        });
+    }
+    let source =
+        resolve_pull_request_ref_with(source_ref, &mut command).ok_or_else(|| AppError::Git {
+            message: format!(
+                "ref source {source_ref} não encontrada localmente; atualize/fetch as refs do PR"
+            ),
+        })?;
+    let target =
+        resolve_pull_request_ref_with(target_ref, &mut command).ok_or_else(|| AppError::Git {
+            message: format!(
+                "ref target {target_ref} não encontrada localmente; atualize/fetch as refs do PR"
+            ),
+        })?;
+    let (diff_range, log_range) = pull_request_ranges(&source, &target);
+    let diff_raw = command(&["diff", &diff_range])?;
+    let diff_original_lines = diff_raw.lines().count();
+    let diff = diff_raw
+        .lines()
+        .take(MAX_DIFF_LINES)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let log = command(&["log", "--oneline", "-50", &log_range])?;
+    Ok(ChangeContext {
+        branch: source_branch.to_owned(),
+        source_ref: source_ref.to_owned(),
+        base_branch: target,
+        sprint_branch: String::new(),
+        diff,
+        diff_original_lines,
+        log,
+        work_item_id: work_item_from_branch(source_branch),
+        remote,
+    })
+}
+
 /// Coleta o contexto Git (branch atual ou `source` explícito).
 ///
 /// # Errors
@@ -244,8 +352,7 @@ pub fn collect(source: Option<&str>) -> Result<ChangeContext> {
         "-50",
         &format!("{base_branch}..{branch}"),
     ])?;
-    let remote_url = git(&["remote", "get-url", "origin"]).ok();
-    let remote = remote_url.as_deref().and_then(parse_azure_remote);
+    let remote = origin_remote()?;
     let work_item_id = work_item_from_branch(&branch);
 
     Ok(ChangeContext {
@@ -313,5 +420,104 @@ mod tests {
         let r = parse_azure_remote("https://dev.azure.com/minhaorg/meuproj/_git/meurepo").unwrap();
         assert_eq!(r.organization, "minhaorg");
         assert_eq!(r.repository, "meurepo");
+    }
+
+    #[test]
+    fn collect_for_refs_should_construct_exact_diff_and_log_ranges() {
+        let mut calls = Vec::new();
+        let mut command = |args: &[&str]| {
+            calls.push(args.iter().map(|arg| (*arg).to_owned()).collect::<Vec<_>>());
+            if args == ["rev-parse", "--verify", "refs/heads/feature/42"] {
+                return Err(AppError::Git {
+                    message: "local ref absent".to_owned(),
+                });
+            }
+            if args == ["rev-parse", "--verify", "refs/heads/dev"] {
+                return Err(AppError::Git {
+                    message: "local ref absent".to_owned(),
+                });
+            }
+            if args == ["rev-parse", "--verify", "origin/feature/42"]
+                || args == ["rev-parse", "--verify", "origin/dev"]
+            {
+                return Ok("resolved".to_owned());
+            }
+            if args == ["diff", "origin/dev...origin/feature/42"] {
+                return Ok("diff output".to_owned());
+            }
+            if args == ["log", "--oneline", "-50", "origin/dev..origin/feature/42"] {
+                return Ok("log output".to_owned());
+            }
+            Err(AppError::Git {
+                message: format!("comando não roteado: {}", args.join(" ")),
+            })
+        };
+        let context = collect_for_refs_with(
+            "refs/heads/feature/42",
+            "refs/heads/dev",
+            &mut command,
+            Some(RepositoryRemote {
+                organization: "org".to_owned(),
+                project: "project".to_owned(),
+                repository: "repo".to_owned(),
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(context.source_ref, "refs/heads/feature/42");
+        assert_eq!(context.base_branch, "origin/dev");
+        assert_eq!(context.diff, "diff output");
+        assert_eq!(context.log, "log output");
+        assert!(calls.contains(&vec![
+            "diff".to_owned(),
+            "origin/dev...origin/feature/42".to_owned()
+        ]));
+        assert!(calls.contains(&vec![
+            "log".to_owned(),
+            "--oneline".to_owned(),
+            "-50".to_owned(),
+            "origin/dev..origin/feature/42".to_owned()
+        ]));
+    }
+
+    #[test]
+    fn exact_pr_refs_should_reject_missing_or_unresolvable_refs_without_fallback() {
+        let error = collect_for_refs("", "refs/heads/dev").unwrap_err();
+        assert!(error.to_string().contains("sourceRefName"));
+
+        let error = collect_for_refs("refs/heads/not-local", "refs/heads/dev").unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("not-local"));
+        assert!(message.contains("fetch"));
+        assert!(!message.contains("fallback"));
+
+        let error = collect_for_refs("refs/heads/not-local", "").unwrap_err();
+        assert!(error.to_string().contains("targetRefName"));
+
+        let mut calls = Vec::new();
+        let mut command = |args: &[&str]| {
+            calls.push(args.iter().map(|arg| (*arg).to_owned()).collect::<Vec<_>>());
+            if args == ["rev-parse", "--verify", "refs/heads/feature/42"] {
+                return Ok("source sha".to_owned());
+            }
+            Err(AppError::Git {
+                message: "ref ausente".to_owned(),
+            })
+        };
+        let error = collect_for_refs_with(
+            "refs/heads/feature/42",
+            "refs/heads/not-local-target",
+            &mut command,
+            None,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("not-local-target"));
+        assert!(error.to_string().contains("fetch"));
+        assert_eq!(calls.len(), 3);
+        assert!(!calls.iter().any(|call| {
+            call.iter().any(|arg| {
+                matches!(arg.as_str(), "dev" | "main" | "master") || arg.starts_with("sprint/")
+            })
+        }));
     }
 }
