@@ -236,11 +236,8 @@ async fn run_update(options: &prt::cli::CliOptions) -> anyhow::Result<()> {
     use ratatui::text::Text;
 
     let tty = std::io::IsTerminal::is_terminal(&std::io::stdout());
-    if !tty && !options.output.dry_run {
-        return Err(anyhow::Error::new(prt::error::AppError::cli(
-            "atualização de PR requer terminal interativo; use --dry-run para apenas visualizar o prompt",
-        )));
-    }
+    prt::cli::ensure_update_execution_mode(tty, options.output.dry_run)
+        .map_err(anyhow::Error::new)?;
     let prep = update_pull_request::prepare(options)
         .await
         .context("falha ao preparar atualização do PR")?;

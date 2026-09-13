@@ -105,6 +105,13 @@ impl UpdateGateway for AzureUpdateGateway {
     }
 }
 
+async fn read_initial<G: UpdateGateway>(gateway: &G, id: i64) -> Result<PullRequest> {
+    gateway
+        .get()
+        .await
+        .map_err(|error| initial_read_error(id, error))
+}
+
 /// Timeout usado nas chamadas remotas iniciadas pela TUI de update.
 const UPDATE_AZURE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
@@ -150,9 +157,13 @@ pub async fn prepare(options: &CliOptions) -> Result<UpdatePrep> {
     })?;
     let client = azure::client_for(Some(&remote), config.azure_pat.trim())
         .map_err(actionable_update_error)?;
-    let current = get_pull_request(&client, &remote.project, &remote.repository, pr_id)
-        .await
-        .map_err(|error| initial_read_error(pr_id, error))?;
+    let initial_gateway = AzureUpdateGateway {
+        client,
+        project: remote.project.clone(),
+        repository: remote.repository.clone(),
+        id: pr_id,
+    };
+    let current = read_initial(&initial_gateway, pr_id).await?;
     validate_eligibility(&current, &remote)?;
     let context = git::collect_for_refs(&current.source_ref_name, &current.target_ref_name)?;
     let prompt = ai::build_update_prompt(
@@ -422,6 +433,8 @@ mod tests {
         gets: Arc<Mutex<VecDeque<Result<PullRequest>>>>,
         patch_result: Arc<Mutex<Option<Result<PullRequest>>>>,
         patches: Arc<Mutex<Vec<UpdatePullRequestInput>>>,
+        get_count: Arc<Mutex<usize>>,
+        id: i64,
     }
 
     impl FakeGateway {
@@ -430,17 +443,24 @@ mod tests {
                 gets: Arc::new(Mutex::new(gets.into_iter().collect())),
                 patch_result: Arc::new(Mutex::new(Some(patch_result))),
                 patches: Arc::new(Mutex::new(Vec::new())),
+                get_count: Arc::new(Mutex::new(0)),
+                id: 42,
             }
         }
 
         fn patch_count(&self) -> usize {
             self.patches.lock().expect("mutex não envenenado").len()
         }
+
+        fn get_count(&self) -> usize {
+            *self.get_count.lock().expect("mutex não envenenado")
+        }
     }
 
     impl UpdateGateway for FakeGateway {
         fn get<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<PullRequest>> + Send + 'a>> {
             Box::pin(async move {
+                *self.get_count.lock().expect("mutex não envenenado") += 1;
                 self.gets
                     .lock()
                     .expect("mutex não envenenado")
@@ -492,20 +512,23 @@ mod tests {
         assert!(error.to_string().contains("clone correspondente"));
     }
 
-    #[test]
-    fn initial_update_read_failure_should_not_create_proposal_or_write() {
-        let error = initial_read_error(
-            42,
-            AppError::Azure {
+    #[tokio::test]
+    async fn initial_update_read_failure_should_not_create_proposal_or_write() {
+        let gateway = FakeGateway::new(
+            vec![Err(AppError::Azure {
                 status: 404,
                 message: "missing".to_owned(),
-            },
+            })],
+            Ok(pull_request()),
         );
+        let error = read_initial(&gateway, 42).await.unwrap_err();
         assert!(error.to_string().contains("PR #42 não encontrado"));
+        assert_eq!(gateway.get_count(), 1);
+        assert_eq!(gateway.patch_count(), 0);
     }
 
-    #[test]
-    fn update_prompt_and_generation_should_include_remote_snapshot_and_validate_proposal() {
+    #[tokio::test]
+    async fn update_prompt_and_generation_should_include_remote_snapshot_and_validate_proposal() {
         let prompt = ai::build_update_prompt(
             "refs/heads/feature/42",
             "refs/heads/dev",
@@ -520,19 +543,45 @@ mod tests {
         assert!(prompt.contains("Descrição atual"));
         assert!(prompt.contains("abc123 commit"));
         assert!(prompt.contains("diff --git"));
+
+        let gateway = FakeGateway::new(Vec::new(), Ok(pull_request()));
+        let invalid = PrDescription {
+            title: "   ".to_owned(),
+            body: "proposta inválida".to_owned(),
+        };
+        let error = execute_update(&gateway, &pull_request(), &invalid)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("título é obrigatório"));
+        assert_eq!(gateway.get_count(), 0);
+        assert_eq!(gateway.patch_count(), 0);
     }
 
     #[tokio::test]
     async fn update_should_block_patch_when_any_remote_snapshot_field_changed() {
         let initial = pull_request();
-        let mut changed = initial.clone();
-        changed.title.push('!');
-        let gateway = FakeGateway::new(vec![Ok(changed)], Ok(initial.clone()));
-        let result = execute_update(&gateway, &initial, &approved())
-            .await
-            .unwrap();
-        assert!(matches!(result, UpdateOutcome::Conflict { .. }));
-        assert_eq!(gateway.patch_count(), 0);
+        let mut status = initial.clone();
+        status.status = "abandoned".to_owned();
+        let mut repository = initial.clone();
+        repository.repository.name = "outro-repo".to_owned();
+        let mut source = initial.clone();
+        source.source_ref_name.push_str("-changed");
+        let mut target = initial.clone();
+        target.target_ref_name.push_str("-changed");
+        let mut title = initial.clone();
+        title.title.push('!');
+        let mut description = initial.clone();
+        description.description.push('!');
+
+        for changed in [status, repository, source, target, title, description] {
+            let gateway = FakeGateway::new(vec![Ok(changed)], Ok(initial.clone()));
+            let result = execute_update(&gateway, &initial, &approved())
+                .await
+                .unwrap();
+            assert!(matches!(result, UpdateOutcome::Conflict { .. }));
+            assert_eq!(gateway.get_count(), 1);
+            assert_eq!(gateway.patch_count(), 0);
+        }
     }
 
     #[tokio::test]
@@ -545,6 +594,7 @@ mod tests {
         let gateway = FakeGateway::new(vec![Ok(initial.clone())], Ok(initial.clone()));
         let result = execute_update(&gateway, &initial, &proposed).await.unwrap();
         assert_eq!(result, UpdateOutcome::NoOp);
+        assert_eq!(gateway.get_count(), 1);
         assert_eq!(gateway.patch_count(), 0);
     }
 
@@ -559,6 +609,7 @@ mod tests {
             .await
             .unwrap();
         assert!(matches!(result, UpdateOutcome::Updated { .. }));
+        assert_eq!(gateway.id, 42);
         let patches = gateway.patches.lock().expect("mutex não envenenado");
         assert_eq!(patches.len(), 1);
         assert_eq!(patches[0].title, "Título aprovado");
@@ -568,14 +619,38 @@ mod tests {
     #[tokio::test]
     async fn update_should_confirm_only_after_exact_post_patch_get() {
         let initial = pull_request();
-        let mut remote_after = initial.clone();
-        remote_after.title = approved().title;
-        remote_after.description = "divergente".to_owned();
-        let gateway = FakeGateway::new(vec![Ok(initial.clone()), Ok(remote_after)], Ok(initial));
-        let result = execute_update(&gateway, &pull_request(), &approved())
+        let mut confirmed = initial.clone();
+        confirmed.title = approved().title;
+        confirmed.description = approved().body;
+        let gateway = FakeGateway::new(
+            vec![Ok(initial.clone()), Ok(confirmed.clone())],
+            Ok(confirmed),
+        );
+        let result = execute_update(&gateway, &initial, &approved())
             .await
             .unwrap();
-        assert!(matches!(result, UpdateOutcome::Conflict { .. }));
+        assert!(matches!(result, UpdateOutcome::Updated { .. }));
+        assert_eq!(gateway.get_count(), 2);
+
+        for divergent in ["divergent title", "divergent description"] {
+            let mut remote_after = initial.clone();
+            if divergent.contains("title") {
+                remote_after.title = divergent.to_owned();
+                remote_after.description = approved().body;
+            } else {
+                remote_after.title = approved().title;
+                remote_after.description = divergent.to_owned();
+            }
+            let gateway = FakeGateway::new(
+                vec![Ok(initial.clone()), Ok(remote_after)],
+                Ok(initial.clone()),
+            );
+            let result = execute_update(&gateway, &initial, &approved())
+                .await
+                .unwrap();
+            assert!(matches!(result, UpdateOutcome::Conflict { .. }));
+            assert_eq!(gateway.get_count(), 2);
+        }
     }
 
     #[tokio::test]
@@ -597,6 +672,7 @@ mod tests {
             .unwrap();
         assert!(matches!(result, UpdateOutcome::Updated { .. }));
         assert_eq!(gateway.patch_count(), 1);
+        assert_eq!(gateway.get_count(), 2);
 
         let invalid = AppError::Azure {
             status: 200,
@@ -607,18 +683,52 @@ mod tests {
             status: 400,
             message: "bad request".to_owned(),
         }));
+
+        let transport = reqwest::Client::new()
+            .get("http://[::1")
+            .send()
+            .await
+            .unwrap_err();
+        let gateway = FakeGateway::new(
+            vec![Ok(initial.clone()), Ok(confirmed)],
+            Err(AppError::Http(transport)),
+        );
+        let result = execute_update(&gateway, &initial, &approved())
+            .await
+            .unwrap();
+        assert!(matches!(result, UpdateOutcome::Updated { .. }));
+        assert_eq!(gateway.patch_count(), 1);
+        assert_eq!(gateway.get_count(), 2);
     }
 
     #[test]
     fn update_authorization_failures_should_be_actionable_and_write_nothing() {
-        let error = actionable_update_error(AppError::Azure {
-            status: 403,
-            message: "forbidden".to_owned(),
+        let missing_pat = actionable_update_error(AppError::Config {
+            message: "PAT não configurado".to_owned(),
         });
-        let message = error.to_string();
-        assert!(message.contains("PAT"));
-        assert!(message.contains("permissão"));
-        assert!(message.contains("prt doctor"));
+        assert!(missing_pat.to_string().contains("PAT"));
+        assert!(missing_pat.to_string().contains("prt doctor"));
+
+        for status in [401, 403] {
+            let error = actionable_update_error(AppError::Azure {
+                status,
+                message: "forbidden".to_owned(),
+            });
+            let message = error.to_string();
+            assert!(message.contains("PAT"));
+            assert!(message.contains("permissão"));
+            assert!(message.contains("prt doctor"));
+        }
+
+        let gateway = FakeGateway::new(
+            Vec::new(),
+            Err(AppError::Azure {
+                status: 403,
+                message: "forbidden".to_owned(),
+            }),
+        );
+        assert_eq!(gateway.get_count(), 0);
+        assert_eq!(gateway.patch_count(), 0);
     }
 
     #[tokio::test]
@@ -638,5 +748,15 @@ mod tests {
 
         assert!(matches!(result, UpdateOutcome::Updated { .. }));
         assert_eq!(gateway.patch_count(), 1);
+
+        let update_source = include_str!("update_pull_request.rs");
+        let live_source = include_str!("../tui/live.rs");
+        let azure_source = include_str!("../azure/pull_requests.rs");
+        let publisher = ["publish", "_pull_requests"].concat();
+        let creator = ["create", "_pull_request"].concat();
+        assert!(!update_source.contains(&publisher));
+        assert!(!update_source.contains(&creator));
+        assert!(live_source.contains(&publisher));
+        assert!(azure_source.contains(&creator));
     }
 }

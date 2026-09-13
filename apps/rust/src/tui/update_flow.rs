@@ -251,6 +251,17 @@ impl UpdateApp {
         Some(proposal)
     }
 
+    /// Congela a proposta e marca o início da operação remota.
+    ///
+    /// A chamada remota só deve ser agendada pelo chamador depois que este
+    /// método devolver o conteúdo congelado.
+    pub fn begin_update(&mut self) -> Option<PrDescription> {
+        let proposal = self.confirm()?;
+        self.phase = UpdatePhase::Updating;
+        self.set_phase_label("relendo e atualizando…");
+        Some(proposal)
+    }
+
     /// Retorna do conflito para uma nova revisão do snapshot atualizado.
     pub fn revisit_conflict(&mut self) -> bool {
         if self.phase != UpdatePhase::Conflict {
@@ -600,9 +611,7 @@ fn handle_key(
             app.revisit_conflict();
         }
         KeyCode::Enter if app.phase == UpdatePhase::Review => {
-            if let Some(approved) = app.confirm() {
-                app.phase = UpdatePhase::Updating;
-                app.set_phase_label("relendo e atualizando…");
+            if let Some(approved) = app.begin_update() {
                 let gateway = gateway.clone();
                 let initial = app.current.clone();
                 let tx = tx.clone();
@@ -837,6 +846,10 @@ mod tests {
                 .handle_content_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL,))
         );
         assert!(body_too_long.content_edit.is_some());
+        assert_eq!(
+            body_too_long.content_edit.as_ref().unwrap().error,
+            Some(crate::tui::content_editor::ContentValidationError::BodyTooLong { length: 4000 })
+        );
 
         let mut body_at_limit = review_app();
         assert!(body_at_limit.open_content_edit());
@@ -847,6 +860,17 @@ mod tests {
                 .handle_content_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL,))
         );
         assert!(body_at_limit.content_edit.is_none());
+
+        let mut empty_body = review_app();
+        assert!(empty_body.open_content_edit());
+        empty_body.content_edit.as_mut().unwrap().body =
+            crate::tui::content_editor::TextEditor::new("", false);
+        assert!(
+            empty_body
+                .handle_content_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL,))
+        );
+        assert!(empty_body.content_edit.is_none());
+        assert_eq!(empty_body.proposal.unwrap().body, "");
     }
 
     #[test]
@@ -864,15 +888,16 @@ mod tests {
         assert_eq!(app.proposal, original);
         assert_eq!(app.current.title, "Título atual");
         assert!(app.frozen_content.is_none());
+        assert_eq!(app.phase, UpdatePhase::Review);
     }
 
     #[test]
     fn update_should_freeze_approved_content_before_remote_operation() {
         let mut app = review_app();
         let approved = app.proposal.clone().unwrap();
-        assert_eq!(app.confirm(), Some(approved.clone()));
+        assert_eq!(app.begin_update(), Some(approved.clone()));
         assert_eq!(app.frozen_content, Some(approved));
-        assert_eq!(app.phase, UpdatePhase::Confirming);
+        assert_eq!(app.phase, UpdatePhase::Updating);
         assert!(!app.open_content_edit());
         app.on_outcome(Ok(UpdateOutcome::Conflict {
             remote: pull_request(),

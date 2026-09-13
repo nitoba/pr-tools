@@ -817,6 +817,16 @@ mod tests {
         assert_eq!(pr.description, "Body");
 
         let client = AzureClient::new("org", "pat");
+        let get_request = client
+            .build_get_request("project/_apis/git/repositories/repo/pullRequests/42")
+            .unwrap();
+        assert_eq!(get_request.method(), reqwest::Method::GET);
+        assert_eq!(
+            get_request.url().path(),
+            "/org/project/_apis/git/repositories/repo/pullRequests/42"
+        );
+        assert_eq!(get_request.url().query(), Some("api-version=7.1"));
+
         let request = client
             .build_json_patch_request(
                 "project/_apis/git/repositories/repo/pullRequests/42",

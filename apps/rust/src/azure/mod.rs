@@ -117,7 +117,7 @@ impl AzureClient {
     /// Retorna [`AppError::Azure`] em status >= 300 ou falha de transporte.
     pub async fn get<T: for<'de> Deserialize<'de>>(&self, path: &str) -> Result<T> {
         let res = self
-            .apply_timeout(self.inner.get(self.url(path)))
+            .apply_timeout(self.get_builder(path))
             .header(ACCEPT, "application/json")
             .header(AUTHORIZATION, self.auth_header())
             .send()
@@ -131,6 +131,18 @@ impl AzureClient {
             });
         }
         decode_json(status, &body)
+    }
+
+    fn get_builder(&self, path: &str) -> reqwest::RequestBuilder {
+        self.inner.get(self.url(path))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn build_get_request(
+        &self,
+        path: &str,
+    ) -> std::result::Result<reqwest::Request, reqwest::Error> {
+        self.get_builder(path).build()
     }
 
     /// GET em URL absoluta (ex.: `vssps` de identidades).

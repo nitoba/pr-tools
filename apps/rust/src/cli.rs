@@ -523,6 +523,24 @@ where
     build_options(sub)
 }
 
+/// Verifica se o fluxo de atualização pode iniciar a execução escolhida.
+///
+/// O update existente só gera/escreve dentro de uma TUI; sem terminal, apenas
+/// o dry-run é permitido e ele para antes de qualquer provider ou writer.
+///
+/// # Errors
+///
+/// Retorna [`AppError::Cli`] quando a operação pede escrita sem terminal e sem
+/// `--dry-run`.
+pub fn ensure_update_execution_mode(tty: bool, dry_run: bool) -> Result<()> {
+    if !tty && !dry_run {
+        return Err(AppError::cli(
+            "atualização de PR requer terminal interativo; use --dry-run para apenas visualizar o prompt",
+        ));
+    }
+    Ok(())
+}
+
 /// Texto de ajuda (espelha `helpText` do Dart).
 #[must_use]
 pub fn help_text() -> String {
@@ -653,6 +671,11 @@ mod tests {
     fn update_dry_run_and_non_interactive_combinations_should_not_start_provider_or_writer() {
         let options = parse_cli(["prt", "desc", "--pr", "42", "--dry-run"]).unwrap();
         assert!(options.output.dry_run);
+        assert!(ensure_update_execution_mode(false, options.output.dry_run).is_ok());
+        assert!(ensure_update_execution_mode(true, false).is_ok());
+        let non_interactive = ensure_update_execution_mode(false, false).unwrap_err();
+        assert_eq!(non_interactive.exit_code(), 2);
+        assert!(non_interactive.to_string().contains("terminal interativo"));
         for extra in ["--raw", "--create", "--no-create"] {
             let error = parse_cli(["prt", "desc", "--pr", "42", extra]).unwrap_err();
             assert_eq!(error.exit_code(), 2);
