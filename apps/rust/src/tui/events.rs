@@ -59,6 +59,8 @@ pub enum LiveOutcome {
     },
     /// Usuário abortou (q/Esc/Ctrl-C).
     Aborted,
+    /// Usuário descartou explicitamente a sessão local.
+    Discarded,
     /// Falha exibida na TUI.
     Failed(String),
 }

@@ -15,6 +15,7 @@ use crate::azure::pull_requests::{PublishedPr, PullRequestCandidate};
 use crate::features::describe::{
     DescribePrep, FunctionalContextStatus, PublishFailure, PublishFailureKind,
 };
+use crate::features::session::{SessionSnapshot, TargetState};
 use crate::features::test_card::TestCardLaunchContext;
 
 /// Fase do fluxo.
@@ -95,6 +96,8 @@ pub(crate) enum CandidateActivity {
 pub struct DescribeApp {
     /// Branch de origem.
     pub branch: String,
+    /// UUID da sessão persistida, quando a revisão já foi materializada.
+    pub session_id: Option<String>,
     /// Targets (abas).
     pub targets: Vec<String>,
     /// Aba selecionada.
@@ -147,6 +150,8 @@ pub struct DescribeApp {
     pub publish_setup: Option<PublishSetup>,
     /// Motivo quando `publish_setup` é `None`.
     pub publish_blocked: Option<String>,
+    /// Aviso de fingerprint antigo que exige confirmação explícita.
+    pub publish_context_warning: Option<String>,
     /// Diálogo modal aberto (publicação).
     pub publish_dialog: Option<PublishDialog>,
     /// Reviewers por target (paralelo a `targets`).
@@ -186,6 +191,7 @@ impl DescribeApp {
     ) -> Self {
         Self {
             branch: branch.to_owned(),
+            session_id: None,
             targets: targets.to_vec(),
             selected_target: 0,
             work_item_id: work_item_id.to_owned(),
@@ -212,6 +218,7 @@ impl DescribeApp {
             create_initial,
             publish_setup,
             publish_blocked,
+            publish_context_warning: None,
             publish_dialog: None,
             reviewers: Vec::new(),
             reviewer_idx: 0,
@@ -225,6 +232,101 @@ impl DescribeApp {
             candidate_message: None,
             launch_prep: None,
         }
+    }
+
+    /// Associa a tela à sessão local criada no Review.
+    pub fn set_session_id(&mut self, session_id: String) {
+        self.session_id = Some(session_id);
+    }
+
+    /// Restaura conteúdo e receipts sem iniciar o backend de geração.
+    pub fn restore_session(&mut self, snapshot: &SessionSnapshot) {
+        self.session_id = Some(snapshot.session_id.clone());
+        self.desc = Some(PrDescription {
+            title: snapshot.title.clone(),
+            body: snapshot.body.clone(),
+        });
+        self.raw_final.clear();
+        self.targets = snapshot
+            .targets
+            .iter()
+            .map(|target| target.target.clone())
+            .collect();
+        self.reviewers.clone_from(&snapshot.reviewers);
+        self.published = snapshot
+            .targets
+            .iter()
+            .filter_map(|target| match &target.state {
+                TargetState::Confirmed { id, url } => Some(PublishedPr {
+                    target: target.target.clone(),
+                    id: *id,
+                    url: url.clone(),
+                }),
+                TargetState::Pending
+                | TargetState::AttemptingOrUncertain { .. }
+                | TargetState::Failed { .. } => None,
+            })
+            .collect();
+        self.published_urls = self.published.iter().map(|item| item.url.clone()).collect();
+        if let Some(target) = snapshot
+            .targets
+            .iter()
+            .find(|target| matches!(target.state, TargetState::AttemptingOrUncertain { .. }))
+        {
+            let message = match &target.state {
+                TargetState::AttemptingOrUncertain { message } => {
+                    message.clone().unwrap_or_else(|| {
+                        "resultado remoto incerto; reconcilie antes de reenviar".to_owned()
+                    })
+                }
+                TargetState::Pending
+                | TargetState::Confirmed { .. }
+                | TargetState::Failed { .. } => String::new(),
+            };
+            self.publish_failure = Some(PublishFailure {
+                message,
+                kind: PublishFailureKind::OutcomeUnknown,
+                target: Some(target.target.clone()),
+            });
+            self.publish_dialog = Some(PublishDialog::PublishRecovery(1));
+        }
+        self.phase = Phase::Review;
+        "revisão — sessão retomada".clone_into(&mut self.phase_label);
+        self.progress = 1.0;
+        "rascunho restaurado".clone_into(&mut self.progress_label);
+        self.error = None;
+    }
+
+    /// Define o aviso de divergência que deve acompanhar a publicação.
+    pub fn set_publish_context_warning(&mut self, warning: Option<String>) {
+        self.publish_context_warning = warning;
+    }
+
+    /// Retorna o estado visual durável do target.
+    #[must_use]
+    pub fn target_state(&self, target: &str) -> &'static str {
+        if self.published.iter().any(|item| item.target == target) {
+            return "confirmed";
+        }
+        if self
+            .publish_failure
+            .as_ref()
+            .is_some_and(|failure| failure.target.as_deref() == Some(target))
+        {
+            return if self
+                .publish_failure
+                .as_ref()
+                .is_some_and(|failure| failure.kind == PublishFailureKind::OutcomeUnknown)
+            {
+                "attempting_or_uncertain"
+            } else {
+                "failed"
+            };
+        }
+        if self.current_publish_target.as_deref() == Some(target) {
+            return "attempting_or_uncertain";
+        }
+        "pending"
     }
 
     /// Instala o estado funcional preparado antes de iniciar o backend.
@@ -649,6 +751,10 @@ impl DescribeApp {
         if self.candidate_message.is_none() {
             self.candidates = candidates;
             self.candidates.truncate(8);
+            if self.candidates.is_empty() {
+                self.candidate_message =
+                    Some("nenhum candidato encontrado; escolha retry explicitamente".to_owned());
+            }
         }
         if let Some(PublishDialog::CandidateList { selected }) = self.publish_dialog {
             self.publish_dialog = Some(PublishDialog::CandidateList {
@@ -920,5 +1026,87 @@ mod tests {
         assert_eq!(a.published.len(), 2);
         assert_eq!(a.published[1].id, 8);
         assert!(a.remaining_publish_targets().is_empty());
+    }
+
+    #[test]
+    fn renders_session_id_and_target_states() {
+        let mut a = app();
+        a.set_session_id("550e8400-e29b-41d4-a716-446655440000".to_owned());
+        assert_eq!(a.target_state("dev"), "pending");
+        a.current_publish_target = Some("dev".to_owned());
+        assert_eq!(a.target_state("dev"), "attempting_or_uncertain");
+        a.on_backend(BackendEvent::PublishedOne(PublishedPr {
+            target: "dev".to_owned(),
+            id: 42,
+            url: "https://example.test/pr/42".to_owned(),
+        }));
+        assert_eq!(a.target_state("dev"), "confirmed");
+        a.on_backend(BackendEvent::PublishFailed(PublishFailure {
+            message: "negado".to_owned(),
+            kind: PublishFailureKind::Confirmed,
+            target: Some("sprint/12".to_owned()),
+        }));
+        assert_eq!(a.target_state("sprint/12"), "failed");
+        assert!(a.session_id.is_some());
+    }
+
+    #[test]
+    fn confirmed_failure_persists_failed_and_remaining_pending() {
+        let mut a = app();
+        a.on_backend(BackendEvent::PublishFailed(PublishFailure {
+            message: "HTTP 403".to_owned(),
+            kind: PublishFailureKind::Confirmed,
+            target: Some("sprint/12".to_owned()),
+        }));
+        assert_eq!(a.target_state("sprint/12"), "failed");
+        assert_eq!(a.target_state("dev"), "pending");
+    }
+
+    #[test]
+    fn uncertain_target_requires_reconciliation_before_retry() {
+        let mut a = app();
+        a.on_backend(BackendEvent::PublishFailed(PublishFailure {
+            message: "resposta perdida".to_owned(),
+            kind: PublishFailureKind::OutcomeUnknown,
+            target: Some("dev".to_owned()),
+        }));
+        assert_eq!(a.target_state("dev"), "attempting_or_uncertain");
+        assert_eq!(a.publish_dialog, Some(PublishDialog::PublishRecovery(1)));
+    }
+
+    #[test]
+    fn adopting_candidate_confirms_without_create_request() {
+        let mut a = app();
+        a.on_backend(BackendEvent::PublishFailed(PublishFailure {
+            message: "resposta perdida".to_owned(),
+            kind: PublishFailureKind::OutcomeUnknown,
+            target: Some("dev".to_owned()),
+        }));
+        a.on_candidates_loaded(
+            vec![PullRequestCandidate {
+                target: "dev".to_owned(),
+                id: 42,
+                url: "https://example.test/pr/42".to_owned(),
+                title: "Título".to_owned(),
+                source_ref: format!("refs/heads/{}", a.branch),
+                target_ref: "refs/heads/dev".to_owned(),
+                created_at: String::new(),
+                work_item_matches: true,
+            }],
+            None,
+        );
+        assert!(a.adopt_candidate(0));
+        assert_eq!(a.target_state("dev"), "confirmed");
+    }
+
+    #[test]
+    fn zero_candidates_require_explicit_retry() {
+        let mut a = app();
+        a.on_candidates_loaded(Vec::new(), None);
+        assert!(
+            a.candidate_message
+                .as_deref()
+                .is_some_and(|message| message.contains("retry explicitamente"))
+        );
     }
 }

@@ -556,6 +556,11 @@ pub struct PublishedPr {
     pub url: String,
 }
 
+/// Callback que confirma a persistência de uma receipt antes do próximo target.
+pub type DurablePublishedCallback<'a> = &'a (dyn Fn(&PublishedPr) -> Result<()> + Sync);
+/// Callback que confirma a persistência do estado incerto antes do POST.
+pub type DurableTargetStartedCallback<'a> = &'a (dyn Fn(&str) -> Result<()> + Sync);
+
 /// Entrada da publicação (evita lista longa de parâmetros).
 pub struct PublishInput<'a> {
     /// Remote Azure.
@@ -577,8 +582,12 @@ pub struct PublishInput<'a> {
     /// Permite que uma UI mostre progresso real e preserve sucessos parciais
     /// quando um target posterior falhar.
     pub on_published: Option<&'a (dyn Fn(&PublishedPr) + Sync)>,
+    /// Persiste a receipt antes de permitir o próximo target.
+    pub on_published_durable: Option<DurablePublishedCallback<'a>>,
     /// Notifica a UI antes de qualquer chamada remota para um target.
     pub on_target_started: Option<&'a (dyn Fn(&str) + Sync)>,
+    /// Persiste o estado `attempting_or_uncertain` antes de qualquer chamada.
+    pub on_target_started_durable: Option<DurableTargetStartedCallback<'a>>,
 }
 
 /// Publica a descrição em todos os targets (espelha o publisher Dart).
@@ -613,6 +622,9 @@ pub async fn publish_pull_requests(
     let mut resolved: HashMap<String, String> = HashMap::new();
     let mut published = Vec::with_capacity(input.targets.len());
     for target in input.targets {
+        if let Some(on_target_started_durable) = input.on_target_started_durable {
+            on_target_started_durable(target)?;
+        }
         if let Some(on_target_started) = input.on_target_started {
             on_target_started(target);
         }
@@ -648,6 +660,9 @@ pub async fn publish_pull_requests(
             url: created.web_link().to_owned(),
         };
         published.push(item.clone());
+        if let Some(on_published_durable) = input.on_published_durable {
+            on_published_durable(&item)?;
+        }
         if let Some(on_published) = input.on_published {
             on_published(&item);
         }
@@ -1139,7 +1154,9 @@ mod tests {
                     String::new()
                 },
                 on_published: Some(&|item| published.lock().unwrap().push(item.clone())),
+                on_published_durable: None,
                 on_target_started: None,
+                on_target_started_durable: None,
             },
         )
         .await
@@ -1172,5 +1189,71 @@ mod tests {
         assert_eq!(first_body["targetRefName"], "refs/heads/sprint/12");
         assert_eq!(second_body["targetRefName"], "refs/heads/dev");
         server.join().unwrap();
+    }
+
+    #[tokio::test]
+    async fn confirmed_receipt_is_persisted_before_next_target() {
+        let (base_url, requests, server) = spawn_json_server(vec![
+            serde_json::to_string(&serde_json::json!({"id": "repo-id"})).unwrap(),
+            serde_json::to_string(&serde_json::json!({
+                "pullRequestId": 101,
+                "webUrl": "https://web/pr/101"
+            }))
+            .unwrap(),
+            serde_json::to_string(&serde_json::json!({
+                "pullRequestId": 102,
+                "webUrl": "https://web/pr/102"
+            }))
+            .unwrap(),
+        ]);
+        let client = AzureClient::new_for_test(&base_url, "pat");
+        let remote = crate::git::RepositoryRemote {
+            organization: "org".to_owned(),
+            project: "project".to_owned(),
+            repository: "repo".to_owned(),
+        };
+        let targets = ["dev".to_owned(), "sprint/12".to_owned()];
+        let events = std::sync::Mutex::new(Vec::new());
+        let on_started = |target: &str| events.lock().unwrap().push(format!("start:{target}"));
+        let on_confirmed = |item: &PublishedPr| {
+            events
+                .lock()
+                .unwrap()
+                .push(format!("confirmed:{}", item.target));
+            Ok(())
+        };
+        publish_pull_requests(
+            &client,
+            &PublishInput {
+                remote: &remote,
+                branch: "feature/42",
+                targets: &targets,
+                title: "Título",
+                body: "Descrição",
+                work_item_ids: &[],
+                reviewer_for: &|_| String::new(),
+                on_published: None,
+                on_published_durable: Some(&on_confirmed),
+                on_target_started: Some(&on_started),
+                on_target_started_durable: None,
+            },
+        )
+        .await
+        .expect("publicação");
+        assert_eq!(
+            *events.lock().unwrap(),
+            [
+                "start:dev",
+                "confirmed:dev",
+                "start:sprint/12",
+                "confirmed:sprint/12"
+            ]
+        );
+        let requests = (0..3)
+            .map(|_| requests.recv().expect("requisição"))
+            .collect::<Vec<_>>();
+        assert_eq!(requests[1].method, "POST");
+        assert_eq!(requests[2].method, "POST");
+        server.join().expect("servidor");
     }
 }

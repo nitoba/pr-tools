@@ -38,6 +38,19 @@ pub struct GitContextFingerprint {
     pub target_oids: BTreeMap<String, String>,
 }
 
+/// Resultado da comparação de um fingerprint salvo com o checkout atual.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FingerprintStatus {
+    /// Repositório, branch e todos os OIDs coincidem.
+    Exact,
+    /// O repositório local ou a branch de origem mudou.
+    RepositoryOrBranchChanged,
+    /// Um OID de origem/target mudou ou deixou de existir.
+    ObjectChanged,
+    /// O checkout atual não pôde ser identificado.
+    Unavailable,
+}
+
 impl GitContextFingerprint {
     /// Captura o checkout atual e os OIDs das refs source/target.
     ///
@@ -73,21 +86,32 @@ impl GitContextFingerprint {
     /// Compara este snapshot com o checkout atual.
     #[must_use]
     pub fn matches_current(&self) -> bool {
+        self.compare_current() == FingerprintStatus::Exact
+    }
+
+    /// Compara o fingerprint salvo com o checkout atual, preservando o motivo.
+    #[must_use]
+    pub fn compare_current(&self) -> FingerprintStatus {
         let Ok(repository) = git(&["rev-parse", "--show-toplevel"]) else {
-            return false;
+            return FingerprintStatus::Unavailable;
         };
         let Ok(current_branch) = git(&["branch", "--show-current"]) else {
-            return false;
+            return FingerprintStatus::Unavailable;
         };
         if repository != self.repository || current_branch != self.source_branch {
-            return false;
+            return FingerprintStatus::RepositoryOrBranchChanged;
         }
         if ref_oid(&self.source_branch) != self.source_oid {
-            return false;
+            return FingerprintStatus::ObjectChanged;
         }
-        self.target_oids
+        if self
+            .target_oids
             .iter()
-            .all(|(target, expected)| ref_oid(target) == *expected)
+            .any(|(target, expected)| ref_oid(target) != *expected)
+        {
+            return FingerprintStatus::ObjectChanged;
+        }
+        FingerprintStatus::Exact
     }
 }
 
@@ -629,5 +653,46 @@ mod tests {
                 assert!(!fingerprint.target_oids[target].is_empty());
             }
         }
+    }
+
+    #[test]
+    fn session_repo_or_source_branch_mismatch_blocks_publish() {
+        let mut fingerprint = GitContextFingerprint::capture("", &[]).expect("fingerprint");
+        fingerprint.repository = "outro-checkout".to_owned();
+        assert_eq!(
+            fingerprint.compare_current(),
+            FingerprintStatus::RepositoryOrBranchChanged
+        );
+        let mut fingerprint = GitContextFingerprint::capture("", &[]).expect("fingerprint");
+        fingerprint.source_branch = "outro-branch".to_owned();
+        assert_eq!(
+            fingerprint.compare_current(),
+            FingerprintStatus::RepositoryOrBranchChanged
+        );
+    }
+
+    #[test]
+    fn changed_or_missing_fingerprint_requires_publish_confirmation() {
+        let current = GitContextFingerprint::capture("", &[]).expect("fingerprint");
+        let mut changed = current.clone();
+        changed.source_oid = "changed-oid".to_owned();
+        assert_eq!(changed.compare_current(), FingerprintStatus::ObjectChanged);
+        if !current.source_oid.is_empty() {
+            changed.source_oid.clear();
+            assert_eq!(changed.compare_current(), FingerprintStatus::ObjectChanged);
+        }
+    }
+
+    #[test]
+    fn exact_session_fingerprint_has_no_extra_publish_gate() {
+        let fingerprint = GitContextFingerprint::capture("", &[]).expect("fingerprint");
+        assert_eq!(fingerprint.compare_current(), FingerprintStatus::Exact);
+    }
+
+    #[test]
+    fn fingerprint_capture_failure_blocks_publish_without_remote_call() {
+        let fingerprint = GitContextFingerprint::default();
+        assert_ne!(fingerprint.compare_current(), FingerprintStatus::Exact);
+        assert!(fingerprint.repository.is_empty());
     }
 }

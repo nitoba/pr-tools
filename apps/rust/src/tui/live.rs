@@ -18,7 +18,8 @@ use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{
-        Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Widget, Wrap,
+        Block, Borders, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation,
+        ScrollbarState, Widget, Wrap,
     },
 };
 use tokio::sync::mpsc;
@@ -37,7 +38,8 @@ use crate::ai;
 use crate::azure::AzureClient;
 use crate::azure::pull_requests::{PublishedPr, publish_pull_requests};
 use crate::config::{self, Config};
-use crate::features::describe::{self, DescribePrep};
+use crate::features::describe::{self, DescribePrep, PublishFailure};
+use crate::features::session::{SessionSnapshot, SessionStore, SessionSummary, TargetState};
 use crate::git::RepositoryRemote;
 
 /// Resultado do backend antes de normalizar (raw acumulado).
@@ -240,10 +242,120 @@ struct PublishBase {
     work_item_id: String,
 }
 
+/// Estado de sessão compartilhado entre a TUI e a task de publicação.
+#[derive(Debug)]
+struct SessionRuntime {
+    store: SessionStore,
+    snapshot: SessionSnapshot,
+}
+
+impl SessionRuntime {
+    fn create(prep: &DescribePrep, app: &DescribeApp) -> anyhow::Result<Self> {
+        let Some(content) = app.desc.as_ref() else {
+            anyhow::bail!("não é possível criar sessão sem descrição aprovada");
+        };
+        let reviewers = if app.reviewers.len() == app.targets.len() {
+            app.reviewers.clone()
+        } else {
+            vec![String::new(); app.targets.len()]
+        };
+        let snapshot = SessionSnapshot::new(
+            prep.fingerprint.repository.clone(),
+            prep.context.remote.as_ref(),
+            prep.context.branch.clone(),
+            prep.context.source_ref.clone(),
+            &prep.fingerprint,
+            content.title.clone(),
+            content.body.clone(),
+            prep.work_item_id.clone(),
+            reviewers,
+            app.targets.clone(),
+        );
+        let (store, snapshot) = SessionStore::create(&config::config_paths(), snapshot)?;
+        Ok(Self { store, snapshot })
+    }
+
+    fn from_existing(store: SessionStore, snapshot: SessionSnapshot) -> Self {
+        Self { store, snapshot }
+    }
+
+    fn persist_app(&mut self, app: &DescribeApp) -> crate::error::Result<()> {
+        let Some(content) = app.frozen_publish_content.as_ref().or(app.desc.as_ref()) else {
+            return Ok(());
+        };
+        let mut next = self.snapshot.clone();
+        next.title.clone_from(&content.title);
+        next.body.clone_from(&content.body);
+        if app.reviewers.len() == next.targets.len() {
+            next.reviewers.clone_from(&app.reviewers);
+        }
+        for target in &mut next.targets {
+            target.state = match app.target_state(&target.target) {
+                "confirmed" => app
+                    .published
+                    .iter()
+                    .find(|published| published.target == target.target)
+                    .map_or(TargetState::Pending, |published| TargetState::Confirmed {
+                        id: published.id,
+                        url: published.url.clone(),
+                    }),
+                "attempting_or_uncertain" => TargetState::AttemptingOrUncertain {
+                    message: app
+                        .publish_failure
+                        .as_ref()
+                        .filter(|failure| failure.target.as_deref() == Some(target.target.as_str()))
+                        .map(|failure| failure.message.clone()),
+                },
+                "failed" => TargetState::Failed {
+                    message: app.publish_failure.as_ref().map_or_else(
+                        || "publicação falhou".to_owned(),
+                        |failure| failure.message.clone(),
+                    ),
+                },
+                _ => target.state.clone(),
+            };
+        }
+        self.snapshot = self.store.save(next)?;
+        Ok(())
+    }
+
+    fn mark_attempting(&mut self, target: &str) -> crate::error::Result<()> {
+        let mut next = self.snapshot.clone();
+        let target_state = next
+            .targets
+            .iter_mut()
+            .find(|item| item.target == target)
+            .ok_or_else(|| crate::error::AppError::Session {
+                message: format!("target ausente no snapshot: {target}"),
+            })?;
+        target_state.state = TargetState::AttemptingOrUncertain { message: None };
+        self.snapshot = self.store.save(next)?;
+        Ok(())
+    }
+
+    fn mark_confirmed(&mut self, item: &PublishedPr) -> crate::error::Result<()> {
+        let mut next = self.snapshot.clone();
+        let target_state = next
+            .targets
+            .iter_mut()
+            .find(|target| target.target == item.target)
+            .ok_or_else(|| crate::error::AppError::Session {
+                message: format!("target ausente no snapshot: {}", item.target),
+            })?;
+        target_state.state = TargetState::Confirmed {
+            id: item.id,
+            url: item.url.clone(),
+        };
+        self.snapshot = self.store.save(next)?;
+        Ok(())
+    }
+}
+
 /// Publica a descrição em todos os targets, com logs e progresso por etapa.
 ///
 /// Espelha o fluxo do comando Dart: valida, resolve o repo, cria um PR por
 /// target e devolve a lista para o evento `Published`.
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 async fn publish_task(
     base: PublishBase,
     title: String,
@@ -251,6 +363,7 @@ async fn publish_task(
     reviewers: Vec<String>,
     targets: Vec<String>,
     recovery: bool,
+    session: Option<Arc<Mutex<SessionRuntime>>>,
     tx: mpsc::UnboundedSender<BackendEvent>,
 ) {
     let _ = tx.send(BackendEvent::Phase("publicando…".to_owned()));
@@ -290,6 +403,34 @@ async fn publish_task(
     let tx_started = tx.clone();
     let active_target = Arc::new(Mutex::new(None::<String>));
     let active_target_callback = Arc::clone(&active_target);
+    let active_target_durable = Arc::clone(&active_target);
+    let session_durable = session.clone();
+    let on_target_started_durable = move |target: &str| {
+        if let Ok(mut active) = active_target_durable.lock() {
+            *active = Some(target.to_owned());
+        }
+        if let Some(session) = &session_durable {
+            let mut runtime = session
+                .lock()
+                .map_err(|_| crate::error::AppError::Session {
+                    message: "lock da sessão foi envenenado".to_owned(),
+                })?;
+            runtime.mark_attempting(target)?;
+        }
+        Ok(())
+    };
+    let session_published = session;
+    let on_published_durable = move |item: &PublishedPr| {
+        if let Some(session) = &session_published {
+            let mut runtime = session
+                .lock()
+                .map_err(|_| crate::error::AppError::Session {
+                    message: "lock da sessão foi envenenado".to_owned(),
+                })?;
+            runtime.mark_confirmed(item)?;
+        }
+        Ok(())
+    };
     let on_published = |item: &PublishedPr| {
         let completed = targets
             .iter()
@@ -328,7 +469,9 @@ async fn publish_task(
                 .unwrap_or_default()
         },
         on_published: Some(&on_published),
+        on_published_durable: Some(&on_published_durable),
         on_target_started: Some(&on_target_started),
+        on_target_started_durable: Some(&on_target_started_durable),
     };
     let result = publish_pull_requests(&client, &input).await;
     match result {
@@ -388,6 +531,7 @@ fn start_publish(
     tx: &mpsc::UnboundedSender<BackendEvent>,
     desc: &crate::ai::PrDescription,
     recovery: bool,
+    session: Option<Arc<Mutex<SessionRuntime>>>,
 ) {
     let approved = publish_content_for_attempt(app, desc);
     let mut validation = ContentEditState::for_pr(&approved);
@@ -442,12 +586,32 @@ fn start_publish(
         .frozen_publish_content
         .get_or_insert_with(|| approved.clone())
         .clone();
+    if let Some(session_runtime) = &session {
+        let persist_result = session_runtime
+            .lock()
+            .map_err(|_| crate::error::AppError::Session {
+                message: "lock da sessão foi envenenado".to_owned(),
+            })
+            .and_then(|mut runtime| runtime.persist_app(app));
+        if let Err(error) = persist_result {
+            app.publish_dialog = None;
+            app.phase = Phase::Review;
+            "revisão — sessão não salva".clone_into(&mut app.phase_label);
+            app.error = Some(error.to_string());
+            app.publish_failure = Some(PublishFailure {
+                message: error.to_string(),
+                kind: describe::PublishFailureKind::OutcomeUnknown,
+                target: targets.first().cloned(),
+            });
+            return;
+        }
+    }
     let base = base.clone();
     let title = content.title;
     let body = content.body;
     let tx = tx.clone();
     tokio::spawn(publish_task(
-        base, title, body, reviewers, targets, recovery, tx,
+        base, title, body, reviewers, targets, recovery, session, tx,
     ));
 }
 
@@ -567,7 +731,11 @@ fn render_header(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
 
 fn render_body(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
     let show_context = app.phase == Phase::Review;
-    let context_height = if show_context { 4 } else { 0 };
+    let context_height = if show_context {
+        4 + u16::from(app.publish_context_warning.is_some())
+    } else {
+        0
+    };
     let [primary, context] =
         Layout::vertical([Constraint::Min(0), Constraint::Length(context_height)]).areas(area);
     render_primary(app, primary, buf);
@@ -827,12 +995,35 @@ fn render_context(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
         "Contexto funcional: {}",
         app.functional_context_status.display_label()
     );
-    Paragraph::new(vec![
+    let mut lines = vec![
         Line::from(context),
         Line::from(Span::styled(functional, theme().muted)),
-    ])
-    .wrap(Wrap { trim: false })
-    .render(inner, buf);
+    ];
+    if let Some(session_id) = &app.session_id {
+        lines.push(Line::from(Span::styled(
+            format!("Sessão: {session_id}"),
+            theme().muted,
+        )));
+        let states = app
+            .targets
+            .iter()
+            .map(|target| format!("{target}: {}", app.target_state(target)))
+            .collect::<Vec<_>>()
+            .join("  ·  ");
+        lines.push(Line::from(Span::styled(
+            format!("Estados: {states}"),
+            theme().muted,
+        )));
+        if let Some(warning) = &app.publish_context_warning {
+            lines.push(Line::from(Span::styled(
+                format!("Aviso: {warning}"),
+                theme().warning,
+            )));
+        }
+    }
+    Paragraph::new(lines)
+        .wrap(Wrap { trim: false })
+        .render(inner, buf);
 }
 
 fn primary_block(title: &str, style: Style) -> Block<'static> {
@@ -1519,7 +1710,155 @@ pub async fn run_describe_tui(
     let mut terminal: DefaultTerminal = ratatui::init();
     // `run_loop` é síncrono (sem `.await` interno); o `async move`
     // mantém `run_describe_tui` aguardável sem mudar comportamento.
-    let res = async move { run_loop(&mut terminal, prep, create_initial) }.await;
+    let res = async move { run_loop(&mut terminal, prep, create_initial, None) }.await;
+    ratatui::restore();
+    res
+}
+
+/// Abre o seletor local de sessões sem iniciar provider ou publicação.
+///
+/// # Errors
+///
+/// Retorna erro quando a tela ou a leitura de eventos do terminal falhar.
+pub fn select_session_tui(sessions: &[SessionSummary]) -> anyhow::Result<Option<uuid::Uuid>> {
+    if !std::io::stdout().is_terminal() {
+        anyhow::bail!("seletor de sessões requer terminal interativo");
+    }
+    let mut terminal: DefaultTerminal = ratatui::init();
+    let result = session_selector_loop(&mut terminal, sessions);
+    ratatui::restore();
+    result
+}
+
+fn session_selector_loop(
+    terminal: &mut DefaultTerminal,
+    sessions: &[SessionSummary],
+) -> anyhow::Result<Option<uuid::Uuid>> {
+    let mut selected = 0usize;
+    loop {
+        terminal.draw(|frame| {
+            let [heading, list_area, footer] = Layout::vertical([
+                Constraint::Length(3),
+                Constraint::Min(1),
+                Constraint::Length(1),
+            ])
+            .areas(frame.area());
+            frame.render_widget(
+                Paragraph::new("Escolha uma sessão de descrição para retomar").block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title(" Sessões locais "),
+                ),
+                heading,
+            );
+            let items = sessions
+                .iter()
+                .map(|session| {
+                    let targets = session
+                        .targets
+                        .iter()
+                        .map(|(target, state)| format!("{target}={state}"))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    ListItem::new(Line::from(format!(
+                        "{} · {} · {} · {}",
+                        session.session_id, session.repository, session.source_branch, targets
+                    )))
+                })
+                .collect::<Vec<_>>();
+            let mut state = ListState::default();
+            state.select(Some(selected));
+            frame.render_stateful_widget(
+                List::new(items)
+                    .block(Block::default().borders(Borders::ALL))
+                    .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+                    .highlight_symbol("▸ "),
+                list_area,
+                &mut state,
+            );
+            frame.render_widget(
+                Paragraph::new("↑/↓ mover · enter retomar · q/esc sair"),
+                footer,
+            );
+        })?;
+
+        if !event::poll(Duration::from_millis(100))? {
+            continue;
+        }
+        let Event::Key(key) = event::read()? else {
+            continue;
+        };
+        if key.kind != KeyEventKind::Press {
+            continue;
+        }
+        match key.code {
+            KeyCode::Up => selected = selected.saturating_sub(1),
+            KeyCode::Down => selected = (selected + 1).min(sessions.len().saturating_sub(1)),
+            KeyCode::Enter => {
+                let id = sessions
+                    .get(selected)
+                    .and_then(|session| uuid::Uuid::parse_str(&session.session_id).ok());
+                return Ok(id);
+            }
+            KeyCode::Esc | KeyCode::Char('q') => return Ok(None),
+            _ => {}
+        }
+    }
+}
+
+/// Retoma uma sessão local sem executar qualquer etapa de geração.
+///
+/// # Errors
+///
+/// Retorna erro quando a configuração atual, o terminal ou a TUI não puderem
+/// ser inicializados.
+pub async fn run_resumed_tui(
+    store: SessionStore,
+    snapshot: SessionSnapshot,
+) -> anyhow::Result<LiveOutcome> {
+    if !std::io::stdout().is_terminal() {
+        anyhow::bail!("retomar uma sessão requer terminal interativo");
+    }
+    let config = config::load_config().map_err(anyhow::Error::new)?;
+    let remote = snapshot.remote.as_ref().map(|remote| RepositoryRemote {
+        organization: remote.organization.clone(),
+        project: remote.project.clone(),
+        repository: remote.repository.clone(),
+    });
+    let fingerprint = crate::git::GitContextFingerprint {
+        repository: snapshot.repository.clone(),
+        source_branch: snapshot.source_branch.clone(),
+        source_oid: snapshot.source_oid.clone(),
+        target_oids: snapshot.target_oids.clone(),
+    };
+    let targets = snapshot
+        .targets
+        .iter()
+        .map(|target| target.target.clone())
+        .collect::<Vec<_>>();
+    let prep = DescribePrep {
+        config,
+        context: crate::git::ChangeContext {
+            branch: snapshot.source_branch.clone(),
+            source_ref: snapshot.source_ref.clone(),
+            base_branch: String::new(),
+            sprint_branch: String::new(),
+            diff: String::new(),
+            diff_original_lines: 0,
+            log: String::new(),
+            work_item_id: snapshot.work_item_id.clone(),
+            remote,
+        },
+        targets,
+        work_item_id: snapshot.work_item_id.clone(),
+        functional_context: crate::features::describe::FunctionalContextStatus::NotRequested,
+        work_item: None,
+        fingerprint,
+        prompt: String::new(),
+    };
+    let runtime = SessionRuntime::from_existing(store, snapshot);
+    let mut terminal: DefaultTerminal = ratatui::init();
+    let res = async move { run_loop(&mut terminal, prep, false, Some(runtime)) }.await;
     ratatui::restore();
     res
 }
@@ -1786,6 +2125,7 @@ fn on_enter_key(
     app: &mut DescribeApp,
     publish_base: &PublishBase,
     tx: &mpsc::UnboundedSender<BackendEvent>,
+    session: Option<Arc<Mutex<SessionRuntime>>>,
 ) -> bool {
     match app.publish_dialog {
         None => {
@@ -1847,7 +2187,7 @@ fn on_enter_key(
             if yes {
                 if let Some(desc) = app.desc.clone() {
                     let recovery = app.publish_failure.is_some();
-                    start_publish(app, publish_base, tx, &desc, recovery);
+                    start_publish(app, publish_base, tx, &desc, recovery, session);
                 }
             } else {
                 app.publish_dialog = None;
@@ -1858,7 +2198,7 @@ fn on_enter_key(
             match selected {
                 0 => {
                     if let Some(desc) = app.desc.clone() {
-                        start_publish(app, publish_base, tx, &desc, true);
+                        start_publish(app, publish_base, tx, &desc, true, session);
                     }
                 }
                 1 => start_candidate_search(app, publish_base, tx),
@@ -1880,6 +2220,7 @@ fn on_confirm_key(
     key: crossterm::event::KeyEvent,
     publish_base: &PublishBase,
     tx: &mpsc::UnboundedSender<BackendEvent>,
+    session: Option<Arc<Mutex<SessionRuntime>>>,
 ) -> bool {
     use crossterm::event::KeyCode;
     match (key.code, app.publish_dialog) {
@@ -1903,7 +2244,7 @@ fn on_confirm_key(
         (KeyCode::Char('y'), Some(PublishDialog::ConfirmPublish(_))) => {
             if let Some(desc) = app.desc.clone() {
                 let recovery = app.publish_failure.is_some();
-                start_publish(app, publish_base, tx, &desc, recovery);
+                start_publish(app, publish_base, tx, &desc, recovery, session);
             }
             true
         }
@@ -1913,7 +2254,7 @@ fn on_confirm_key(
         }
         (KeyCode::Char('r'), Some(PublishDialog::PublishRecovery(_))) => {
             if let Some(desc) = app.desc.clone() {
-                start_publish(app, publish_base, tx, &desc, true);
+                start_publish(app, publish_base, tx, &desc, true, session);
             }
             true
         }
@@ -1980,11 +2321,25 @@ fn quit_outcome(app: &DescribeApp) -> LiveOutcome {
 /// Despacha uma tecla já filtrada por `kind`; retorna `Ok(Some(outcome))`
 /// quando o loop deve sair, `Ok(None)` para continuar. Seta `needs_draw`
 /// quando a tela sujou.
+#[cfg(test)]
 fn handle_key_event(
     app: &mut DescribeApp,
     key: crossterm::event::KeyEvent,
     publish_base: &PublishBase,
     tx: &mpsc::UnboundedSender<BackendEvent>,
+    terminal: &mut DefaultTerminal,
+    needs_draw: &mut bool,
+) -> anyhow::Result<Option<LiveOutcome>> {
+    handle_key_event_with_session(app, key, publish_base, tx, None, terminal, needs_draw)
+}
+
+#[allow(clippy::too_many_lines)]
+fn handle_key_event_with_session(
+    app: &mut DescribeApp,
+    key: crossterm::event::KeyEvent,
+    publish_base: &PublishBase,
+    tx: &mpsc::UnboundedSender<BackendEvent>,
+    session: Option<Arc<Mutex<SessionRuntime>>>,
     terminal: &mut DefaultTerminal,
     needs_draw: &mut bool,
 ) -> anyhow::Result<Option<LiveOutcome>> {
@@ -2048,6 +2403,20 @@ fn handle_key_event(
             launch_context,
             published: app.published.clone(),
         }));
+    }
+    if key.modifiers.is_empty()
+        && key.code == KeyCode::Char('d')
+        && app.phase == Phase::Review
+        && app.publish_dialog.is_none()
+    {
+        if let Some(session) = session {
+            session
+                .lock()
+                .map_err(|_| anyhow::anyhow!("lock da sessão foi envenenado"))?
+                .store
+                .discard_files()?;
+            return Ok(Some(LiveOutcome::Discarded));
+        }
     }
     match (key.code, key.modifiers) {
         (KeyCode::Char('c'), m) if m.contains(KeyModifiers::CONTROL) => {
@@ -2115,7 +2484,7 @@ fn handle_key_event(
             return Ok(None);
         }
         (KeyCode::Enter, _) => {
-            if on_enter_key(app, publish_base, tx) {
+            if on_enter_key(app, publish_base, tx, session.clone()) {
                 *needs_draw = true;
             }
             return Ok(None);
@@ -2130,7 +2499,7 @@ fn handle_key_event(
         *needs_draw = true;
         return Ok(None);
     }
-    if on_confirm_key(app, key, publish_base, tx) {
+    if on_confirm_key(app, key, publish_base, tx, session) {
         *needs_draw = true;
         return Ok(None);
     }
@@ -2185,15 +2554,18 @@ fn handle_functional_context_key(
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn run_loop(
     terminal: &mut DefaultTerminal,
     prep: DescribePrep,
     create_initial: bool,
+    initial_session: Option<SessionRuntime>,
 ) -> anyhow::Result<LiveOutcome> {
     let (tx, mut rx) = mpsc::unbounded_channel::<BackendEvent>();
     let (publish_setup, publish_blocked, publish_base) = make_publish_parts(&prep);
     let functional_context_status = prep.functional_context.clone();
     let launch_prep = prep.clone();
+    let resumed = initial_session.is_some();
     let mut app = DescribeApp::new(
         &prep.context.branch,
         &prep.targets,
@@ -2202,8 +2574,36 @@ fn run_loop(
         publish_setup,
         publish_blocked,
     );
+    if resumed {
+        match prep.fingerprint.compare_current() {
+            crate::git::FingerprintStatus::Exact => {}
+            crate::git::FingerprintStatus::RepositoryOrBranchChanged => {
+                app.publish_blocked = Some(
+                    "a sessão pertence a outro repositório ou branch de origem; publicação bloqueada"
+                        .to_owned(),
+                );
+            }
+            crate::git::FingerprintStatus::ObjectChanged => {
+                app.set_publish_context_warning(Some(
+                    "o fingerprint Git mudou ou uma ref não existe mais; confirme explicitamente antes de publicar"
+                        .to_owned(),
+                ));
+            }
+            crate::git::FingerprintStatus::Unavailable => {
+                app.publish_blocked = Some(
+                    "não foi possível capturar o fingerprint Git atual; publicação bloqueada"
+                        .to_owned(),
+                );
+            }
+        }
+    }
     app.set_launch_prep(launch_prep);
-    let mut pending_prep = Some(prep);
+    let session_prep = prep.clone();
+    let mut session = initial_session.map(|runtime| {
+        app.restore_session(&runtime.snapshot);
+        Arc::new(Mutex::new(runtime))
+    });
+    let mut pending_prep = (session.is_none()).then_some(prep);
     // Backend roda em paralelo e empurra tokens/logs (`tx` fica no loop
     // para a task de publicação criada sob demanda).
     app.set_functional_context_status(functional_context_status);
@@ -2218,8 +2618,22 @@ fn run_loop(
 
     loop {
         // 1. Drena eventos do backend sem bloquear; suja se houve dado.
-        if drain_backend(&mut rx, &mut app) {
+        let backend_changed = drain_backend(&mut rx, &mut app);
+        if backend_changed {
             needs_draw = true;
+        }
+        if session.is_none() && app.desc.is_some() {
+            let runtime = SessionRuntime::create(&session_prep, &app)?;
+            app.set_session_id(runtime.snapshot.session_id.clone());
+            session = Some(Arc::new(Mutex::new(runtime)));
+        }
+        if backend_changed {
+            if let Some(runtime) = &session {
+                runtime
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("lock da sessão foi envenenado"))?
+                    .persist_app(&app)?;
+            }
         }
         // 2. Tick de animação (barra/status continuam e sujam a tela).
         if last_tick.elapsed() >= tick_rate {
@@ -2239,6 +2653,12 @@ fn run_loop(
                 Event::Paste(text) => {
                     if handle_content_paste(&mut app, text.as_str()) {
                         needs_draw = true;
+                        if let Some(runtime) = &session {
+                            runtime
+                                .lock()
+                                .map_err(|_| anyhow::anyhow!("lock da sessão foi envenenado"))?
+                                .persist_app(&app)?;
+                        }
                     }
                 }
                 Event::Key(key) => {
@@ -2271,18 +2691,48 @@ fn run_loop(
                         || (key.kind == KeyEventKind::Repeat && !eh_scroll && !eh_content_edit)
                     {
                         // Ignora sem sujar a tela.
-                    } else if let Some(outcome) = handle_key_event(
+                    } else if let Some(outcome) = handle_key_event_with_session(
                         &mut app,
                         key,
                         &publish_base,
                         &tx,
+                        session.clone(),
                         &mut *terminal,
                         &mut needs_draw,
                     )? {
+                        if !matches!(outcome, LiveOutcome::Discarded)
+                            && let Some(runtime) = &session
+                        {
+                            runtime
+                                .lock()
+                                .map_err(|_| anyhow::anyhow!("lock da sessão foi envenenado"))?
+                                .persist_app(&app)?;
+                        }
+                        if matches!(outcome, LiveOutcome::Discarded) {
+                            session.take();
+                        }
+                        let completed = matches!(outcome, LiveOutcome::PrepareTestCase { .. })
+                            || (matches!(outcome, LiveOutcome::Done { .. })
+                                && app.phase == Phase::Done);
+                        if completed {
+                            if let Some(runtime) = session.take() {
+                                runtime
+                                    .lock()
+                                    .map_err(|_| anyhow::anyhow!("lock da sessão foi envenenado"))?
+                                    .store
+                                    .discard_files()?;
+                            }
+                        }
                         return Ok(outcome);
                     }
                     if app.functional_context_fallback_confirmed && pending_prep.is_some() {
                         start_backend(&mut pending_prep, &tx);
+                    }
+                    if let Some(runtime) = &session {
+                        runtime
+                            .lock()
+                            .map_err(|_| anyhow::anyhow!("lock da sessão foi envenenado"))?
+                            .persist_app(&app)?;
                     }
                 }
                 _ => {}
@@ -2571,7 +3021,7 @@ mod tests {
             work_item_id: String::new(),
         };
         let desc = app.desc.clone().expect("descrição");
-        start_publish(&mut app, &base, &tx, &desc, false);
+        start_publish(&mut app, &base, &tx, &desc, false, None);
         assert!(app.content_edit.is_some());
         assert_eq!(app.phase, Phase::Review);
         assert_eq!(app.error.as_deref(), Some("título é obrigatório"));
@@ -2661,7 +3111,9 @@ mod tests {
             work_item_ids: &[],
             reviewer_for: &reviewer_for,
             on_published: None,
+            on_published_durable: None,
             on_target_started: None,
+            on_target_started_durable: None,
         };
         for _target in input.targets {
             assert_eq!(input.title, "Título editado");
@@ -3276,7 +3728,10 @@ mod tests {
                 assert_eq!(published.len(), 1);
                 assert_eq!(published[0].url, "https://dev.azure.com/example/pr/42");
             }
-            LiveOutcome::Aborted | LiveOutcome::Failed(_) | LiveOutcome::PrepareTestCase { .. } => {
+            LiveOutcome::Aborted
+            | LiveOutcome::Discarded
+            | LiveOutcome::Failed(_)
+            | LiveOutcome::PrepareTestCase { .. } => {
                 panic!("PR publicado não pode sair como cancelamento")
             }
         }
@@ -3305,6 +3760,7 @@ mod tests {
             }
             LiveOutcome::Done { .. }
             | LiveOutcome::Aborted
+            | LiveOutcome::Discarded
             | LiveOutcome::PrepareTestCase { .. } => {
                 panic!("publicação incompleta não pode sair como sucesso")
             }
@@ -3354,5 +3810,139 @@ mod tests {
             terminal.backend()
         );
         Ok(())
+    }
+
+    fn persisted_test_runtime() -> (
+        tempfile::TempDir,
+        crate::config::ConfigPaths,
+        SessionRuntime,
+        SessionSnapshot,
+    ) {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let paths = crate::config::ConfigPaths {
+            directory: directory.path().join("pr-tools"),
+            config_file: directory.path().join("pr-tools/config.json"),
+            env_file: directory.path().join("pr-tools/.env"),
+            template_file: directory.path().join("pr-tools/pr-template.md"),
+        };
+        let fingerprint = crate::git::GitContextFingerprint {
+            repository: "C:\\repo".to_owned(),
+            source_branch: "feature/1".to_owned(),
+            source_oid: "a".repeat(40),
+            target_oids: std::collections::BTreeMap::from([
+                ("dev".to_owned(), "b".repeat(40)),
+                ("sprint/12".to_owned(), "c".repeat(40)),
+            ]),
+        };
+        let snapshot = SessionSnapshot::new(
+            fingerprint.repository.clone(),
+            None,
+            fingerprint.source_branch.clone(),
+            "refs/heads/feature/1".to_owned(),
+            &fingerprint,
+            "Título original".to_owned(),
+            "Body original".to_owned(),
+            "42".to_owned(),
+            vec![
+                "dev@example.test".to_owned(),
+                "sprint@example.test".to_owned(),
+            ],
+            vec!["dev".to_owned(), "sprint/12".to_owned()],
+        );
+        let (store, saved) = SessionStore::create(&paths, snapshot).expect("create");
+        let runtime = SessionRuntime::from_existing(store, saved.clone());
+        (directory, paths, runtime, saved)
+    }
+
+    #[test]
+    fn flushes_latest_session_before_review_exit() {
+        let (_directory, paths, mut runtime, mut saved) = persisted_test_runtime();
+        let mut app = review_app();
+        app.desc.as_mut().expect("description").title = "Título editado".to_owned();
+        app.reviewers = vec![
+            "novo-dev@example.test".to_owned(),
+            "novo-sprint@example.test".to_owned(),
+        ];
+        runtime.persist_app(&app).expect("persist");
+        saved.title = "Título editado".to_owned();
+        drop(runtime);
+        let id = uuid::Uuid::parse_str(&saved.session_id).expect("uuid");
+        let (_store, loaded) = SessionStore::open(&paths, id).expect("load");
+        assert_eq!(loaded.title, "Título editado");
+        assert_eq!(loaded.reviewers[0], "novo-dev@example.test");
+    }
+
+    #[test]
+    fn resume_restores_snapshot_without_provider_generation() {
+        let (_directory, _paths, _runtime, mut snapshot) = persisted_test_runtime();
+        snapshot.targets[0].state = TargetState::Confirmed {
+            id: 77,
+            url: "https://example.test/pr/77".to_owned(),
+        };
+        let mut app = review_app();
+        app.restore_session(&snapshot);
+        assert_eq!(app.phase, Phase::Review);
+        assert_eq!(
+            app.desc.as_ref().expect("description").title,
+            snapshot.title
+        );
+        assert_eq!(app.published[0].id, 77);
+        assert!(app.streamed_raw.is_empty());
+    }
+
+    #[test]
+    fn successful_completion_removes_session_but_abort_keeps_it() {
+        let (_directory, paths, runtime, saved) = persisted_test_runtime();
+        let id = uuid::Uuid::parse_str(&saved.session_id).expect("uuid");
+        runtime.store.discard().expect("successful cleanup");
+        assert!(SessionStore::open(&paths, id).is_err());
+
+        let (_directory, paths, runtime, saved) = persisted_test_runtime();
+        let id = uuid::Uuid::parse_str(&saved.session_id).expect("uuid");
+        drop(runtime);
+        let (_store, loaded) = SessionStore::open(&paths, id).expect("abort keeps session");
+        assert_eq!(loaded.session_id, saved.session_id);
+    }
+
+    #[test]
+    fn resume_skips_confirmed_target() {
+        let (_directory, _paths, _runtime, mut snapshot) = persisted_test_runtime();
+        snapshot.targets[0].state = TargetState::Confirmed {
+            id: 77,
+            url: "https://example.test/pr/77".to_owned(),
+        };
+        let mut app = review_app();
+        app.restore_session(&snapshot);
+        assert_eq!(app.remaining_publish_targets(), vec!["sprint/12"]);
+    }
+
+    #[test]
+    fn partial_multi_target_progress_survives_resume() {
+        let (_directory, paths, mut runtime, saved) = persisted_test_runtime();
+        let mut app = review_app();
+        app.on_backend(BackendEvent::PublishedOne(published(77, "dev")));
+        runtime.persist_app(&app).expect("persist partial");
+        drop(runtime);
+        let id = uuid::Uuid::parse_str(&saved.session_id).expect("uuid");
+        let (_store, loaded) = SessionStore::open(&paths, id).expect("load partial");
+        assert!(matches!(
+            loaded.targets[0].state,
+            TargetState::Confirmed { id: 77, .. }
+        ));
+        assert!(matches!(loaded.targets[1].state, TargetState::Pending));
+    }
+
+    #[test]
+    fn resume_has_no_generation_and_no_confirmed_recreation() {
+        let (_directory, _paths, _runtime, mut snapshot) = persisted_test_runtime();
+        snapshot.targets[0].state = TargetState::Confirmed {
+            id: 77,
+            url: "https://example.test/pr/77".to_owned(),
+        };
+        let mut app = review_app();
+        app.restore_session(&snapshot);
+        assert_eq!(app.published.len(), 1);
+        assert_eq!(app.remaining_publish_targets(), vec!["sprint/12"]);
+        assert!(app.streamed_raw.is_empty());
     }
 }

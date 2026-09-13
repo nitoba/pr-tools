@@ -6,6 +6,7 @@
 pub mod describe;
 pub mod doctor;
 pub mod init;
+pub mod session;
 pub mod test_card;
 pub mod update;
 pub mod update_pull_request;

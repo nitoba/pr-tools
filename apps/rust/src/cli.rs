@@ -5,6 +5,7 @@
 
 use clap::{Parser, Subcommand};
 use clap_complete::Shell;
+use uuid::Uuid;
 
 use crate::error::{AppError, Result};
 
@@ -150,6 +151,12 @@ pub struct DescOpts {
     /// Apenas gera o Test Case (compat; sem efeito em desc).
     #[arg(long = "no-create")]
     pub no_create: bool,
+    /// Lista sessões de `desc` que podem ser retomadas.
+    #[arg(long, conflicts_with = "session")]
+    pub resume: bool,
+    /// Retoma uma sessão específica pelo UUID v4.
+    #[arg(long, conflicts_with = "resume")]
+    pub session: Option<String>,
 }
 
 /// Opções de `prt test`.
@@ -233,6 +240,10 @@ pub struct CliOptions {
     pub source: Option<String>,
     /// Targets (`desc`).
     pub targets: Vec<String>,
+    /// Lista sessões retomáveis (`desc`).
+    pub resume: bool,
+    /// UUID da sessão a retomar (`desc`).
+    pub session: Option<String>,
     /// Work Item.
     pub work_item: Option<WorkItemId>,
     /// Provider override.
@@ -358,6 +369,8 @@ fn default_cli_options() -> CliOptions {
         command: Command::Desc,
         source: None,
         targets: Vec::new(),
+        resume: false,
+        session: None,
         work_item: None,
         provider: None,
         model: None,
@@ -396,6 +409,33 @@ fn empty_cli_options(command: Command) -> CliOptions {
 ///
 /// Retorna [`AppError::Cli`] se targets, work-item ou provider forem inválidos.
 fn desc_cli_options(o: DescOpts) -> Result<CliOptions> {
+    let resume_requested = o.resume || o.session.is_some();
+    if resume_requested
+        && (o.shared.source.is_some()
+            || o.shared.provider.is_some()
+            || o.shared.model.is_some()
+            || o.shared.base_url.is_some()
+            || o.shared.api_key.is_some()
+            || o.shared.create
+            || o.shared.dry_run
+            || o.shared.raw
+            || !o.targets.is_empty()
+            || o.work_item.is_some()
+            || o.pr.is_some()
+            || o.no_copy
+            || o.no_create)
+    {
+        return Err(AppError::cli(
+            "retomar uma sessão não pode ser combinado com opções de geração ou publicação",
+        ));
+    }
+    if let Some(session) = o.session.as_deref() {
+        let id = Uuid::parse_str(session)
+            .map_err(|_| AppError::cli("--session requer um UUID v4 válido"))?;
+        if id.get_version_num() != 4 {
+            return Err(AppError::cli("--session requer um UUID v4 válido"));
+        }
+    }
     let pr = parse_optional_work_item(o.pr.as_deref(), "--pr")?;
     if pr.is_some() && (o.shared.raw || o.shared.create || o.no_create) {
         return Err(AppError::cli(
@@ -406,6 +446,8 @@ fn desc_cli_options(o: DescOpts) -> Result<CliOptions> {
         command: Command::Desc,
         source: o.shared.source,
         targets: validate_targets(&o.targets)?,
+        resume: o.resume,
+        session: o.session,
         work_item: parse_optional_work_item(o.work_item.as_deref(), "--work-item")?,
         provider: validate_provider(o.shared.provider.as_deref())?,
         model: o.shared.model,
@@ -440,6 +482,8 @@ fn test_cli_options(o: TestOpts) -> Result<CliOptions> {
         command: Command::Test,
         source: o.shared.source,
         targets: Vec::new(),
+        resume: false,
+        session: None,
         work_item: parse_optional_work_item(o.work_item.as_deref(), "--work-item")?,
         provider: validate_provider(o.shared.provider.as_deref())?,
         model: o.shared.model,
@@ -556,7 +600,7 @@ pub fn help_text() -> String {
          --iteration-path <path> IterationPath do Test Case\n  --priority <n>          Prioridade do Test Case\n  \
          --team <nome>           Campo Custom.Team\n  --program <nome>        Campo Custom.ProgramasAgrotrace\n  \
          --examples <n>          Exemplos de Test Cases (0-5)\n  --dry-run               Mostra o prompt sem chamar o modelo\n  \
-         --raw                   Imprime somente o Markdown\n  --no-copy               Não copia o conteúdo\n  \
+         --raw                   Imprime somente o Markdown\n  --no-copy               Não copia o conteúdo\n  --resume                Lista sessões de descrição retomáveis\n  --session <uuid>        Retoma uma sessão específica (UUID v4)\n  \
          --version, -v           Mostra a versão\n  --help, -h              Mostra esta ajuda"
     )
 }
@@ -679,6 +723,42 @@ mod tests {
         for extra in ["--raw", "--create", "--no-create"] {
             let error = parse_cli(["prt", "desc", "--pr", "42", extra]).unwrap_err();
             assert_eq!(error.exit_code(), 2);
+        }
+    }
+
+    #[test]
+    fn session_selector_requires_existing_incomplete_uuid() {
+        let id = "550e8400-e29b-41d4-a716-446655440000";
+        let options = parse_cli(["prt", "desc", "--session", id]).unwrap();
+        assert_eq!(options.session.as_deref(), Some(id));
+        assert!(!options.resume);
+        let invalid = parse_cli(["prt", "desc", "--session", "not-a-uuid"]).unwrap_err();
+        assert_eq!(invalid.exit_code(), 2);
+    }
+
+    #[test]
+    fn resume_flags_conflict_with_generation_and_publish_options() {
+        for extra in [
+            "--provider",
+            "--model",
+            "--temperature",
+            "--system-prompt",
+            "--prompt",
+            "--target",
+            "--work-item",
+            "--pr",
+            "--no-copy",
+            "--no-create",
+        ] {
+            let mut args = vec!["prt", "desc", "--resume", extra];
+            if matches!(
+                extra,
+                "--provider" | "--model" | "--target" | "--work-item" | "--pr"
+            ) {
+                args.push("value");
+            }
+            let error = parse_cli(args).unwrap_err();
+            assert_eq!(error.exit_code(), 2, "{extra}");
         }
     }
 }

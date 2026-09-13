@@ -225,14 +225,12 @@ where
 
 async fn run_desc(options: &prt::cli::CliOptions) -> anyhow::Result<()> {
     use prt::features::describe;
-    use prt::tui::{
-        events::LiveOutcome,
-        live::run_describe_tui,
-        notice::{NoticeKind, show_notice},
-    };
-    use ratatui::text::Text;
+    use prt::tui::live::run_describe_tui;
     if options.pr.is_some() {
         return run_update(options).await;
+    }
+    if options.resume || options.session.is_some() {
+        return run_desc_resume(options).await;
     }
 
     let prep = describe::prepare(options)
@@ -256,7 +254,71 @@ async fn run_desc(options: &prt::cli::CliOptions) -> anyhow::Result<()> {
     // TUI viva: streaming token a token, logs auto-scroll e barra com shimmer.
     // Clona antes: `prep` é movido para `run_describe_tui`.
     let targets = prep.targets.clone();
-    match run_describe_tui(prep, options.create).await? {
+    let outcome = run_describe_tui(prep, options.create).await?;
+    finish_desc_tui(options, targets, outcome).await
+}
+
+async fn run_desc_resume(options: &prt::cli::CliOptions) -> anyhow::Result<()> {
+    use prt::config::config_paths;
+    use prt::features::session::SessionStore;
+    use uuid::Uuid;
+
+    let paths = config_paths();
+    let id = if options.resume {
+        let sessions = SessionStore::list(&paths).map_err(anyhow::Error::new)?;
+        if sessions.is_empty() {
+            println!("Nenhuma sessão incompleta encontrada.");
+            return Ok(());
+        }
+        if !std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+            for session in sessions {
+                let targets = session
+                    .targets
+                    .iter()
+                    .map(|(target, state)| format!("{target}={state}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                println!(
+                    "{} · {} · {} · {}",
+                    session.session_id, session.repository, session.source_branch, targets
+                );
+            }
+            return Ok(());
+        }
+        let Some(id) = prt::tui::live::select_session_tui(&sessions)? else {
+            return Ok(());
+        };
+        id
+    } else {
+        let value = options
+            .session
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("UUID de sessão ausente"))?;
+        Uuid::parse_str(value).map_err(|error| anyhow::anyhow!("UUID inválido: {error}"))?
+    };
+    let (store, snapshot) = SessionStore::open(&paths, id).map_err(anyhow::Error::new)?;
+    if snapshot.is_complete() {
+        anyhow::bail!("a sessão já está completa e não pode ser retomada");
+    }
+    let targets = snapshot
+        .targets
+        .iter()
+        .map(|target| target.target.clone())
+        .collect();
+    let outcome = prt::tui::live::run_resumed_tui(store, snapshot).await?;
+    finish_desc_tui(options, targets, outcome).await
+}
+
+async fn finish_desc_tui(
+    options: &prt::cli::CliOptions,
+    targets: Vec<String>,
+    outcome: prt::tui::events::LiveOutcome,
+) -> anyhow::Result<()> {
+    use prt::features::describe;
+    use prt::tui::events::LiveOutcome;
+    use prt::tui::notice::{NoticeKind, show_notice};
+    use ratatui::text::Text;
+    match outcome {
         LiveOutcome::Done { desc, published } => {
             if options.output.copy {
                 let _ = describe::copy_to_clipboard(&desc.body);
@@ -325,6 +387,10 @@ async fn run_desc(options: &prt::cli::CliOptions) -> anyhow::Result<()> {
             .await?;
             // `run_describe_tui` + `show_notice` já chamaram `ratatui::restore()`.
             std::process::exit(130);
+        }
+        LiveOutcome::Discarded => {
+            println!("Sessão descartada.");
+            Ok(())
         }
         LiveOutcome::Failed(msg) => anyhow::bail!("falha na tui: {msg}"),
     }

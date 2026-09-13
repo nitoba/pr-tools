@@ -60,6 +60,12 @@ pub enum AppError {
     /// Operação cancelada pelo usuário.
     #[error("operação cancelada")]
     Cancelled,
+    /// Falha ao persistir ou reconciliar uma sessão local.
+    #[error("sessão: {message}")]
+    Session {
+        /// Detalhe seguro da falha.
+        message: String,
+    },
     /// Erro de IO.
     #[error(transparent)]
     Io(#[from] std::io::Error),
