@@ -104,6 +104,46 @@ pub fn resolve_targets(context: &ChangeContext, requested: &[String]) -> Vec<Str
         .collect()
 }
 
+/// Encontra a sprint numericamente mais recente em uma saída de branches Git.
+///
+/// A saída pode misturar branches locais (`sprint/12`) e remotas
+/// (`origin/sprint/12`). O nome retornado é sempre a referência de branch que
+/// o Azure espera (`sprint/12`), sem o prefixo do remote.
+fn latest_sprint_branch(branches: &str) -> Option<String> {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE
+        .get_or_init(|| Regex::new(r"^sprint/(\d+)(?:$|[-/].*)").expect("regex de sprint válida"));
+
+    branches
+        .lines()
+        .filter_map(|line| {
+            let branch = line
+                .trim()
+                .trim_start_matches("* ")
+                .trim_start_matches("remotes/origin/")
+                .trim_start_matches("origin/");
+            let captures = re.captures(branch)?;
+            let sprint_number = captures.get(1)?.as_str().parse::<i64>().ok()?;
+            Some((sprint_number, branch.to_owned()))
+        })
+        .max_by_key(|(sprint_number, _)| *sprint_number)
+        .map(|(_, branch)| branch)
+}
+
+/// Resolve uma branch local ou sua referência de acompanhamento em `origin`.
+fn resolve_ref(branch: &str) -> Option<String> {
+    if branch.is_empty() {
+        return None;
+    }
+    if git(&["rev-parse", "--verify", branch]).is_ok() {
+        return Some(branch.to_owned());
+    }
+    let remote_branch = format!("origin/{branch}");
+    git(&["rev-parse", "--verify", &remote_branch])
+        .is_ok()
+        .then_some(remote_branch)
+}
+
 /// Faz parse do remote `origin` (ssh, modern e legacy) para Azure.
 #[must_use]
 pub fn parse_azure_remote(url: &str) -> Option<RepositoryRemote> {
@@ -176,41 +216,17 @@ pub fn collect(source: Option<&str>) -> Result<ChangeContext> {
     }
     let source_ref = format!("refs/heads/{branch}");
 
-    // Descobre `sprint/<n>` com maior n.
-    let branches = git(&["branch", "--list", "sprint/*", "dev", "main", "master"])?;
-    let mut sprint_branch = String::new();
-    let mut sprint_max: i64 = -1;
-    for b in branches
-        .lines()
-        .map(|l| l.trim().trim_start_matches("* ").trim())
-    {
-        if let Some(n) = b.strip_prefix("sprint/") {
-            if let Ok(v) = n.parse::<i64>() {
-                if v > sprint_max {
-                    sprint_max = v;
-                    b.clone_into(&mut sprint_branch);
-                }
-            }
-        }
-    }
-    let has = |name: &str| {
-        branches
-            .lines()
-            .any(|l| l.trim().trim_start_matches("* ").trim() == name)
-    };
-    let base_branch = if !sprint_branch.is_empty() {
-        sprint_branch.clone()
-    } else if has("dev") {
-        "dev".to_owned()
-    } else if has("main") {
-        "main".to_owned()
-    } else if has("master") {
-        "master".to_owned()
-    } else {
-        return Err(AppError::Git {
+    // Descobre a sprint mais recente entre branches locais e remotas.
+    let local_branches = git(&["branch", "--list", "sprint/*", "dev", "main", "master"])?;
+    let remote_branches = git(&["branch", "-r"])?;
+    let branches = format!("{local_branches}\n{remote_branches}");
+    let sprint_branch = latest_sprint_branch(&branches).unwrap_or_default();
+    let base_branch = [sprint_branch.as_str(), "dev", "main", "master"]
+        .into_iter()
+        .find_map(resolve_ref)
+        .ok_or_else(|| AppError::Git {
             message: "nenhuma branch base encontrada (sprint/dev/main/master)".to_owned(),
-        });
-    };
+        })?;
 
     // Diff: `diff base...source`, fallback `diff base source`.
     let diff_raw = git(&["diff", &format!("{base_branch}...{branch}")])
@@ -278,6 +294,18 @@ mod tests {
             resolve_targets(&ctx, &["sprint".to_owned()]),
             vec!["sprint/12"]
         );
+    }
+
+    #[test]
+    fn latest_sprint_should_include_remote_tracking_branches() {
+        let branches = "origin/HEAD -> origin/main\norigin/sprint/10\norigin/sprint/11-hotfix\norigin/sprint/12";
+        assert_eq!(latest_sprint_branch(branches), Some("sprint/12".to_owned()));
+    }
+
+    #[test]
+    fn latest_sprint_should_ignore_malformed_branch_names() {
+        let branches = "origin/sprint/foo\norigin/sprint/12x\norigin/sprint/abc/extra";
+        assert_eq!(latest_sprint_branch(branches), None);
     }
 
     #[test]
