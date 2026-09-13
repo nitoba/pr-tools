@@ -309,11 +309,11 @@ async fn prepare_cli_with(
             message: "o comando test requer um remote git do azure devops".to_owned(),
         });
     };
-    let pr = fetch_requested_pr(&client, remote, options).await?;
-    let parent_id = resolve_parent_id(&client, remote, options, &change, pr.as_ref()).await?;
-    let parent = azure::get_work_item(&client, &parent_id.to_string()).await?;
-    let pr_changes = fetch_pr_changes_text(&client, remote, pr.as_ref()).await;
-    let examples_text = fetch_examples_text(&client, remote, options).await?;
+    let pr = fetch_requested_pr(client, remote, options).await?;
+    let parent_id = resolve_parent_id(client, remote, options, &change, pr.as_ref()).await?;
+    let parent = azure::get_work_item(client, &parent_id.to_string()).await?;
+    let pr_changes = fetch_pr_changes_text(client, remote, pr.as_ref()).await;
+    let examples_text = fetch_examples_text(client, remote, options).await?;
     let prompt = build_test_card_prompt(&parent, &change, pr.as_ref(), &pr_changes, &examples_text);
     Ok(TestCardPrep {
         config,
@@ -371,7 +371,7 @@ where
         return Err(AppError::cli("id de PR publicado inválido"));
     }
     let pr = pull_requests::get_pull_request(
-        &client,
+        client,
         &context.remote.project,
         &context.remote.repository,
         published.id,
@@ -380,7 +380,7 @@ where
     validate_published_pr(context, &pr)?;
 
     let linked_ids = pull_requests::get_pull_request_work_item_ids(
-        &client,
+        client,
         &context.remote.project,
         &context.remote.repository,
         published.id,
@@ -399,7 +399,7 @@ where
     } else {
         let mut linked_items = Vec::with_capacity(linked_ids.len());
         for id in linked_ids {
-            linked_items.push(azure::get_work_item(&client, &id.to_string()).await?);
+            linked_items.push(azure::get_work_item(client, &id.to_string()).await?);
         }
         let parent_id = select_parent_work_item(&linked_items).ok_or_else(|| {
             AppError::cli(
@@ -425,8 +425,8 @@ where
     change.base_branch = pr.target_ref_name.clone();
     change.source_ref = pr.source_ref_name.clone();
     change.work_item_id = parent_id.to_string();
-    let pr_changes = fetch_pr_changes_text(&client, &context.remote, Some(&pr)).await;
-    let examples_text = fetch_examples_text_count(&client, &context.remote, 2).await;
+    let pr_changes = fetch_pr_changes_text(client, &context.remote, Some(&pr)).await;
+    let examples_text = fetch_examples_text_count(client, &context.remote, 2).await;
     let prompt = build_test_card_prompt(&parent, &change, Some(&pr), &pr_changes, &examples_text);
     Ok(TestCardPrep {
         config,
