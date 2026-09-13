@@ -27,10 +27,14 @@ use ratatui::{
 use tokio::sync::mpsc;
 use unicode_width::UnicodeWidthChar;
 
+use super::content_editor::{
+    ContentEditAction, ContentEditState, ContentField, render_content_editor,
+};
 use super::markdown::{markdown_text, title_line};
 use super::{
     StatusHeader, border_type, centered_buttons, modal_frame, status_header, status_layout, theme,
 };
+use crate::ai::PrDescription;
 use crate::azure::WorkItem;
 use crate::cli::CliOptions;
 use crate::features::test_card::{
@@ -315,6 +319,10 @@ struct TestApp {
     title: String,
     /// Corpo Markdown final gerado.
     body: String,
+    /// Draft temporário de edição de título/body.
+    content_edit: Option<ContentEditState>,
+    /// Conteúdo aprovado congelado antes da primeira chamada remota.
+    frozen_create_content: Option<PrDescription>,
     /// Contexto p/ criar/atualizar (chega no `Generated`).
     prep: Option<TestCardPrep>,
     /// 6 campos de settings (ordem de `field_label`).
@@ -373,6 +381,8 @@ impl TestApp {
             streamed_raw: String::new(),
             title: String::new(),
             body: String::new(),
+            content_edit: None,
+            frozen_create_content: None,
             prep: None,
             fields: std::array::from_fn(|_| LineEditor::new(String::new())),
             field_focus: 4,
@@ -420,6 +430,9 @@ impl TestApp {
 
     /// Corpo atual p/ copiar (final se houver, senão stream parcial).
     fn copy_body(&self) -> String {
+        if let Some(content) = &self.frozen_create_content {
+            return content.body.clone();
+        }
         if self.body.is_empty() {
             self.streamed_raw.clone()
         } else {
@@ -492,6 +505,8 @@ impl TestApp {
         }
         self.title = title;
         self.body = body;
+        self.content_edit = None;
+        self.frozen_create_content = None;
         self.prep = Some(prep);
         self.phase = TestPhase::Revisao;
         "revisão".clone_into(&mut self.phase_label);
@@ -503,6 +518,23 @@ impl TestApp {
         self.scroll = 0;
         self.panel = Panel::Preview;
         self.push_log("card pronto — revise, ajuste settings (tab) e crie (enter)".to_owned());
+    }
+
+    /// Abre o editor somente no preview e antes da primeira tentativa remota.
+    fn open_content_edit(&mut self) -> bool {
+        if self.phase != TestPhase::Revisao
+            || self.panel != Panel::Preview
+            || self.dialog.is_some()
+            || self.create_recovery == CreateRecoveryState::Available
+            || self.frozen_create_content.is_some()
+        {
+            return false;
+        }
+        self.content_edit = Some(ContentEditState::for_test(
+            self.title.as_str(),
+            self.body.as_str(),
+        ));
+        true
     }
 
     fn on_created_item(&mut self, item: &WorkItem) {
@@ -930,6 +962,9 @@ impl Widget for &TestApp {
         render_footer(self, foot, buf);
         if let Some(dialog) = &self.dialog {
             render_dialog(self, *dialog, area, buf);
+        }
+        if let Some(editor) = &self.content_edit {
+            render_content_editor(editor, area, buf);
         }
     }
 }
@@ -1658,40 +1693,50 @@ fn editor_line(value: &str, cursor: usize, width: usize) -> Line<'static> {
 
 /// Footer honesto por contexto.
 fn render_footer(app: &TestApp, area: Rect, buf: &mut Buffer) {
-    let hints = match &app.dialog {
-        Some(TestDialog::ConfirmCreate(_) | TestDialog::ConfirmTestQa(_)) => {
-            "←/→ alternar · y sim · n não · enter confirmar · esc voltar"
-        }
-        Some(TestDialog::QaEfforts) => {
-            "digite o número · tab troca campo · enter confirma · esc volta"
-        }
-        Some(TestDialog::CreateRecovery(_)) => {
-            "e editar · v verificar cards · r reenviar · enter escolher · esc editar"
-        }
-        Some(TestDialog::CandidateList { .. }) => {
-            "↑/↓ selecionar · d excluir · r atualizar · esc voltar"
-        }
-        Some(TestDialog::DeleteCandidate { .. }) => {
-            "←/→ alternar · y sim · n não · enter confirmar · esc cancelar"
-        }
-        None => match app.phase {
-            TestPhase::Preparando | TestPhase::Gerando => "j/k rolar preview · q/esc abortar",
-            TestPhase::Criando => "q/esc abortar",
-            TestPhase::Revisao => match app.panel {
-                Panel::Preview => "tab settings · enter continuar · c copia · j/k rola · q sai",
-                Panel::Settings => {
-                    if app.create_recovery == CreateRecoveryState::Available {
-                        "digite p/ editar · ↑/↓ campo · enter retry · esc opções · q sai"
-                    } else if app.error.is_some() {
-                        "digite p/ editar · ↑/↓ campo · enter reenviar · tab preview · q sai"
-                    } else {
-                        "digite p/ editar · ↑/↓ campo · tab preview · enter continuar · esc volta"
+    let hints = if app.content_edit.is_some() {
+        "Tab alterna título/corpo · Ctrl+S salva · Esc cancela"
+    } else {
+        match &app.dialog {
+            Some(TestDialog::ConfirmCreate(_) | TestDialog::ConfirmTestQa(_)) => {
+                "←/→ alternar · y sim · n não · enter confirmar · esc voltar"
+            }
+            Some(TestDialog::QaEfforts) => {
+                "digite o número · tab troca campo · enter confirma · esc volta"
+            }
+            Some(TestDialog::CreateRecovery(_)) => {
+                "e editar settings · v verificar cards · r reenviar · enter escolher · esc editar"
+            }
+            Some(TestDialog::CandidateList { .. }) => {
+                "↑/↓ selecionar · d excluir · r atualizar · esc voltar"
+            }
+            Some(TestDialog::DeleteCandidate { .. }) => {
+                "←/→ alternar · y sim · n não · enter confirmar · esc cancelar"
+            }
+            None => match app.phase {
+                TestPhase::Preparando | TestPhase::Gerando => "j/k rolar preview · q/esc abortar",
+                TestPhase::Criando => "q/esc abortar",
+                TestPhase::Revisao => match app.panel {
+                    Panel::Preview => {
+                        if app.frozen_create_content.is_none() {
+                            "e Editar conteúdo · tab settings · enter continuar · c copia · j/k rola · q sai"
+                        } else {
+                            "tab settings · enter continuar · c copia · j/k rola · q sai"
+                        }
                     }
-                }
+                    Panel::Settings => {
+                        if app.create_recovery == CreateRecoveryState::Available {
+                            "digite p/ editar · ↑/↓ campo · enter retry · esc opções · q sai"
+                        } else if app.error.is_some() {
+                            "digite p/ editar · ↑/↓ campo · enter reenviar · tab preview · q sai"
+                        } else {
+                            "digite p/ editar · ↑/↓ campo · tab preview · enter continuar · esc volta"
+                        }
+                    }
+                },
+                TestPhase::Pronto => "enter Test QA · c copia · outra tecla sai",
+                TestPhase::Erro => "qualquer tecla sai",
             },
-            TestPhase::Pronto => "enter Test QA · c copia · outra tecla sai",
-            TestPhase::Erro => "qualquer tecla sai",
-        },
+        }
     };
     let mut spans = vec![Span::styled(hints, theme().muted)];
     if app.is_copied_flash() {
@@ -1754,6 +1799,12 @@ async fn run_loop(
         }
         if event::poll(Duration::from_millis(10))? {
             let ev = event::read()?;
+            if let Event::Paste(text) = ev {
+                if handle_content_paste(&mut app, text.as_str()) {
+                    needs_draw = true;
+                }
+                continue;
+            }
             let Event::Key(key) = ev else {
                 needs_draw = true;
                 continue;
@@ -1847,7 +1898,9 @@ fn test_key_kind_allowed(app: &TestApp, key: event::KeyEvent) -> bool {
             | KeyCode::Home
             | KeyCode::End
     );
-    is_scroll || (app.phase == TestPhase::Revisao && app.panel == Panel::Settings && is_edit)
+    is_scroll
+        || (app.phase == TestPhase::Revisao
+            && ((app.panel == Panel::Settings && is_edit) || app.content_edit.is_some()))
 }
 
 /// Trata Ctrl-C conforme a fase (`None` = a tecla não é Ctrl-C).
@@ -2179,6 +2232,9 @@ async fn handle_qa_efforts_key(
 
 /// Despacha a tecla (fora de diálogo) conforme a fase atual.
 fn handle_test_phase_key(app: &mut TestApp, key: event::KeyEvent) -> TestKeyAction {
+    if app.content_edit.is_some() {
+        return handle_content_edit_key(app, key);
+    }
     match app.phase {
         TestPhase::Pronto => handle_pronto_key(app, key),
         TestPhase::Erro => handle_erro_key(app, key),
@@ -2193,6 +2249,46 @@ fn handle_test_phase_key(app: &mut TestApp, key: event::KeyEvent) -> TestKeyActi
             }
         }
     }
+}
+
+/// Trata uma tecla enquanto o editor de conteúdo está aberto.
+fn handle_content_edit_key(app: &mut TestApp, key: event::KeyEvent) -> TestKeyAction {
+    let Some(editor) = app.content_edit.as_mut() else {
+        return TestKeyAction::Continue(false);
+    };
+    match editor.handle_key(key) {
+        ContentEditAction::Saved(content) => {
+            app.title = content.title;
+            app.body = content.body;
+            app.content_edit = None;
+            app.error = None;
+            app.error_field = None;
+            app.scroll = 0;
+            app.push_log("conteúdo salvo — preview atualizado".to_owned());
+            TestKeyAction::Continue(true)
+        }
+        ContentEditAction::Cancelled => {
+            app.content_edit = None;
+            app.error = None;
+            app.error_field = None;
+            TestKeyAction::Continue(true)
+        }
+        ContentEditAction::Consumed => TestKeyAction::Continue(true),
+        ContentEditAction::Ignored => TestKeyAction::Continue(false),
+    }
+}
+
+/// Trata paste do terminal enquanto o editor está aberto.
+fn handle_content_paste(app: &mut TestApp, text: &str) -> bool {
+    let Some(editor) = app.content_edit.as_mut() else {
+        return false;
+    };
+    match editor.field {
+        ContentField::Title => editor.title.insert_text(text),
+        ContentField::Body => editor.body.insert_text(text),
+    }
+    editor.error = None;
+    true
 }
 
 /// Tecla na fase `Pronto` (Test Case já criado).
@@ -2349,6 +2445,9 @@ fn handle_review_preview_key(app: &mut TestApp, key: event::KeyEvent) -> TestKey
             app.panel = Panel::Settings;
             TestKeyAction::Continue(true)
         }
+        (KeyCode::Char('e'), KeyEventKind::Press) if app.frozen_create_content.is_none() => {
+            TestKeyAction::Continue(app.open_content_edit())
+        }
         (KeyCode::Char('q') | KeyCode::Esc, KeyEventKind::Press) => {
             TestKeyAction::Done(TestFlowOutcome::Reviewed)
         }
@@ -2390,11 +2489,28 @@ fn handle_review_preview_key(app: &mut TestApp, key: event::KeyEvent) -> TestKey
 
 /// Valida settings e dispara a tarefa de criação (ou mostra o erro).
 fn start_create(app: &mut TestApp, tx: &mpsc::UnboundedSender<TestEvent>) {
+    if let Err(error) = test_card::validate_card(&app.title, &app.body) {
+        let mut editor = ContentEditState::for_test(app.title.as_str(), app.body.as_str());
+        if let Err(content_error) = editor.validate() {
+            app.error = Some(content_error.to_string());
+            editor.set_error(content_error);
+        } else {
+            app.error = Some(error.to_string());
+        }
+        app.content_edit = Some(editor);
+        app.panel = Panel::Preview;
+        return;
+    }
     match app.build_settings() {
         Ok(settings) => {
             if let Some(prep) = app.prep.clone() {
-                let title = app.title.clone();
-                let body = app.body.clone();
+                let content = if let Some(content) = app.frozen_create_content.clone() {
+                    content
+                } else {
+                    let content = create_content_for_attempt(app);
+                    app.frozen_create_content = Some(content.clone());
+                    content
+                };
                 app.last_create_settings = Some(settings.clone());
                 app.create_recovery = CreateRecoveryState::Unavailable;
                 app.phase = TestPhase::Criando;
@@ -2406,7 +2522,13 @@ fn start_create(app: &mut TestApp, tx: &mpsc::UnboundedSender<TestEvent>) {
                 app.candidates.clear();
                 app.candidate_message = None;
                 let tx2 = tx.clone();
-                tokio::spawn(backend_create(prep, settings, title, body, tx2));
+                tokio::spawn(backend_create(
+                    prep,
+                    settings,
+                    content.title,
+                    content.body,
+                    tx2,
+                ));
             } else {
                 app.panel = Panel::Settings;
                 app.error = Some("sem contexto p/ criar (prepare falhou)".to_owned());
@@ -2451,11 +2573,26 @@ fn start_candidate_search(app: &mut TestApp, tx: &mpsc::UnboundedSender<TestEven
     app.candidate_activity = CandidateActivity::Loading;
     app.candidate_message = None;
     app.dialog = Some(TestDialog::CandidateList { selected: 0 });
-    let title = app.title.clone();
+    let title = create_candidate_title(app);
     let tx = tx.clone();
     tokio::spawn(async move {
         backend_find_candidates(prep, title, settings, tx).await;
     });
+}
+
+/// Retorna o conteúdo aprovado para esta tentativa de criação.
+fn create_content_for_attempt(app: &TestApp) -> PrDescription {
+    app.frozen_create_content
+        .clone()
+        .unwrap_or_else(|| PrDescription {
+            title: app.title.clone(),
+            body: app.body.clone(),
+        })
+}
+
+/// Título usado pela busca de duplicidade do Test Case atual.
+fn create_candidate_title(app: &TestApp) -> String {
+    create_content_for_attempt(app).title
 }
 
 /// Executa o update do pai p/ Test QA com esforços já validados.
@@ -2504,6 +2641,215 @@ mod tests {
         app.phase = TestPhase::Revisao;
         app.create_initial = true;
         app
+    }
+
+    #[test]
+    fn editing_test_should_open_content_editor_without_touching_settings() {
+        let mut app = review_app();
+        let values = ["area", "qa@example.com", "sprint", "2", "team", "program"];
+        for (field, value) in app.fields.iter_mut().zip(values) {
+            *field = LineEditor::new(value.to_owned());
+        }
+        assert!(app.open_content_edit());
+        let editor = app.content_edit.as_ref().expect("editor aberto");
+        assert_eq!(editor.title.value(), "Card exemplo");
+        assert_eq!(editor.body.value(), "## Objetivo\nX");
+        for (field, value) in app.fields.iter().zip(values) {
+            assert_eq!(field.value, value);
+        }
+    }
+
+    #[test]
+    fn saving_valid_content_should_update_test_preview_exactly() {
+        let mut app = review_app();
+        assert!(app.open_content_edit());
+        let editor = app.content_edit.as_mut().expect("editor aberto");
+        editor.title = crate::tui::content_editor::TextEditor::new("Título ✅", true);
+        editor.body = crate::tui::content_editor::TextEditor::new(
+            "  ação concluída\n- [ ] validar\nlinha final  ",
+            false,
+        );
+        assert!(matches!(
+            handle_content_edit_key(
+                &mut app,
+                event::KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL),
+            ),
+            TestKeyAction::Continue(true)
+        ));
+        assert!(app.content_edit.is_none());
+        assert_eq!(app.title, "Título ✅");
+        assert_eq!(app.body, "  ação concluída\n- [ ] validar\nlinha final  ");
+        assert_eq!(
+            app.copy_body(),
+            "  ação concluída\n- [ ] validar\nlinha final  "
+        );
+    }
+
+    #[test]
+    fn invalid_test_content_should_stay_in_editor_without_remote_start() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let mut empty_title = review_app();
+        empty_title.title = " \n".to_owned();
+        start_create(&mut empty_title, &tx);
+        assert!(empty_title.content_edit.is_some());
+        assert_eq!(empty_title.error.as_deref(), Some("título é obrigatório"));
+        assert!(rx.try_recv().is_err());
+
+        let mut empty_body = review_app();
+        empty_body.body = " \n\t".to_owned();
+        start_create(&mut empty_body, &tx);
+        assert!(empty_body.content_edit.is_some());
+        assert_eq!(
+            empty_body.error.as_deref(),
+            Some("corpo é obrigatório para criar o Test Case")
+        );
+    }
+
+    #[test]
+    fn canceling_content_edit_should_discard_test_draft() {
+        let mut app = review_app();
+        assert!(app.open_content_edit());
+        app.content_edit
+            .as_mut()
+            .expect("editor aberto")
+            .body
+            .insert_text("\ntexto descartado");
+        assert!(matches!(
+            handle_content_edit_key(
+                &mut app,
+                event::KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+            ),
+            TestKeyAction::Continue(true)
+        ));
+        assert!(app.content_edit.is_none());
+        assert_eq!(app.title, "Card exemplo");
+        assert_eq!(app.body, "## Objetivo\nX");
+        assert!(app.open_content_edit());
+        assert_eq!(
+            app.content_edit.as_ref().unwrap().body.value(),
+            "## Objetivo\nX"
+        );
+    }
+
+    #[test]
+    fn edited_test_content_should_use_validate_card_without_pr_body_limit() {
+        assert!(test_card::validate_card(" ", "body").is_err());
+        assert!(test_card::validate_card("Título", " \n\t").is_err());
+        assert!(test_card::validate_card("Título", &"x".repeat(4000)).is_ok());
+    }
+
+    #[test]
+    fn copy_should_use_approved_body_only_and_editor_should_consume_c() {
+        let mut app = review_app();
+        app.frozen_create_content = Some(PrDescription {
+            title: "Título aprovado".to_owned(),
+            body: "body aprovado\n- [ ] exato".to_owned(),
+        });
+        app.body = "body mutável não aprovado".to_owned();
+        assert_eq!(app.copy_body(), "body aprovado\n- [ ] exato");
+
+        app.frozen_create_content = None;
+        assert!(app.open_content_edit());
+        let before = app.content_edit.as_ref().unwrap().title.value().to_owned();
+        assert!(matches!(
+            handle_content_edit_key(
+                &mut app,
+                event::KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE),
+            ),
+            TestKeyAction::Continue(true)
+        ));
+        assert_eq!(
+            app.content_edit.as_ref().unwrap().title.value(),
+            format!("{before}c")
+        );
+    }
+
+    #[test]
+    fn create_should_freeze_approved_content_and_use_existing_builders() {
+        let mut app = review_app();
+        let approved = PrDescription {
+            title: "Título aprovado ✅".to_owned(),
+            body: "## Objetivo\nação concluída\n- [ ] validar".to_owned(),
+        };
+        app.frozen_create_content = Some(approved.clone());
+        app.title = "título mutável".to_owned();
+        app.body = "body mutável".to_owned();
+        assert_eq!(create_content_for_attempt(&app), approved);
+        app.frozen_create_content = None;
+        app.phase = TestPhase::Criando;
+        assert!(!app.open_content_edit());
+        app.phase = TestPhase::Revisao;
+        app.create_recovery = CreateRecoveryState::Available;
+        assert!(!app.open_content_edit());
+        app.create_recovery = CreateRecoveryState::Unavailable;
+        app.frozen_create_content = Some(approved.clone());
+
+        let settings = TestSettings {
+            area_path: "Proj\\Time".to_owned(),
+            assigned_to: String::new(),
+            iteration_path: String::new(),
+            priority: 2.0,
+            team: "QA".to_owned(),
+            program: "Agrotrace".to_owned(),
+        };
+        let input =
+            test_card::build_test_case_input(&settings, "org", 7, &approved.title, &approved.body);
+        let patch = crate::azure::work_items::build_create_patch(
+            &input,
+            Some("https://dev.azure.com/org/_apis/wit/workitems/7"),
+        );
+        assert_eq!(
+            patch[0]["value"],
+            serde_json::Value::String("Título aprovado ✅".to_owned())
+        );
+        assert!(
+            input
+                .description_html
+                .as_deref()
+                .is_some_and(|html| html.contains("ação concluída"))
+        );
+        assert!(
+            input
+                .steps_xml
+                .as_deref()
+                .is_some_and(|xml| xml.contains("validar"))
+        );
+    }
+
+    #[test]
+    fn publish_and_create_retry_should_reuse_frozen_content_and_exact_title() {
+        let mut app = review_app();
+        let approved = PrDescription {
+            title: "Título da tentativa".to_owned(),
+            body: "body da tentativa".to_owned(),
+        };
+        app.frozen_create_content = Some(approved.clone());
+        app.title = "mutação indevida".to_owned();
+        app.body = "outra mutação".to_owned();
+        assert_eq!(create_content_for_attempt(&app), approved);
+        assert_eq!(create_candidate_title(&app), "Título da tentativa");
+    }
+
+    #[test]
+    fn test_content_editor_100x30() -> anyhow::Result<()> {
+        let mut app = review_app();
+        app.open_content_edit();
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend)?;
+        terminal.draw(|f| f.render_widget(&app, f.area()))?;
+        insta::assert_snapshot!("test_content_editor_100x30", terminal.backend());
+        Ok(())
+    }
+
+    #[test]
+    fn test_content_editor_80x24() -> anyhow::Result<()> {
+        let mut app = review_app();
+        app.open_content_edit();
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend)?;
+        terminal.draw(|f| f.render_widget(&app, f.area()))?;
+        insta::assert_snapshot!("test_content_editor_80x24", terminal.backend());
+        Ok(())
     }
 
     #[test]

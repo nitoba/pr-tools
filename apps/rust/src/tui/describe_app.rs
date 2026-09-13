@@ -7,6 +7,7 @@
 use std::collections::VecDeque;
 use std::time::Instant;
 
+use super::content_editor::ContentEditState;
 use super::events::BackendEvent;
 use super::shimmer::u16_from_i32_clamped;
 use crate::ai::PrDescription;
@@ -102,6 +103,10 @@ pub struct DescribeApp {
     pub streamed_raw: String,
     /// Descrição final normalizada.
     pub desc: Option<PrDescription>,
+    /// Draft temporário de edição de título/body durante a revisão.
+    pub content_edit: Option<ContentEditState>,
+    /// Conteúdo aprovado congelado antes da primeira chamada remota.
+    pub frozen_publish_content: Option<PrDescription>,
     /// Raw final (para debug).
     pub raw_final: String,
     /// Logs recentes (cap 200).
@@ -174,6 +179,8 @@ impl DescribeApp {
             tick: 0,
             streamed_raw: String::new(),
             desc: None,
+            content_edit: None,
+            frozen_publish_content: None,
             raw_final: String::new(),
             logs: VecDeque::with_capacity(200),
             progress: 0.0,
@@ -239,6 +246,8 @@ impl DescribeApp {
             }
             BackendEvent::Finished(desc, raw) => {
                 self.desc = Some(desc);
+                self.content_edit = None;
+                self.frozen_publish_content = None;
                 self.raw_final = raw;
                 self.phase = Phase::Review;
                 "revisão".clone_into(&mut self.phase_label);
@@ -366,6 +375,22 @@ impl DescribeApp {
         if self.desc.is_some() && self.publish_dialog.is_none() {
             self.publish_dialog = Some(PublishDialog::ConfirmCreate(self.create_initial));
         }
+    }
+
+    /// Abre o editor de conteúdo somente antes da primeira tentativa remota.
+    pub fn open_content_edit(&mut self) -> bool {
+        if self.phase != Phase::Review
+            || self.publish_dialog.is_some()
+            || self.publish_failure.is_some()
+            || self.frozen_publish_content.is_some()
+        {
+            return false;
+        }
+        let Some(desc) = self.desc.as_ref() else {
+            return false;
+        };
+        self.content_edit = Some(ContentEditState::for_pr(desc));
+        true
     }
 
     /// Abre a edição de reviewers (valores = defaults por target).

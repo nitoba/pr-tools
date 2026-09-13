@@ -50,7 +50,10 @@ pub fn prepare(options: &CliOptions) -> Result<DescribePrep> {
     );
     let context = git::collect(options.source.as_deref())?;
     let targets = git::resolve_targets(&context, &options.targets);
-    if options.targets.iter().any(|t| t == "sprint") && context.sprint_branch.is_empty() {
+    let uses_default_targets = options.targets.is_empty();
+    if (uses_default_targets || options.targets.iter().any(|t| t == "sprint"))
+        && context.sprint_branch.is_empty()
+    {
         return Err(AppError::Git {
             message: "target sprint solicitado mas nenhuma branch sprint/* encontrada".to_owned(),
         });

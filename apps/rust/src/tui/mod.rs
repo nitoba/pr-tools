@@ -6,6 +6,7 @@
 //!   tokio empurra `Token`/`Log`/`Progress` por `mpsc` e cada frame (~30fps)
 //!   redesenha o preview com cursor e o status global.
 
+pub mod content_editor;
 pub mod describe_app;
 pub mod doctor_flow;
 pub mod events;
@@ -411,6 +412,7 @@ pub fn centered_popup(area: Rect, buf: &mut Buffer, percent_x: u16, percent_y: u
         Layout::horizontal([Constraint::Percentage(percent_x)]).flex(ratatui::layout::Flex::Center);
     let [mid] = vertical.areas(area);
     let [popup] = horizontal.areas(mid);
+    dim_background(area, buf);
     Clear.render(popup, buf);
     popup
 }
@@ -445,6 +447,7 @@ pub fn modal_frame(
         width,
         height,
     };
+    dim_background(area, buf);
     Clear.render(popup, buf);
     let block = Block::default()
         .title(Span::styled(title.to_owned(), style))
@@ -455,6 +458,16 @@ pub fn modal_frame(
     let inner = block.inner(popup);
     block.render(popup, buf);
     inner
+}
+
+/// Diminui o conteúdo já desenhado antes de um modal assumir o foco.
+///
+/// Terminais não oferecem transparência nem blur por pixel. O modificador
+/// `DIM` é o equivalente portátil: preserva o contexto e reduz a competição
+/// visual, enquanto o `Clear` do popup remove o efeito na área modal antes de
+/// renderizar o seu conteúdo.
+fn dim_background(area: Rect, buf: &mut Buffer) {
+    buf.set_style(area, Style::new().add_modifier(Modifier::DIM));
 }
 
 /// Botões Sim/Não com o selecionado em reverso (padrão dos confirms).
@@ -490,4 +503,31 @@ pub fn centered_buttons(yes_selected: bool, inner_width: u16) -> Line<'static> {
     let mut spans = vec![Span::styled(pad, Style::new())];
     spans.extend(yes_no_spans(yes_selected));
     Line::from(spans)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dim_background_should_mark_existing_cells() {
+        let area = Rect::new(0, 0, 20, 10);
+        let mut buffer = Buffer::empty(area);
+
+        dim_background(area, &mut buffer);
+
+        assert!(buffer[(0, 0)].modifier.contains(Modifier::DIM));
+        assert!(buffer[(19, 9)].modifier.contains(Modifier::DIM));
+    }
+
+    #[test]
+    fn modal_frame_should_clear_dim_from_popup_area() {
+        let area = Rect::new(0, 0, 20, 10);
+        let mut buffer = Buffer::empty(area);
+
+        let _ = modal_frame(area, &mut buffer, " Teste ", theme().accent, 10, 3);
+
+        assert!(buffer[(0, 0)].modifier.contains(Modifier::DIM));
+        assert!(!buffer[(5, 2)].modifier.contains(Modifier::DIM));
+    }
 }

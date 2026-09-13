@@ -23,6 +23,9 @@ use ratatui::{
 };
 use tokio::sync::mpsc;
 
+use super::content_editor::{
+    ContentEditAction, ContentEditState, ContentField, render_content_editor,
+};
 use super::describe_app::{CandidateActivity, DescribeApp, Phase, PublishDialog, PublishSetup};
 use super::events::{BackendEvent, LiveOutcome};
 use super::shimmer::f64_from_usize;
@@ -388,6 +391,16 @@ fn start_publish(
     desc: &crate::ai::PrDescription,
     recovery: bool,
 ) {
+    let approved = publish_content_for_attempt(app, desc);
+    let mut validation = ContentEditState::for_pr(&approved);
+    if let Err(error) = validation.validate() {
+        validation.set_error(error.clone());
+        app.content_edit = Some(validation);
+        app.publish_dialog = None;
+        app.error = Some(error.to_string());
+        app.phase = Phase::Review;
+        return;
+    }
     app.commit_reviewer();
     if recovery {
         // A recuperação deve refletir alterações feitas no `prt init` desde a
@@ -425,9 +438,15 @@ fn start_publish(
     "publicando…".clone_into(&mut app.phase_label);
     app.progress = 0.0;
     "criando PRs…".clone_into(&mut app.progress_label);
+    // Congela a versão aprovada antes de iniciar a primeira task remota. Em
+    // recovery, a mesma versão já existente vence qualquer conteúdo mutável.
+    let content = app
+        .frozen_publish_content
+        .get_or_insert_with(|| approved.clone())
+        .clone();
     let base = base.clone();
-    let title = desc.title.clone();
-    let body = desc.body.clone();
+    let title = content.title;
+    let body = content.body;
     let tx = tx.clone();
     tokio::spawn(publish_task(
         base, title, body, reviewers, targets, recovery, tx,
@@ -453,6 +472,9 @@ impl Widget for &DescribeApp {
         }
         if let Some(dialog) = &self.publish_dialog {
             render_publish_dialog(self, *dialog, area, buf);
+        }
+        if let Some(editor) = &self.content_edit {
+            render_content_editor(editor, area, buf);
         }
     }
 }
@@ -869,59 +891,73 @@ fn terminal_text(value: &str) -> String {
 
 fn render_footer(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
     let success_mark = if ascii_only() { "+" } else { "✓" };
-    let hints = match &app.publish_dialog {
-        Some(PublishDialog::ConfirmCreate(_) | PublishDialog::ConfirmPublish(_)) => {
-            if ascii_only() {
-                "<-/-> alternar - y sim - n nao - enter confirmar - esc voltar"
-            } else {
-                "←/→ alternar · y sim · n não · enter confirmar · esc voltar"
-            }
+    let hints = if app.content_edit.is_some() {
+        if ascii_only() {
+            "tab alternar titulo/corpo - ctrl+s salvar - esc cancelar"
+        } else {
+            "Tab alterna título/corpo · Ctrl+S salvar · Esc cancelar"
         }
-        Some(PublishDialog::Reviewers) => {
-            if ascii_only() {
-                "digite o reviewer - tab/up/down trocar campo - enter avancar - esc voltar"
-            } else {
-                "digite o reviewer · tab/↓↑ trocar campo · enter avançar · esc voltar"
-            }
-        }
-        Some(PublishDialog::PublishRecovery(_)) => {
-            if ascii_only() {
-                "up/down escolher - enter confirmar - esc voltar"
-            } else {
-                "↑/↓ escolher · enter confirmar · esc voltar"
-            }
-        }
-        Some(PublishDialog::CandidateList { .. }) => {
-            if ascii_only() {
-                "up/down escolher - enter adotar - esc voltar"
-            } else {
-                "↑/↓ escolher · enter adotar · esc voltar"
-            }
-        }
-        None => match app.phase {
-            Phase::Review => {
+    } else {
+        match &app.publish_dialog {
+            Some(PublishDialog::ConfirmCreate(_) | PublishDialog::ConfirmPublish(_)) => {
                 if ascii_only() {
-                    "enter publicar - c copiar - tab target - j/k scroll - ? ajuda - q sair"
+                    "<-/-> alternar - y sim - n nao - enter confirmar - esc voltar"
                 } else {
-                    "enter publicar · c copiar · tab target · j/k scroll · ? ajuda · q sair"
+                    "←/→ alternar · y sim · n não · enter confirmar · esc voltar"
                 }
             }
-            Phase::Done => "q sair",
-            Phase::Error => {
+            Some(PublishDialog::Reviewers) => {
                 if ascii_only() {
-                    "r retornar erro ao comando - q sair - ? ajuda"
+                    "digite o reviewer - tab/up/down trocar campo - enter avancar - esc voltar"
                 } else {
-                    "r retornar erro ao comando · q sair · ? ajuda"
+                    "digite o reviewer · tab/↓↑ trocar campo · enter avançar · esc voltar"
                 }
             }
-            _ => {
+            Some(PublishDialog::PublishRecovery(_)) => {
                 if ascii_only() {
-                    "j/k scroll - tab target - ? ajuda - q sair"
+                    "up/down escolher - enter confirmar - esc voltar"
                 } else {
-                    "j/k scroll · tab target · ? ajuda · q sair"
+                    "↑/↓ escolher · enter confirmar · esc voltar"
                 }
             }
-        },
+            Some(PublishDialog::CandidateList { .. }) => {
+                if ascii_only() {
+                    "up/down escolher - enter adotar - esc voltar"
+                } else {
+                    "↑/↓ escolher · enter adotar · esc voltar"
+                }
+            }
+            None => match app.phase {
+                Phase::Review => {
+                    if app.frozen_publish_content.is_none() {
+                        if ascii_only() {
+                            "e editar - enter publicar - c copiar - tab - j/k - ? ajuda - q sair"
+                        } else {
+                            "e editar · enter publicar · c copiar · tab · j/k · ? ajuda · q sair"
+                        }
+                    } else if ascii_only() {
+                        "enter publicar - c copiar - tab target - j/k scroll - ? ajuda - q sair"
+                    } else {
+                        "enter publicar · c copiar · tab target · j/k scroll · ? ajuda · q sair"
+                    }
+                }
+                Phase::Done => "q sair",
+                Phase::Error => {
+                    if ascii_only() {
+                        "r retornar erro ao comando - q sair - ? ajuda"
+                    } else {
+                        "r retornar erro ao comando · q sair · ? ajuda"
+                    }
+                }
+                _ => {
+                    if ascii_only() {
+                        "j/k scroll - tab target - ? ajuda - q sair"
+                    } else {
+                        "j/k scroll · tab target · ? ajuda · q sair"
+                    }
+                }
+            },
+        }
     };
     let mut spans = vec![Span::styled(hints, theme().muted)];
     if app.is_copied_flash() {
@@ -946,7 +982,7 @@ fn render_help(area: Rect, buf: &mut Buffer) {
                 theme().accent.add_modifier(Modifier::BOLD),
             )),
             Line::from("j/k ou up/down - rolar preview - tab - trocar target"),
-            Line::from("c - copiar body - ? - alternar ajuda - q/esc - sair"),
+            Line::from("e - editar conteúdo - c - copiar body - ? - ajuda - q/esc - sair"),
             Line::from(""),
             Line::from(Span::styled(
                 "publicacao",
@@ -976,7 +1012,7 @@ fn render_help(area: Rect, buf: &mut Buffer) {
                 theme().accent.add_modifier(Modifier::BOLD),
             )),
             Line::from("j/k ou ↑/↓ — rolar preview · tab — trocar target"),
-            Line::from("c — copiar body · ? — alternar ajuda · q/esc — sair"),
+            Line::from("e — Editar conteúdo · c — copiar body · ? — ajuda · q/esc — sair"),
             Line::from(""),
             Line::from(Span::styled(
                 "publicação",
@@ -1486,6 +1522,45 @@ fn on_nav_key(app: &mut DescribeApp, key: crossterm::event::KeyEvent) -> bool {
     }
 }
 
+/// Trata uma tecla enquanto o editor de conteúdo está aberto.
+fn handle_content_edit_key(app: &mut DescribeApp, key: crossterm::event::KeyEvent) -> bool {
+    let Some(editor) = app.content_edit.as_mut() else {
+        return false;
+    };
+    let action = editor.handle_key(key);
+    match action {
+        ContentEditAction::Saved(content) => {
+            app.desc = Some(content);
+            app.content_edit = None;
+            app.error = None;
+            app.scroll = 0;
+            app.logs
+                .push_back("conteúdo salvo — preview atualizado".to_owned());
+            true
+        }
+        ContentEditAction::Cancelled => {
+            app.content_edit = None;
+            app.error = None;
+            true
+        }
+        ContentEditAction::Consumed => true,
+        ContentEditAction::Ignored => false,
+    }
+}
+
+/// Trata paste do terminal enquanto o editor está aberto.
+fn handle_content_paste(app: &mut DescribeApp, text: &str) -> bool {
+    let Some(editor) = app.content_edit.as_mut() else {
+        return false;
+    };
+    match editor.field {
+        ContentField::Title => editor.title.insert_text(text),
+        ContentField::Body => editor.body.insert_text(text),
+    }
+    editor.error = None;
+    true
+}
+
 /// Cópia do body (`c`) — fora do diálogo ou digitando no editor.
 fn on_copy_key(app: &mut DescribeApp, key: crossterm::event::KeyEvent) -> bool {
     use crossterm::event::KeyCode;
@@ -1493,8 +1568,8 @@ fn on_copy_key(app: &mut DescribeApp, key: crossterm::event::KeyEvent) -> bool {
         return false;
     }
     if app.publish_dialog.is_none() {
-        if let Some(d) = &app.desc {
-            if crate::features::describe::copy_to_clipboard(&d.body) {
+        if let Some(body) = approved_publish_body(app) {
+            if crate::features::describe::copy_to_clipboard(body) {
                 app.flash_copied();
                 app.logs.push_back("body copiado ✓".to_owned());
             } else {
@@ -1532,7 +1607,7 @@ fn start_candidate_search(
         app.candidate_message = Some("não há target pendente para consultar".to_owned());
         return;
     };
-    let Some(desc) = app.desc.clone() else {
+    let Some(title) = publish_candidate_title(app) else {
         return;
     };
     app.candidate_activity = CandidateActivity::Loading;
@@ -1545,7 +1620,34 @@ fn start_candidate_search(
         .push_back(format!("buscando PRs recentes do target {target}"));
     let base = base.clone();
     let tx = tx.clone();
-    tokio::spawn(backend_find_candidates(base, desc.title, target, tx));
+    tokio::spawn(backend_find_candidates(base, title, target, tx));
+}
+
+/// Retorna o conteúdo aprovado para esta tentativa, mantendo o snapshot
+/// intacto em retries e nos targets restantes.
+fn publish_content_for_attempt(
+    app: &DescribeApp,
+    generated: &crate::ai::PrDescription,
+) -> crate::ai::PrDescription {
+    app.frozen_publish_content
+        .clone()
+        .unwrap_or_else(|| generated.clone())
+}
+
+/// Título usado pela busca de duplicidade do PR atual.
+fn publish_candidate_title(app: &DescribeApp) -> Option<String> {
+    app.frozen_publish_content
+        .as_ref()
+        .or(app.desc.as_ref())
+        .map(|content| content.title.clone())
+}
+
+/// Body aprovado exibido ao copiar, inclusive durante uma recuperação.
+fn approved_publish_body(app: &DescribeApp) -> Option<&str> {
+    app.frozen_publish_content
+        .as_ref()
+        .or(app.desc.as_ref())
+        .map(|content| content.body.as_str())
 }
 
 /// `Enter` — avança o fluxo de publicação conforme o diálogo aberto.
@@ -1753,6 +1855,10 @@ fn handle_key_event(
     needs_draw: &mut bool,
 ) -> anyhow::Result<Option<LiveOutcome>> {
     use crossterm::event::KeyCode;
+    if app.content_edit.is_some() && handle_content_edit_key(app, key) {
+        *needs_draw = true;
+        return Ok(None);
+    }
     match (key.code, key.modifiers) {
         (KeyCode::Char('c'), m) if m.contains(KeyModifiers::CONTROL) => {
             if app.phase == Phase::Publishing {
@@ -1808,6 +1914,14 @@ fn handle_key_event(
         (KeyCode::Char('?'), _) => {
             app.show_help = !app.show_help;
             *needs_draw = true;
+            return Ok(None);
+        }
+        (KeyCode::Char('e'), m)
+            if m.is_empty() && app.phase == Phase::Review && app.publish_dialog.is_none() =>
+        {
+            if app.open_content_edit() {
+                *needs_draw = true;
+            }
             return Ok(None);
         }
         (KeyCode::Enter, _) => {
@@ -1887,26 +2001,54 @@ fn run_loop(
 
         // 4. Input não-bloqueante (poll 10ms p/ manter 30fps).
         if event::poll(Duration::from_millis(10))? {
-            if let Event::Key(key) = event::read()? {
-                // Filtro de kind: Release sempre ignorado; Repeat só p/ scroll.
-                let eh_scroll = matches!(
-                    key.code,
-                    KeyCode::Char('j' | 'k') | KeyCode::Up | KeyCode::Down
-                );
-                if key.kind == KeyEventKind::Release
-                    || (key.kind == KeyEventKind::Repeat && !eh_scroll)
-                {
-                    // Ignora sem sujar a tela.
-                } else if let Some(outcome) = handle_key_event(
-                    &mut app,
-                    key,
-                    &publish_base,
-                    &tx,
-                    &mut *terminal,
-                    &mut needs_draw,
-                )? {
-                    return Ok(outcome);
+            match event::read()? {
+                Event::Paste(text) => {
+                    if handle_content_paste(&mut app, text.as_str()) {
+                        needs_draw = true;
+                    }
                 }
+                Event::Key(key) => {
+                    // Filtro de kind: Release sempre ignorado; Repeat passa
+                    // também para a edição do conteúdo ativo.
+                    let eh_scroll = matches!(
+                        key.code,
+                        KeyCode::Char('j' | 'k') | KeyCode::Up | KeyCode::Down
+                    );
+                    let eh_content_edit = app.content_edit.is_some()
+                        && matches!(
+                            key.code,
+                            KeyCode::Char(_)
+                                | KeyCode::Backspace
+                                | KeyCode::Delete
+                                | KeyCode::Left
+                                | KeyCode::Right
+                                | KeyCode::Up
+                                | KeyCode::Down
+                                | KeyCode::Home
+                                | KeyCode::End
+                                | KeyCode::Enter
+                                | KeyCode::Tab
+                                | KeyCode::BackTab
+                                | KeyCode::PageUp
+                                | KeyCode::PageDown
+                                | KeyCode::Esc
+                        );
+                    if key.kind == KeyEventKind::Release
+                        || (key.kind == KeyEventKind::Repeat && !eh_scroll && !eh_content_edit)
+                    {
+                        // Ignora sem sujar a tela.
+                    } else if let Some(outcome) = handle_key_event(
+                        &mut app,
+                        key,
+                        &publish_base,
+                        &tx,
+                        &mut *terminal,
+                        &mut needs_draw,
+                    )? {
+                        return Ok(outcome);
+                    }
+                }
+                _ => {}
             }
         }
 
@@ -1946,6 +2088,223 @@ mod tests {
             "{\"title\":\"Atualiza fluxo de checkout\"}".to_owned(),
         ));
         app
+    }
+
+    #[test]
+    fn editing_desc_should_open_content_editor_with_generated_content() {
+        let mut app = review_app();
+        assert!(app.open_content_edit());
+        let editor = app.content_edit.as_ref().expect("editor aberto");
+        assert_eq!(editor.title.value(), "Atualiza fluxo de checkout");
+        assert_eq!(editor.body.value(), app.desc.as_ref().unwrap().body);
+    }
+
+    #[test]
+    fn saving_valid_content_should_update_desc_preview_exactly() {
+        let mut app = review_app();
+        assert!(app.open_content_edit());
+        let editor = app.content_edit.as_mut().expect("editor aberto");
+        editor.title = crate::tui::content_editor::TextEditor::new("Título — ✅", true);
+        editor.body = crate::tui::content_editor::TextEditor::new(
+            "  ação concluída\n- [ ] validar\nlinha final  ",
+            false,
+        );
+        let saved = handle_content_edit_key(
+            &mut app,
+            event::KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL),
+        );
+        assert!(saved);
+        assert!(app.content_edit.is_none());
+        assert_eq!(app.desc.as_ref().unwrap().title, "Título — ✅");
+        assert_eq!(
+            app.desc.as_ref().unwrap().body,
+            "  ação concluída\n- [ ] validar\nlinha final  "
+        );
+        assert_eq!(
+            app.preview_text(),
+            "# Título — ✅\n\n  ação concluída\n- [ ] validar\nlinha final  "
+        );
+    }
+
+    #[test]
+    fn invalid_desc_content_should_stay_in_editor_without_remote_start() {
+        let mut app = review_app();
+        app.desc = Some(PrDescription {
+            title: "   ".to_owned(),
+            body: "corpo".to_owned(),
+        });
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let base = PublishBase {
+            pat: String::new(),
+            remote: None,
+            branch: "feature/x".to_owned(),
+            work_item_id: String::new(),
+        };
+        let desc = app.desc.clone().expect("descrição");
+        start_publish(&mut app, &base, &tx, &desc, false);
+        assert!(app.content_edit.is_some());
+        assert_eq!(app.phase, Phase::Review);
+        assert_eq!(app.error.as_deref(), Some("título é obrigatório"));
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn canceling_content_edit_should_discard_desc_draft() {
+        let mut app = review_app();
+        let original = app.desc.clone().expect("descrição");
+        assert!(app.open_content_edit());
+        app.content_edit
+            .as_mut()
+            .expect("editor aberto")
+            .title
+            .insert_text(" alterado");
+        assert!(handle_content_edit_key(
+            &mut app,
+            event::KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+        ));
+        assert!(app.content_edit.is_none());
+        assert_eq!(app.desc, Some(original));
+        assert!(app.open_content_edit());
+        let editor = app.content_edit.as_ref().expect("editor reaberto");
+        assert_eq!(editor.title.value(), "Atualiza fluxo de checkout");
+    }
+
+    #[test]
+    fn copy_should_use_approved_body_only_and_editor_should_consume_c() {
+        let mut app = review_app();
+        let approved = PrDescription {
+            title: "Título aprovado".to_owned(),
+            body: "body aprovado\n- [ ] exato".to_owned(),
+        };
+        app.frozen_publish_content = Some(approved.clone());
+        app.desc = Some(PrDescription {
+            title: "Título antigo".to_owned(),
+            body: "body antigo".to_owned(),
+        });
+        assert_eq!(approved_publish_body(&app), Some(approved.body.as_str()));
+
+        app.frozen_publish_content = None;
+        assert!(app.open_content_edit());
+        let before = app.content_edit.as_ref().unwrap().title.value().to_owned();
+        assert!(handle_content_edit_key(
+            &mut app,
+            event::KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE),
+        ));
+        assert_eq!(
+            app.content_edit.as_ref().unwrap().title.value(),
+            format!("{before}c")
+        );
+    }
+
+    #[test]
+    fn publish_should_freeze_approved_content_before_first_remote_call() {
+        let mut app = review_app();
+        let generated = app.desc.clone().expect("descrição");
+        let approved = PrDescription {
+            title: "Título editado".to_owned(),
+            body: "Markdown editado\n- [ ] exato ✅".to_owned(),
+        };
+        app.frozen_publish_content = Some(approved.clone());
+        let attempt = publish_content_for_attempt(&app, &generated);
+        assert_eq!(attempt, approved);
+        app.frozen_publish_content = None;
+        app.phase = Phase::Publishing;
+        assert!(!app.open_content_edit());
+        app.phase = Phase::Review;
+        app.publish_dialog = Some(PublishDialog::PublishRecovery(0));
+        assert!(!app.open_content_edit());
+        app.publish_dialog = None;
+        app.frozen_publish_content = Some(attempt.clone());
+
+        let remote = crate::git::RepositoryRemote {
+            organization: "org".to_owned(),
+            project: "project".to_owned(),
+            repository: "repo".to_owned(),
+        };
+        let targets = vec!["sprint/12".to_owned(), "dev".to_owned()];
+        let reviewer_for = |_: &str| String::new();
+        let input = crate::azure::pull_requests::PublishInput {
+            remote: &remote,
+            branch: &app.branch,
+            targets: &targets,
+            title: &attempt.title,
+            body: &attempt.body,
+            work_item_ids: &[],
+            reviewer_for: &reviewer_for,
+            on_published: None,
+            on_target_started: None,
+        };
+        for _target in input.targets {
+            assert_eq!(input.title, "Título editado");
+            assert_eq!(input.body, "Markdown editado\n- [ ] exato ✅");
+        }
+        assert_eq!(targets.len(), 2);
+    }
+
+    #[test]
+    fn publish_and_create_retry_should_reuse_frozen_content_and_exact_title() {
+        let mut app = review_app();
+        let approved = PrDescription {
+            title: "Título da tentativa".to_owned(),
+            body: "body da tentativa".to_owned(),
+        };
+        app.frozen_publish_content = Some(approved.clone());
+        app.desc.as_mut().unwrap().title = "mutação indevida".to_owned();
+        assert_eq!(publish_candidate_title(&app), Some(approved.title.clone()));
+        assert_eq!(
+            publish_content_for_attempt(&app, &app.desc.clone().unwrap()),
+            approved
+        );
+    }
+
+    #[test]
+    fn pending_publish_targets_should_reuse_one_frozen_content_snapshot() {
+        let mut app = review_app();
+        app.targets = vec!["sprint/12".to_owned(), "dev".to_owned()];
+        app.frozen_publish_content = Some(PrDescription {
+            title: "Título único".to_owned(),
+            body: "body único".to_owned(),
+        });
+        app.published.push(PublishedPr {
+            target: "sprint/12".to_owned(),
+            id: 1,
+            url: "https://example/pr/1".to_owned(),
+        });
+        let generated = PrDescription {
+            title: "não usar".to_owned(),
+            body: "não usar".to_owned(),
+        };
+        assert_eq!(app.remaining_publish_targets(), vec!["dev"]);
+        assert_eq!(
+            publish_content_for_attempt(&app, &generated).title,
+            "Título único"
+        );
+        assert_eq!(
+            publish_candidate_title(&app),
+            Some("Título único".to_owned())
+        );
+    }
+
+    #[test]
+    fn desc_content_editor_100x30() -> anyhow::Result<()> {
+        let mut app = review_app();
+        app.open_content_edit();
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend)?;
+        terminal.draw(|f| f.render_widget(&app, f.area()))?;
+        insta::assert_snapshot!("desc_content_editor_100x30", terminal.backend());
+        Ok(())
+    }
+
+    #[test]
+    fn desc_content_editor_80x24() -> anyhow::Result<()> {
+        let mut app = review_app();
+        app.open_content_edit();
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend)?;
+        terminal.draw(|f| f.render_widget(&app, f.area()))?;
+        insta::assert_snapshot!("desc_content_editor_80x24", terminal.backend());
+        Ok(())
     }
 
     #[test]
