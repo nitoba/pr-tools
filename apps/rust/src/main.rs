@@ -230,9 +230,13 @@ async fn run_desc(options: &prt::cli::CliOptions) -> anyhow::Result<()> {
 }
 
 async fn run_update(options: &prt::cli::CliOptions) -> anyhow::Result<()> {
+    let tty = std::io::IsTerminal::is_terminal(&std::io::stdout());
+    run_update_with_tty(options, tty).await
+}
+
+async fn run_update_with_tty(options: &prt::cli::CliOptions, tty: bool) -> anyhow::Result<()> {
     use prt::features::update_pull_request;
 
-    let tty = std::io::IsTerminal::is_terminal(&std::io::stdout());
     prt::cli::ensure_update_execution_mode(tty, options.output.dry_run)
         .map_err(anyhow::Error::new)?;
     let prep = update_pull_request::prepare(options)
@@ -494,7 +498,7 @@ mod tests {
     #[tokio::test]
     async fn update_dry_run_and_non_interactive_combinations_should_not_start_provider_or_writer() {
         let options = prt::cli::parse_cli(["prt", "desc", "--pr", "42"]).unwrap();
-        let error = run_update(&options).await.unwrap_err();
+        let error = run_update_with_tty(&options, false).await.unwrap_err();
         assert!(error.to_string().contains("terminal interativo"));
 
         let dry_run = prt::cli::parse_cli(["prt", "desc", "--pr", "42", "--dry-run"]).unwrap();

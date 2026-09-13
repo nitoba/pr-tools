@@ -100,12 +100,18 @@ pub fn colors_enabled() -> bool {
 /// terminal dumb, para que snapshots não dependam do ambiente do runner.
 #[must_use]
 pub fn ascii_only() -> bool {
-    if std::env::var("TERM").is_ok_and(|v| v == "dumb")
-        && std::io::IsTerminal::is_terminal(&std::io::stdout())
-    {
+    if std::env::var("PRT_ASCII").is_ok_and(|v| v == "1") {
         return true;
     }
-    std::env::var("PRT_ASCII").is_ok_and(|v| v == "1")
+
+    #[cfg(not(test))]
+    {
+        return std::env::var("TERM").is_ok_and(|v| v == "dumb")
+            && std::io::IsTerminal::is_terminal(&std::io::stdout());
+    }
+
+    #[cfg(test)]
+    false
 }
 
 /// Tema sem cor — mesmo [`Theme`] com tudo zerado.
