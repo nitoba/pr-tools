@@ -774,7 +774,83 @@ pub async fn get_pull_request_changes(
 
 #[cfg(test)]
 mod tests {
+    use std::io::{Read, Write};
+    use std::net::{TcpListener, TcpStream};
+    use std::sync::mpsc::{Receiver, channel};
+    use std::thread::{JoinHandle, spawn};
+
     use super::*;
+
+    #[derive(Debug)]
+    struct CapturedRequest {
+        method: String,
+        target: String,
+        headers: String,
+        body: String,
+    }
+
+    fn read_request(mut stream: TcpStream) -> CapturedRequest {
+        let mut bytes = Vec::new();
+        let header_end;
+        loop {
+            let mut chunk = [0_u8; 4096];
+            let read = stream.read(&mut chunk).unwrap();
+            assert!(read > 0, "cliente encerrou antes dos cabeçalhos");
+            bytes.extend_from_slice(&chunk[..read]);
+            if let Some(end) = bytes.windows(4).position(|window| window == b"\r\n\r\n") {
+                header_end = end;
+                break;
+            }
+        }
+        let headers = String::from_utf8_lossy(&bytes[..header_end]).into_owned();
+        let content_length = headers
+            .lines()
+            .find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                name.eq_ignore_ascii_case("content-length")
+                    .then(|| value.trim().parse::<usize>().unwrap())
+            })
+            .unwrap_or(0);
+        let body_start = header_end + 4;
+        while bytes.len() < body_start + content_length {
+            let mut chunk = [0_u8; 4096];
+            let read = stream.read(&mut chunk).unwrap();
+            assert!(read > 0, "cliente encerrou antes do corpo");
+            bytes.extend_from_slice(&chunk[..read]);
+        }
+        let mut request_line = headers.lines();
+        let mut parts = request_line.next().unwrap().split_whitespace();
+        CapturedRequest {
+            method: parts.next().unwrap().to_owned(),
+            target: parts.next().unwrap().to_owned(),
+            headers,
+            body: String::from_utf8_lossy(&bytes[body_start..body_start + content_length])
+                .into_owned(),
+        }
+    }
+
+    fn spawn_json_server(
+        responses: Vec<String>,
+    ) -> (String, Receiver<CapturedRequest>, JoinHandle<()>) {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let address = listener.local_addr().unwrap();
+        let (sender, receiver) = channel();
+        let handle = spawn(move || {
+            for body in responses {
+                let (stream, _) = listener.accept().unwrap();
+                let request = read_request(stream.try_clone().unwrap());
+                sender.send(request).unwrap();
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let mut stream = stream;
+                stream.write_all(response.as_bytes()).unwrap();
+            }
+        });
+        (format!("http://{address}/org"), receiver, handle)
+    }
 
     #[test]
     fn pull_request_should_deserialize_azure_payload() {
@@ -792,8 +868,10 @@ mod tests {
         assert_eq!(pr.source_ref_name, "refs/heads/feature/1");
     }
 
-    #[test]
-    fn pull_request_should_deserialize_update_snapshot_fields_and_get_should_build_exact_route() {
+    #[allow(clippy::too_many_lines)]
+    #[tokio::test]
+    async fn pull_request_should_deserialize_update_snapshot_fields_and_get_should_build_exact_route()
+     {
         let pr: PullRequest = serde_json::from_value(serde_json::json!({
             "pullRequestId": 42,
             "status": "active",
@@ -816,42 +894,93 @@ mod tests {
         assert_eq!(pr.title, "Atual");
         assert_eq!(pr.description, "Body");
 
-        let client = AzureClient::new("org", "pat");
-        let get_request = client
-            .build_get_request("project/_apis/git/repositories/repo/pullRequests/42")
+        let confirmed: PullRequest = serde_json::from_value(serde_json::json!({
+            "pullRequestId": 42,
+            "status": "active",
+            "repository": {
+                "id": "repo-id",
+                "name": "repo",
+                "project": {"name": "project"}
+            },
+            "sourceRefName": "refs/heads/feature/42",
+            "targetRefName": "refs/heads/dev",
+            "title": "Novo",
+            "description": "Descrição"
+        }))
+        .unwrap();
+        let (base_url, requests, server) = spawn_json_server(vec![
+            serde_json::to_string(&serde_json::json!({
+                "pullRequestId": 42,
+                "status": "active",
+                "repository": {
+                    "id": "repo-id",
+                    "name": "repo",
+                    "project": {"name": "project"}
+                },
+                "sourceRefName": "refs/heads/feature/42",
+                "targetRefName": "refs/heads/dev",
+                "title": "Atual",
+                "description": "Body"
+            }))
+            .unwrap(),
+            serde_json::to_string(&serde_json::json!({
+                "pullRequestId": 42,
+                "status": "active",
+                "repository": {
+                    "id": "repo-id",
+                    "name": "repo",
+                    "project": {"name": "project"}
+                },
+                "sourceRefName": "refs/heads/feature/42",
+                "targetRefName": "refs/heads/dev",
+                "title": "Novo",
+                "description": "Descrição"
+            }))
+            .unwrap(),
+        ]);
+        let client = AzureClient::new_for_test(&base_url, "pat");
+        let fetched = get_pull_request(&client, "project", "repo", 42)
+            .await
             .unwrap();
-        assert_eq!(get_request.method(), reqwest::Method::GET);
-        assert_eq!(
-            get_request.url().path(),
-            "/org/project/_apis/git/repositories/repo/pullRequests/42"
-        );
-        assert_eq!(get_request.url().query(), Some("api-version=7.1"));
+        let updated = update_pull_request(
+            &client,
+            "project",
+            "repo",
+            42,
+            &UpdatePullRequestInput {
+                title: "Novo".to_owned(),
+                description: "Descrição".to_owned(),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(fetched, pr);
+        assert_eq!(updated, confirmed);
 
-        let request = client
-            .build_json_patch_request(
-                "project/_apis/git/repositories/repo/pullRequests/42",
-                &update_pr_body(&UpdatePullRequestInput {
-                    title: "Novo".to_owned(),
-                    description: "Descrição".to_owned(),
-                }),
-            )
-            .unwrap();
+        let get_request = requests.recv().unwrap();
         assert_eq!(
-            request.url().path(),
-            "/org/project/_apis/git/repositories/repo/pullRequests/42"
+            get_request.target,
+            "/org/project/_apis/git/repositories/repo/pullRequests/42?api-version=7.1"
         );
-        assert_eq!(request.url().query(), Some("api-version=7.1"));
-        assert_eq!(request.method(), reqwest::Method::PATCH);
+        assert_eq!(get_request.method, "GET");
+        assert!(get_request.body.is_empty());
+        let patch_request = requests.recv().unwrap();
         assert_eq!(
-            request
-                .headers()
-                .get(reqwest::header::CONTENT_TYPE)
-                .and_then(|value| value.to_str().ok()),
-            Some("application/json")
+            patch_request.target,
+            "/org/project/_apis/git/repositories/repo/pullRequests/42?api-version=7.1"
         );
-        let body = request.body().and_then(reqwest::Body::as_bytes);
-        let expected_body = r#"{"description":"Descrição","title":"Novo"}"#;
-        assert_eq!(body, Some(expected_body.as_bytes()));
+        assert_eq!(patch_request.method, "PATCH");
+        assert!(
+            patch_request
+                .headers
+                .to_ascii_lowercase()
+                .contains("content-type: application/json")
+        );
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&patch_request.body).unwrap(),
+            serde_json::json!({"title": "Novo", "description": "Descrição"})
+        );
+        server.join().unwrap();
     }
 
     #[test]

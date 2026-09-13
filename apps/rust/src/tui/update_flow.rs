@@ -871,6 +871,16 @@ mod tests {
         );
         assert!(empty_body.content_edit.is_none());
         assert_eq!(empty_body.proposal.unwrap().body, "");
+
+        let mut invalid_confirm = review_app();
+        invalid_confirm.proposal = Some(PrDescription {
+            title: "   ".to_owned(),
+            body: "body".to_owned(),
+        });
+        assert!(invalid_confirm.confirm().is_none());
+        assert_eq!(invalid_confirm.phase, UpdatePhase::Review);
+        assert!(invalid_confirm.frozen_content.is_none());
+        assert!(invalid_confirm.content_edit.is_some());
     }
 
     #[test]
@@ -889,10 +899,23 @@ mod tests {
         assert_eq!(app.current.title, "Título atual");
         assert!(app.frozen_content.is_none());
         assert_eq!(app.phase, UpdatePhase::Review);
+
+        let gateway = update_pull_request::gateway_for_test();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        assert!(matches!(
+            handle_key(
+                &mut app,
+                KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+                &gateway,
+                &tx,
+            ),
+            Some(UpdateTuiOutcome::Aborted)
+        ));
+        assert_eq!(app.phase, UpdatePhase::Review);
     }
 
     #[test]
-    fn update_should_freeze_approved_content_before_remote_operation() {
+    fn update_ui_should_freeze_approved_content_before_remote_operation() {
         let mut app = review_app();
         let approved = app.proposal.clone().unwrap();
         assert_eq!(app.begin_update(), Some(approved.clone()));

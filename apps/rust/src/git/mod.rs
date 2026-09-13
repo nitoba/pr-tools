@@ -493,5 +493,31 @@ mod tests {
 
         let error = collect_for_refs("refs/heads/not-local", "").unwrap_err();
         assert!(error.to_string().contains("targetRefName"));
+
+        let mut calls = Vec::new();
+        let mut command = |args: &[&str]| {
+            calls.push(args.iter().map(|arg| (*arg).to_owned()).collect::<Vec<_>>());
+            if args == ["rev-parse", "--verify", "refs/heads/feature/42"] {
+                return Ok("source sha".to_owned());
+            }
+            Err(AppError::Git {
+                message: "ref ausente".to_owned(),
+            })
+        };
+        let error = collect_for_refs_with(
+            "refs/heads/feature/42",
+            "refs/heads/not-local-target",
+            &mut command,
+            None,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("not-local-target"));
+        assert!(error.to_string().contains("fetch"));
+        assert_eq!(calls.len(), 3);
+        assert!(!calls.iter().any(|call| {
+            call.iter().any(|arg| {
+                matches!(arg.as_str(), "dev" | "main" | "master") || arg.starts_with("sprint/")
+            })
+        }));
     }
 }

@@ -668,7 +668,7 @@ mod tests {
     }
 
     #[test]
-    fn update_dry_run_and_non_interactive_combinations_should_not_start_provider_or_writer() {
+    fn cli_should_reject_update_output_combinations() {
         let options = parse_cli(["prt", "desc", "--pr", "42", "--dry-run"]).unwrap();
         assert!(options.output.dry_run);
         assert!(ensure_update_execution_mode(false, options.output.dry_run).is_ok());

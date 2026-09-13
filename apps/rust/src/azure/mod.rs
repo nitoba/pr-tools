@@ -32,7 +32,7 @@ fn encode_segment(value: &str) -> String {
 #[derive(Debug, Clone)]
 pub struct AzureClient {
     inner: reqwest::Client,
-    organization: String,
+    base_url: String,
     pat: String,
     request_timeout: Option<Duration>,
 }
@@ -83,9 +83,29 @@ impl AzureClient {
     fn build(organization: &str, pat: &str, request_timeout: Option<Duration>) -> Self {
         Self {
             inner: reqwest::Client::new(),
-            organization: organization.to_owned(),
+            base_url: format!("https://dev.azure.com/{organization}/"),
             pat: pat.trim().to_owned(),
             request_timeout,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_for_test(base_url: &str, pat: &str) -> Self {
+        Self {
+            inner: reqwest::Client::new(),
+            base_url: format!("{}/", base_url.trim_end_matches('/')),
+            pat: pat.trim().to_owned(),
+            request_timeout: None,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_for_test_with_timeout(base_url: &str, pat: &str, timeout: Duration) -> Self {
+        Self {
+            inner: reqwest::Client::new(),
+            base_url: format!("{}/", base_url.trim_end_matches('/')),
+            pat: pat.trim().to_owned(),
+            request_timeout: Some(timeout),
         }
     }
 
@@ -103,8 +123,8 @@ impl AzureClient {
     fn url(&self, path: &str) -> String {
         let separator = if path.contains('?') { '&' } else { '?' };
         format!(
-            "https://dev.azure.com/{}/{}{}api-version=7.1",
-            self.organization,
+            "{}{}{}api-version=7.1",
+            self.base_url,
             path.trim_start_matches('/'),
             separator,
         )
@@ -135,14 +155,6 @@ impl AzureClient {
 
     fn get_builder(&self, path: &str) -> reqwest::RequestBuilder {
         self.inner.get(self.url(path))
-    }
-
-    #[cfg(test)]
-    pub(crate) fn build_get_request(
-        &self,
-        path: &str,
-    ) -> std::result::Result<reqwest::Request, reqwest::Error> {
-        self.get_builder(path).build()
     }
 
     /// GET em URL absoluta (ex.: `vssps` de identidades).
@@ -235,17 +247,6 @@ impl AzureClient {
     ) -> Result<T> {
         let builder = self.json_patch_builder(path);
         self.request(builder, body).await
-    }
-
-    /// Monta uma requisição JSON-PATCH sem enviá-la, para manter o contrato de
-    /// método, cabeçalho e corpo testável sem um servidor HTTP externo.
-    #[cfg(test)]
-    pub(crate) fn build_json_patch_request<B: Serialize>(
-        &self,
-        path: &str,
-        body: &B,
-    ) -> std::result::Result<reqwest::Request, reqwest::Error> {
-        self.json_patch_builder(path).json(body).build()
     }
 
     fn json_patch_builder(&self, path: &str) -> reqwest::RequestBuilder {

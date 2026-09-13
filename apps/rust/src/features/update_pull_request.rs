@@ -131,6 +131,16 @@ pub(crate) fn gateway_for(prep: &UpdatePrep) -> Result<AzureUpdateGateway> {
     .map_err(actionable_update_error)
 }
 
+#[cfg(test)]
+pub(crate) fn gateway_for_test() -> AzureUpdateGateway {
+    AzureUpdateGateway {
+        client: azure::AzureClient::new("org", "pat"),
+        project: "project".to_owned(),
+        repository: "repo".to_owned(),
+        id: 42,
+    }
+}
+
 /// Prepara leitura remota, elegibilidade, refs exatas e prompt.
 ///
 /// # Errors
@@ -190,16 +200,19 @@ pub async fn prepare(options: &CliOptions) -> Result<UpdatePrep> {
 ///
 /// Propaga falha de provider ou de validação do body gerado.
 pub async fn generate(prep: &UpdatePrep) -> Result<PrDescription> {
+    validate_eligibility(&prep.current, &prep.remote)?;
     let report = |provider: &str, model: &str| {
         info!(provider, model, "tentando gerar proposta de atualização");
     };
-    crate::features::describe::generate_from_prompt(
+    let proposal = crate::features::describe::generate_from_prompt(
         &prep.config,
         &prep.prompt,
         &prep.context.branch,
         report,
     )
-    .await
+    .await?;
+    validate_update_proposal(&proposal)?;
+    Ok(proposal)
 }
 
 /// Compara todos os campos que protegem a atualização concorrente.
@@ -252,6 +265,19 @@ pub fn validate_eligibility(pr: &PullRequest, remote: &RepositoryRemote) -> Resu
     Ok(())
 }
 
+/// Valida uma proposta gerada antes de permitir a jornada remota.
+///
+/// # Errors
+///
+/// Retorna erro de CLI para título vazio ou erro de limite para body com 4000
+/// caracteres ou mais.
+pub fn validate_update_proposal(proposal: &PrDescription) -> Result<()> {
+    if proposal.title.trim().is_empty() {
+        return Err(AppError::cli("título é obrigatório"));
+    }
+    ai::validate_description(proposal)
+}
+
 /// Executa releitura, no-op, PATCH e GET de confirmação.
 ///
 /// A função não oferece retry implícito. Em resultados incertos, o único
@@ -261,14 +287,7 @@ pub(crate) async fn execute_update<G: UpdateGateway>(
     initial: &PullRequest,
     approved: &PrDescription,
 ) -> Result<UpdateOutcome> {
-    if approved.title.trim().is_empty() {
-        return Err(AppError::cli("título é obrigatório"));
-    }
-    if !ai::is_within_limit(&approved.body) {
-        return Err(AppError::DescriptionTooLong {
-            length: approved.body.chars().count(),
-        });
-    }
+    validate_update_proposal(approved)?;
 
     let current = gateway.get().await.map_err(actionable_update_error)?;
     if !same_snapshot(initial, &current) {
@@ -390,7 +409,11 @@ pub fn actionable_update_error(error: AppError) -> AppError {
 #[cfg(test)]
 mod tests {
     use std::collections::VecDeque;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
     use std::sync::{Arc, Mutex};
+    use std::thread::{JoinHandle, spawn};
+    use std::time::Duration;
 
     use super::*;
     use crate::azure::pull_requests::{PullRequestProject, PullRequestRepository};
@@ -421,11 +444,83 @@ mod tests {
         }
     }
 
+    fn prep_for(current: PullRequest) -> UpdatePrep {
+        UpdatePrep {
+            config: Config::default(),
+            remote: remote(),
+            pr_id: current.pull_request_id,
+            current,
+            context: ChangeContext {
+                branch: "feature/42".to_owned(),
+                source_ref: "refs/heads/feature/42".to_owned(),
+                base_branch: "origin/dev".to_owned(),
+                sprint_branch: String::new(),
+                diff: "diff".to_owned(),
+                diff_original_lines: 1,
+                log: "log".to_owned(),
+                work_item_id: String::new(),
+                remote: Some(remote()),
+            },
+            prompt: "prompt".to_owned(),
+        }
+    }
+
     fn approved() -> PrDescription {
         PrDescription {
             title: "Título aprovado".to_owned(),
             body: "Body aprovado\n- [ ] validar".to_owned(),
         }
+    }
+
+    fn spawn_http_response(
+        status: &str,
+        body: &str,
+        delay: Option<Duration>,
+    ) -> (String, JoinHandle<()>) {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("listener local");
+        let address = listener.local_addr().expect("endereço local");
+        let status = status.to_owned();
+        let body = body.to_owned();
+        let handle = spawn(move || {
+            let (mut stream, _) = listener.accept().expect("cliente HTTP");
+            let mut request = Vec::new();
+            loop {
+                let mut chunk = [0_u8; 4096];
+                let read = stream.read(&mut chunk).expect("requisição HTTP");
+                if read == 0 {
+                    break;
+                }
+                request.extend_from_slice(&chunk[..read]);
+                let Some(header_end) = request.windows(4).position(|window| window == b"\r\n\r\n")
+                else {
+                    continue;
+                };
+                let headers = String::from_utf8_lossy(&request[..header_end]);
+                let content_length = headers
+                    .lines()
+                    .find_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        name.eq_ignore_ascii_case("content-length")
+                            .then(|| value.trim().parse::<usize>().unwrap())
+                    })
+                    .unwrap_or(0);
+                if request.len() >= header_end + 4 + content_length {
+                    break;
+                }
+            }
+            if let Some(delay) = delay {
+                std::thread::sleep(delay);
+                return;
+            }
+            let response = format!(
+                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            stream
+                .write_all(response.as_bytes())
+                .expect("resposta HTTP");
+        });
+        (format!("http://{address}/org"), handle)
     }
 
     #[derive(Clone)]
@@ -496,20 +591,30 @@ mod tests {
         }
     }
 
-    #[test]
-    fn update_should_reject_non_active_pull_requests_before_generation() {
+    #[tokio::test]
+    async fn update_should_reject_non_active_pull_requests_before_generation() {
         let mut pr = pull_request();
         pr.status = "completed".to_owned();
-        let error = validate_eligibility(&pr, &remote()).unwrap_err();
+        let error = generate(&prep_for(pr)).await.unwrap_err();
         assert!(error.to_string().contains("somente PRs active"));
+        let source = include_str!("update_pull_request.rs");
+        assert!(
+            source.find("validate_eligibility(&prep.current").unwrap()
+                < source.find("generate_from_prompt").unwrap()
+        );
     }
 
-    #[test]
-    fn update_should_reject_pull_request_from_another_repository() {
+    #[tokio::test]
+    async fn update_should_reject_pull_request_from_another_repository() {
         let mut pr = pull_request();
         pr.repository.name = "outro-repo".to_owned();
-        let error = validate_eligibility(&pr, &remote()).unwrap_err();
+        let error = generate(&prep_for(pr)).await.unwrap_err();
         assert!(error.to_string().contains("clone correspondente"));
+        let source = include_str!("update_pull_request.rs");
+        assert!(
+            source.find("validate_eligibility(&prep.current").unwrap()
+                < source.find("generate_from_prompt").unwrap()
+        );
     }
 
     #[tokio::test]
@@ -525,6 +630,19 @@ mod tests {
         assert!(error.to_string().contains("PR #42 não encontrado"));
         assert_eq!(gateway.get_count(), 1);
         assert_eq!(gateway.patch_count(), 0);
+
+        let source = include_str!("update_pull_request.rs");
+        let initial_read = source
+            .find("let current = read_initial")
+            .expect("leitura inicial");
+        let eligibility = source
+            .find("validate_eligibility(&current")
+            .expect("elegibilidade após leitura");
+        let context = source
+            .find("let context = git::collect_for_refs")
+            .expect("contexto após elegibilidade");
+        assert!(initial_read < eligibility);
+        assert!(eligibility < context);
     }
 
     #[tokio::test]
@@ -549,12 +667,42 @@ mod tests {
             title: "   ".to_owned(),
             body: "proposta inválida".to_owned(),
         };
+        let validation_error = validate_update_proposal(&invalid).unwrap_err();
+        assert!(
+            validation_error
+                .to_string()
+                .contains("título é obrigatório")
+        );
         let error = execute_update(&gateway, &pull_request(), &invalid)
             .await
             .unwrap_err();
         assert!(error.to_string().contains("título é obrigatório"));
         assert_eq!(gateway.get_count(), 0);
         assert_eq!(gateway.patch_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn update_should_freeze_approved_content_before_remote_operation() {
+        let mut app = crate::tui::update_flow::UpdateApp::new(42, &pull_request());
+        app.on_proposal(Ok(approved()));
+        let frozen = app.proposal.clone().unwrap();
+        let approved_for_write = app.begin_update().unwrap();
+        assert_eq!(app.frozen_content, Some(frozen.clone()));
+        assert_eq!(app.phase, crate::tui::update_flow::UpdatePhase::Updating);
+        assert!(!app.open_content_edit());
+
+        let initial = pull_request();
+        let mut confirmed = initial.clone();
+        confirmed.title = approved_for_write.title.clone();
+        confirmed.description = approved_for_write.body.clone();
+        let gateway = FakeGateway::new(vec![Ok(initial), Ok(confirmed.clone())], Ok(confirmed));
+        let outcome = execute_update(&gateway, &pull_request(), &approved_for_write)
+            .await
+            .unwrap();
+        assert!(matches!(outcome, UpdateOutcome::Updated { .. }));
+        assert_eq!(gateway.get_count(), 2);
+        assert_eq!(gateway.patch_count(), 1);
+        assert_eq!(app.frozen_content, Some(frozen));
     }
 
     #[tokio::test]
@@ -699,36 +847,78 @@ mod tests {
         assert!(matches!(result, UpdateOutcome::Updated { .. }));
         assert_eq!(gateway.patch_count(), 1);
         assert_eq!(gateway.get_count(), 2);
+
+        let (base_url, server) = spawn_http_response("200 OK", "not-json", None);
+        let client = azure::AzureClient::new_for_test(&base_url, "pat");
+        let invalid_response = update_pull_request(
+            &client,
+            "project",
+            "repo",
+            42,
+            &UpdatePullRequestInput {
+                title: approved().title,
+                description: approved().body,
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(
+            &invalid_response,
+            AppError::Azure { status: 200, .. }
+        ));
+        assert!(is_uncertain_patch_error(&invalid_response));
+        server.join().unwrap();
+
+        let (base_url, server) =
+            spawn_http_response("200 OK", "", Some(Duration::from_millis(100)));
+        let client = azure::AzureClient::new_for_test_with_timeout(
+            &base_url,
+            "pat",
+            Duration::from_millis(20),
+        );
+        let timeout = update_pull_request(
+            &client,
+            "project",
+            "repo",
+            42,
+            &UpdatePullRequestInput {
+                title: "Novo".to_owned(),
+                description: "Descrição".to_owned(),
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(&timeout, AppError::Http(_)));
+        assert!(is_uncertain_patch_error(&timeout));
+        server.join().unwrap();
     }
 
-    #[test]
-    fn update_authorization_failures_should_be_actionable_and_write_nothing() {
-        let missing_pat = actionable_update_error(AppError::Config {
-            message: "PAT não configurado".to_owned(),
-        });
-        assert!(missing_pat.to_string().contains("PAT"));
-        assert!(missing_pat.to_string().contains("prt doctor"));
+    #[tokio::test]
+    async fn update_authorization_failures_should_be_actionable_and_write_nothing() {
+        let Err(missing_pat) = gateway_for(&prep_for(pull_request())) else {
+            panic!("PAT vazio não deve criar gateway");
+        };
+        let missing_message = missing_pat.to_string();
+        assert!(missing_message.contains("PAT"));
+        assert!(missing_message.contains("permissão"));
+        assert!(missing_message.contains("prt doctor"));
 
         for status in [401, 403] {
-            let error = actionable_update_error(AppError::Azure {
-                status,
-                message: "forbidden".to_owned(),
-            });
+            let gateway = FakeGateway::new(
+                vec![Err(AppError::Azure {
+                    status,
+                    message: "forbidden".to_owned(),
+                })],
+                Ok(pull_request()),
+            );
+            let error = read_initial(&gateway, 42).await.unwrap_err();
             let message = error.to_string();
             assert!(message.contains("PAT"));
             assert!(message.contains("permissão"));
             assert!(message.contains("prt doctor"));
+            assert_eq!(gateway.get_count(), 1);
+            assert_eq!(gateway.patch_count(), 0);
         }
-
-        let gateway = FakeGateway::new(
-            Vec::new(),
-            Err(AppError::Azure {
-                status: 403,
-                message: "forbidden".to_owned(),
-            }),
-        );
-        assert_eq!(gateway.get_count(), 0);
-        assert_eq!(gateway.patch_count(), 0);
     }
 
     #[tokio::test]
@@ -758,5 +948,14 @@ mod tests {
         assert!(!update_source.contains(&creator));
         assert!(live_source.contains(&publisher));
         assert!(azure_source.contains(&creator));
+
+        let main_source = include_str!("../main.rs");
+        let update_dispatch = main_source
+            .find("return run_update(options).await")
+            .expect("desc com --pr deve selecionar update");
+        let create_dispatch = main_source
+            .find("run_describe_tui(prep")
+            .expect("fluxo de criação existente");
+        assert!(update_dispatch < create_dispatch);
     }
 }
