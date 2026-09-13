@@ -37,6 +37,12 @@ pub enum AppError {
         /// Corpo/mensagem resumida.
         message: String,
     },
+    /// O contexto funcional não pôde ser carregado antes da geração.
+    #[error("contexto funcional: {message}")]
+    FunctionalContext {
+        /// Mensagem acionável sem payload bruto do Work Item.
+        message: String,
+    },
     /// Falha de geração via IA.
     #[error("ia ({provider}): {message}")]
     Ai {

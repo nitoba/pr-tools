@@ -10,6 +10,243 @@ use serde_json::{Value, json};
 use crate::azure::{AzureClient, WorkItem, encode_segment};
 use crate::error::{AppError, Result};
 
+/// Limite de cada campo rico projetado para o prompt de `prt desc`.
+pub const FUNCTIONAL_RICH_FIELD_LIMIT: usize = 3000;
+/// Limite combinado dos campos ricos projetados para o prompt de `prt desc`.
+pub const FUNCTIONAL_RICH_FIELDS_LIMIT: usize = 6000;
+const TRUNCATION_MARKER: &str = "\n[conteúdo truncado]";
+
+/// Projeção segura dos campos funcionais de um Work Item.
+///
+/// O mapa bruto de `WorkItem::fields` permanece na fronteira Azure. Os dois
+/// campos ricos são normalizados e limitados antes de deixarem esse módulo.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FunctionalWorkItemContext {
+    /// ID do Work Item.
+    pub id: i64,
+    /// Título (`System.Title`).
+    pub title: String,
+    /// Tipo (`System.WorkItemType`).
+    pub work_item_type: String,
+    /// Área (`System.AreaPath`).
+    pub area_path: String,
+    /// Descrição HTML convertida para texto, quando disponível.
+    pub description: Option<String>,
+    /// Critérios HTML convertidos para texto, quando disponíveis.
+    pub acceptance_criteria: Option<String>,
+}
+
+impl FunctionalWorkItemContext {
+    /// Projeta os campos permitidos de um Work Item.
+    #[must_use]
+    pub fn from_work_item(item: &WorkItem) -> Self {
+        let (description, acceptance_criteria) = limit_combined_rich_fields(
+            rich_text_field(item, "System.Description"),
+            rich_text_field(item, "Microsoft.VSTS.Common.AcceptanceCriteria"),
+        );
+        Self {
+            id: item.id,
+            title: item.field_text("System.Title").trim().to_owned(),
+            work_item_type: item.field_text("System.WorkItemType").trim().to_owned(),
+            area_path: item.field_text("System.AreaPath").trim().to_owned(),
+            description,
+            acceptance_criteria,
+        }
+    }
+}
+
+/// Converte o rich text do Azure em texto legível sem transportar markup.
+///
+/// Tags de bloco, parágrafo, quebra e item de lista viram separadores de
+/// linha. O parser é local e determinístico: campos malformados continuam
+/// sendo texto, nunca uma falha de preparação.
+#[must_use]
+pub fn normalize_rich_text(value: &str) -> String {
+    let mut plain = String::with_capacity(value.len());
+    let mut rest = value;
+    while let Some(start) = rest.find('<') {
+        plain.push_str(&rest[..start]);
+        let after_start = &rest[start + 1..];
+        if after_start.starts_with("!--") {
+            if let Some(end) = after_start.find("-->") {
+                rest = &after_start[end + 3..];
+                plain.push('\n');
+                continue;
+            }
+            break;
+        }
+        let Some(end) = after_start.find('>') else {
+            rest = after_start;
+            break;
+        };
+        let tag = &after_start[..end];
+        if is_line_break_tag(tag) {
+            plain.push('\n');
+        }
+        rest = &after_start[end + 1..];
+    }
+    plain.push_str(rest);
+
+    let decoded = decode_html_entities(&plain);
+    normalize_whitespace(&decoded)
+}
+
+fn is_line_break_tag(tag: &str) -> bool {
+    let name = tag
+        .trim()
+        .trim_start_matches('/')
+        .split(|c: char| c.is_ascii_whitespace() || c == '/')
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    matches!(
+        name.as_str(),
+        "address"
+            | "article"
+            | "aside"
+            | "blockquote"
+            | "br"
+            | "dd"
+            | "div"
+            | "dl"
+            | "dt"
+            | "footer"
+            | "h1"
+            | "h2"
+            | "h3"
+            | "h4"
+            | "h5"
+            | "h6"
+            | "header"
+            | "hr"
+            | "li"
+            | "ol"
+            | "p"
+            | "pre"
+            | "section"
+            | "table"
+            | "tbody"
+            | "td"
+            | "tfoot"
+            | "th"
+            | "thead"
+            | "tr"
+            | "ul"
+    )
+}
+
+fn decode_html_entities(value: &str) -> String {
+    let mut decoded = String::with_capacity(value.len());
+    let mut rest = value;
+    while let Some(start) = rest.find('&') {
+        decoded.push_str(&rest[..start]);
+        let entity_start = &rest[start + 1..];
+        let Some(end) = entity_start.find(';') else {
+            decoded.push_str(&rest[start..]);
+            break;
+        };
+        let entity = &entity_start[..end];
+        if let Some(replacement) = decode_html_entity(entity) {
+            decoded.push_str(&replacement);
+            rest = &entity_start[end + 1..];
+        } else {
+            decoded.push('&');
+            rest = entity_start;
+        }
+    }
+    decoded.push_str(rest);
+    decoded
+}
+
+fn decode_html_entity(entity: &str) -> Option<String> {
+    let named = match entity {
+        "amp" => "&",
+        "lt" => "<",
+        "gt" => ">",
+        "quot" => "\"",
+        "apos" => "'",
+        "nbsp" => " ",
+        "ndash" => "–",
+        "mdash" => "—",
+        "hellip" => "…",
+        "bull" => "•",
+        "copy" => "©",
+        "reg" => "®",
+        _ => return decode_numeric_entity(entity),
+    };
+    Some(named.to_owned())
+}
+
+fn decode_numeric_entity(entity: &str) -> Option<String> {
+    let number = entity
+        .strip_prefix("#x")
+        .or_else(|| entity.strip_prefix("#X"));
+    let code_point = if let Some(hex) = number {
+        u32::from_str_radix(hex, 16).ok()?
+    } else {
+        entity.strip_prefix('#')?.parse::<u32>().ok()?
+    };
+    char::from_u32(code_point).map(|character| character.to_string())
+}
+
+fn normalize_whitespace(value: &str) -> String {
+    let lines: Vec<String> = value
+        .lines()
+        .map(|raw_line| raw_line.split_whitespace().collect::<Vec<_>>().join(" "))
+        .filter(|line| !line.is_empty())
+        .collect();
+    lines.join("\n")
+}
+
+fn truncate_rich_text(value: &str) -> String {
+    truncate_rich_text_to(value, FUNCTIONAL_RICH_FIELD_LIMIT)
+}
+
+fn truncate_rich_text_to(value: &str, limit: usize) -> String {
+    let length = value.chars().count();
+    if length <= limit {
+        return value.to_owned();
+    }
+    let marker_len = TRUNCATION_MARKER.chars().count();
+    if limit <= marker_len {
+        return TRUNCATION_MARKER.chars().take(limit).collect();
+    }
+    let prefix_len = limit - marker_len;
+    let prefix: String = value.chars().take(prefix_len).collect();
+    format!("{prefix}{TRUNCATION_MARKER}")
+}
+
+fn rich_text_field(item: &WorkItem, field: &str) -> Option<String> {
+    let normalized = normalize_rich_text(item.field_text(field));
+    (!normalized.is_empty()).then(|| truncate_rich_text(&normalized))
+}
+
+fn limit_combined_rich_fields(
+    description: Option<String>,
+    acceptance_criteria: Option<String>,
+) -> (Option<String>, Option<String>) {
+    let total = description
+        .as_ref()
+        .map_or(0, |value| value.chars().count())
+        + acceptance_criteria
+            .as_ref()
+            .map_or(0, |value| value.chars().count());
+    if total <= FUNCTIONAL_RICH_FIELDS_LIMIT {
+        return (description, acceptance_criteria);
+    }
+    let description_len = description
+        .as_ref()
+        .map_or(0, |value| value.chars().count());
+    let description = description
+        .as_deref()
+        .map(|value| truncate_rich_text_to(value, FUNCTIONAL_RICH_FIELDS_LIMIT));
+    let remaining = FUNCTIONAL_RICH_FIELDS_LIMIT.saturating_sub(description_len);
+    let acceptance_criteria = acceptance_criteria
+        .as_deref()
+        .map(|value| truncate_rich_text_to(value, remaining));
+    (description, acceptance_criteria)
+}
+
 /// Entrada para criação de Test Case (espelha `CreateTestCaseInput` do Dart).
 #[derive(Debug, Clone, Default)]
 pub struct TestCaseInput {
@@ -355,6 +592,58 @@ pub async fn delete_work_item(client: &AzureClient, project: &str, id: i64) -> R
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn functional_context_should_omit_absent_or_non_text_optional_fields() {
+        let item: WorkItem = serde_json::from_value(serde_json::json!({
+            "id": 11763,
+            "fields": {
+                "System.Title": "Implementar contexto",
+                "System.WorkItemType": "User Story",
+                "System.AreaPath": "Produto\\CLI",
+                "System.Description": "",
+                "Microsoft.VSTS.Common.AcceptanceCriteria": 42
+            }
+        }))
+        .expect("work item válido");
+
+        let context = FunctionalWorkItemContext::from_work_item(&item);
+        assert_eq!(context.id, 11763);
+        assert_eq!(context.title, "Implementar contexto");
+        assert_eq!(context.work_item_type, "User Story");
+        assert_eq!(context.area_path, "Produto\\CLI");
+        assert_eq!(context.description, None);
+        assert_eq!(context.acceptance_criteria, None);
+    }
+
+    #[test]
+    fn functional_context_should_normalize_and_bound_rich_text() {
+        let item: WorkItem = serde_json::from_value(serde_json::json!({
+            "id": 11763,
+            "fields": {
+                "System.Title": "Título",
+                "System.WorkItemType": "Task",
+                "System.Description": "<p>  primeiro &amp; segundo </p><ul><li>item &#x31;</li><li>item &lt;dois&gt;</li></ul><script>remover tag</script>",
+                "Microsoft.VSTS.Common.AcceptanceCriteria": format!("<div>{}</div>", "a".repeat(4000))
+            }
+        }))
+        .expect("work item válido");
+
+        let context = FunctionalWorkItemContext::from_work_item(&item);
+        let description = context.description.expect("descrição");
+        let acceptance = context.acceptance_criteria.expect("critérios");
+        assert_eq!(
+            description,
+            "primeiro & segundo\nitem 1\nitem <dois>\nremover tag"
+        );
+        assert!(!description.contains("<ul>"));
+        assert_eq!(acceptance.chars().count(), FUNCTIONAL_RICH_FIELD_LIMIT);
+        assert!(acceptance.contains("[conteúdo truncado]"));
+        assert!(
+            description.chars().count() + acceptance.chars().count()
+                <= FUNCTIONAL_RICH_FIELDS_LIMIT
+        );
+    }
 
     #[test]
     fn wiql_should_filter_test_cases_by_project() {

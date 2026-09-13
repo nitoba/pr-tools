@@ -255,7 +255,7 @@ pub async fn prepare(options: &CliOptions) -> Result<TestCardPrep> {
 /// Lê campo de texto do Work Item (`""` se ausente/não-texto; espelha `workItemText`).
 #[must_use]
 pub fn work_item_field<'a>(item: &'a WorkItem, field: &str) -> &'a str {
-    item.fields.get(field).and_then(Value::as_str).unwrap_or("")
+    item.field_text(field)
 }
 
 /// Escolhe o Work Item pai: menor ID não-`Test Case`; se todos forem

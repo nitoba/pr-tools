@@ -378,22 +378,25 @@ where
 }
 
 impl WorkItem {
+    /// Lê um campo textual (vazio quando ausente ou não textual).
+    #[must_use]
+    pub fn field_text(&self, field: &str) -> &str {
+        self.fields
+            .get(field)
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("")
+    }
+
     /// Título (`System.Title`).
     #[must_use]
     pub fn title(&self) -> &str {
-        self.fields
-            .get("System.Title")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
+        self.field_text("System.Title")
     }
 
     /// Tipo (`System.WorkItemType`).
     #[must_use]
     pub fn work_item_type(&self) -> &str {
-        self.fields
-            .get("System.WorkItemType")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
+        self.field_text("System.WorkItemType")
     }
 }
 

@@ -18,6 +18,10 @@ pub const AZURE_PR_DESCRIPTION_PROMPT_RULES: &str = r#"REGRAS OBRIGATÓRIAS DO C
 - O body deve ter menos de 4000 caracteres (limite estrito: no máximo 3999).
 - Conte todos os caracteres do Markdown, incluindo espaços e quebras de linha.
 - Preserve somente informações sustentadas pelo contexto; seja conciso e priorize o que mudou e por quê.
+- O Work Item é a intenção/requisito funcional, não evidência de implementação.
+- Git Log e Git Diff são a evidência da implementação.
+- Só descreva um critério de aceitação como implementado quando houver evidência correspondente no Git Log ou Git Diff; caso contrário, trate-o como não confirmado.
+- Não copie o Work Item como corpo do PR; descreva a mudança real da branch.
 - Nunca ultrapasse esse limite, não inclua o contexto Git na resposta e não escreva texto fora do JSON."#;
 
 /// Descrição de PR normalizada.
@@ -241,17 +245,39 @@ pub fn build_describe_prompt(
     branch: &str,
     targets: &[String],
     work_item_id: &str,
+    functional_context: Option<&crate::azure::work_items::FunctionalWorkItemContext>,
     log: &str,
     diff: &str,
 ) -> String {
+    let functional = functional_context.map_or_else(String::new, |context| {
+        let mut lines = vec![
+            "## Contexto funcional do Work Item".to_owned(),
+            String::new(),
+            format!("ID: {}", context.id),
+            format!("Título: {}", context.title),
+            format!("Tipo: {}", context.work_item_type),
+        ];
+        if !context.area_path.is_empty() {
+            lines.push(format!("Área: {}", context.area_path));
+        }
+        if let Some(description) = &context.description {
+            lines.push(format!("Descrição: {description}"));
+        }
+        if let Some(acceptance_criteria) = &context.acceptance_criteria {
+            lines.push(format!("Critérios de aceitação: {acceptance_criteria}"));
+        }
+        lines.push(String::new());
+        lines.join("\n")
+    });
     format!(
-        "## Contexto Git\n\n**Branch:** {branch}\n**Base branches alvo:** {}\n{}### Git Log (commits desde a base)\n\n```\n{log}\n```\n\n### Git Diff\n\n```diff\n{diff}\n```\n\n### Instruções de saída\n\nGere somente o objeto JSON solicitado pelo prompt de sistema.\n{AZURE_PR_DESCRIPTION_PROMPT_RULES}\n",
+        "{functional}## Contexto Git\n\n**Branch:** {branch}\n**Base branches alvo:** {}\n{}### Git Log (commits desde a base)\n\n```\n{log}\n```\n\n### Git Diff\n\n```diff\n{diff}\n```\n\n### Instruções de saída\n\nGere somente o objeto JSON solicitado pelo prompt de sistema.\n{AZURE_PR_DESCRIPTION_PROMPT_RULES}\n",
         targets.join(", "),
-        if work_item_id.is_empty() {
+        if work_item_id.is_empty() || functional_context.is_some() {
             String::new()
         } else {
             format!("**Work Item:** #{work_item_id}\n")
         },
+        functional = functional,
     )
 }
 
@@ -534,6 +560,73 @@ pub async fn generate_with_fallback(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn functional_context() -> crate::azure::work_items::FunctionalWorkItemContext {
+        crate::azure::work_items::FunctionalWorkItemContext {
+            id: 11763,
+            title: "Enriquecer a descrição".to_owned(),
+            work_item_type: "User Story".to_owned(),
+            area_path: "Produto\\CLI".to_owned(),
+            description: Some("A descrição funcional".to_owned()),
+            acceptance_criteria: Some("O critério fica evidenciado no diff".to_owned()),
+        }
+    }
+
+    #[test]
+    fn describe_prompt_should_include_projected_functional_context() {
+        let context = functional_context();
+        let prompt = build_describe_prompt(
+            "feature/11763-contexto",
+            &["dev".to_owned()],
+            "11763",
+            Some(&context),
+            "abc123 commit",
+            "diff --git a/src/lib.rs b/src/lib.rs",
+        );
+
+        assert!(prompt.contains("## Contexto funcional do Work Item"));
+        assert!(prompt.contains("ID: 11763"));
+        assert!(prompt.contains("Título: Enriquecer a descrição"));
+        assert!(prompt.contains("Tipo: User Story"));
+        assert!(prompt.contains("Área: Produto\\CLI"));
+        assert!(prompt.contains("Descrição: A descrição funcional"));
+        assert!(prompt.contains("Critérios de aceitação: O critério fica evidenciado no diff"));
+        assert!(prompt.contains("## Contexto Git"));
+        assert!(prompt.find("## Contexto funcional do Work Item") < prompt.find("## Contexto Git"));
+    }
+
+    #[test]
+    fn no_work_item_should_skip_azure_and_functional_prompt() {
+        let prompt = build_describe_prompt(
+            "feature/sem-work-item",
+            &["dev".to_owned()],
+            "",
+            None,
+            "abc123 commit",
+            "diff",
+        );
+
+        assert!(!prompt.contains("## Contexto funcional do Work Item"));
+        assert!(!prompt.contains("Work Item:"));
+        assert!(prompt.contains("## Contexto Git"));
+    }
+
+    #[test]
+    fn describe_prompt_should_separate_intent_from_git_evidence() {
+        let prompt = build_describe_prompt(
+            "feature/11763-contexto",
+            &["dev".to_owned()],
+            "11763",
+            Some(&functional_context()),
+            "abc123 commit",
+            "diff",
+        );
+
+        assert!(prompt.contains("intenção/requisito funcional"));
+        assert!(prompt.contains("Git Log e Git Diff são a evidência da implementação"));
+        assert!(prompt.contains("critério de aceitação como implementado"));
+        assert!(prompt.contains("Não copie o Work Item como corpo do PR"));
+    }
 
     #[test]
     fn normalizer_should_parse_json_with_fences() {

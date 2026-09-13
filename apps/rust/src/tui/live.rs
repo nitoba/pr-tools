@@ -123,12 +123,10 @@ async fn backend_task(prep: DescribePrep, tx: mpsc::UnboundedSender<BackendEvent
         prep.context.branch,
         prep.targets.join(", ")
     )));
-    if !prep.work_item_id.is_empty() {
-        let _ = tx.send(BackendEvent::Log(format!(
-            "work item #{}",
-            prep.work_item_id
-        )));
-    }
+    let _ = tx.send(BackendEvent::Log(format!(
+        "contexto funcional: {}",
+        prep.functional_context.display_label()
+    )));
     let _ = tx.send(BackendEvent::Log(format!(
         "diff: {} linhas · log com {}",
         prep.context.diff_original_lines,
@@ -569,7 +567,7 @@ fn render_header(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
 
 fn render_body(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
     let show_context = app.phase == Phase::Review;
-    let context_height = if show_context { 3 } else { 0 };
+    let context_height = if show_context { 4 } else { 0 };
     let [primary, context] =
         Layout::vertical([Constraint::Min(0), Constraint::Length(context_height)]).areas(area);
     render_primary(app, primary, buf);
@@ -823,9 +821,16 @@ fn render_context(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
             context.push(Span::styled(target.clone(), style));
         }
     }
-    Paragraph::new(Line::from(context))
-        .wrap(Wrap { trim: false })
-        .render(inner, buf);
+    let functional = format!(
+        "Contexto funcional: {}",
+        app.functional_context_status.display_label()
+    );
+    Paragraph::new(vec![
+        Line::from(context),
+        Line::from(Span::styled(functional, theme().muted)),
+    ])
+    .wrap(Wrap { trim: false })
+    .render(inner, buf);
 }
 
 fn primary_block(title: &str, style: Style) -> Block<'static> {
@@ -899,6 +904,13 @@ fn render_footer(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
         }
     } else {
         match &app.publish_dialog {
+            Some(PublishDialog::FunctionalContextFallback(_)) => {
+                if ascii_only() {
+                    "left/right alternar - y sim - n nao - enter confirmar - esc sair"
+                } else {
+                    "←/→ alternar · y sim · n não · enter confirmar · esc sair"
+                }
+            }
             Some(PublishDialog::ConfirmCreate(_) | PublishDialog::ConfirmPublish(_)) => {
                 if ascii_only() {
                     "<-/-> alternar - y sim - n nao - enter confirmar - esc voltar"
@@ -1044,6 +1056,9 @@ fn render_help(area: Rect, buf: &mut Buffer) {
 /// Diálogos modais do fluxo de publicação.
 fn render_publish_dialog(app: &DescribeApp, dialog: PublishDialog, area: Rect, buf: &mut Buffer) {
     match dialog {
+        PublishDialog::FunctionalContextFallback(yes) => {
+            render_functional_context_fallback(app, yes, area, buf);
+        }
         PublishDialog::ConfirmCreate(yes) => render_confirm_create(app, yes, area, buf),
         PublishDialog::Reviewers => render_reviewers_dialog(app, area, buf),
         PublishDialog::ConfirmPublish(yes) => render_confirm_publish(app, yes, area, buf),
@@ -1054,6 +1069,44 @@ fn render_publish_dialog(app: &DescribeApp, dialog: PublishDialog, area: Rect, b
             render_candidate_list(app, selected, area, buf);
         }
     }
+}
+
+fn render_functional_context_fallback(app: &DescribeApp, yes: bool, area: Rect, buf: &mut Buffer) {
+    let inner = modal_frame(
+        area,
+        buf,
+        " Contexto funcional indisponível ",
+        theme().warning,
+        82,
+        10,
+    );
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+    let detail = match &app.functional_context_status {
+        crate::features::describe::FunctionalContextStatus::Unavailable(message) => message,
+        _ => "não foi possível carregar o Work Item",
+    };
+    let choose = if yes { "Sim" } else { "Não" };
+    Paragraph::new(vec![
+        Line::from(Span::styled(
+            "O Work Item não pôde ser carregado antes da geração.",
+            Style::new().add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::styled(detail, theme().error)),
+        Line::from(""),
+        Line::from("Continuar somente com o contexto Git?"),
+        Line::from("A geração ainda não começou."),
+        Line::from(""),
+        centered_buttons(yes, inner.width),
+        Line::from(""),
+        Line::from(Span::styled(
+            format!("selecionado: {choose} · y confirma Git-only · n/Esc sai"),
+            theme().muted,
+        )),
+    ])
+    .wrap(Wrap { trim: false })
+    .render(inner, buf);
 }
 
 fn render_publish_recovery(app: &DescribeApp, selected: usize, area: Rect, buf: &mut Buffer) {
@@ -1446,6 +1499,15 @@ fn drain_backend(rx: &mut mpsc::UnboundedReceiver<BackendEvent>, app: &mut Descr
     novo
 }
 
+fn start_backend(
+    pending_prep: &mut Option<DescribePrep>,
+    tx: &mpsc::UnboundedSender<BackendEvent>,
+) {
+    if let Some(prep) = pending_prep.take() {
+        tokio::spawn(backend_task(prep, tx.clone()));
+    }
+}
+
 /// Navegação/scroll (`j/k`, setas, `tab`) — retorna `true` se consumiu a tecla.
 fn on_nav_key(app: &mut DescribeApp, key: crossterm::event::KeyEvent) -> bool {
     use crossterm::event::KeyCode;
@@ -1681,6 +1743,7 @@ fn on_enter_key(
             }
             false
         }
+        Some(PublishDialog::FunctionalContextFallback(_)) => true,
         Some(PublishDialog::ConfirmCreate(yes)) => {
             if yes {
                 app.open_reviewers();
@@ -1859,6 +1922,9 @@ fn handle_key_event(
         *needs_draw = true;
         return Ok(None);
     }
+    if app.is_waiting_for_functional_context() {
+        return Ok(handle_functional_context_key(app, key, needs_draw));
+    }
     match (key.code, key.modifiers) {
         (KeyCode::Char('c'), m) if m.contains(KeyModifiers::CONTROL) => {
             if app.phase == Phase::Publishing {
@@ -1958,6 +2024,43 @@ fn handle_key_event(
     Ok(None)
 }
 
+fn handle_functional_context_key(
+    app: &mut DescribeApp,
+    key: crossterm::event::KeyEvent,
+    needs_draw: &mut bool,
+) -> Option<LiveOutcome> {
+    use crossterm::event::KeyCode;
+    match key.code {
+        KeyCode::Left | KeyCode::Right => {
+            app.toggle_functional_context_fallback();
+            *needs_draw = true;
+            None
+        }
+        KeyCode::Char('y') => {
+            let _ = app.confirm_functional_git_only();
+            *needs_draw = true;
+            None
+        }
+        KeyCode::Enter => {
+            if matches!(
+                app.publish_dialog,
+                Some(PublishDialog::FunctionalContextFallback(true))
+            ) {
+                let _ = app.confirm_functional_git_only();
+                *needs_draw = true;
+                None
+            } else {
+                Some(LiveOutcome::Aborted)
+            }
+        }
+        KeyCode::Char('n' | 'q') | KeyCode::Esc => Some(LiveOutcome::Aborted),
+        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            Some(LiveOutcome::Aborted)
+        }
+        _ => None,
+    }
+}
+
 fn run_loop(
     terminal: &mut DefaultTerminal,
     prep: DescribePrep,
@@ -1965,6 +2068,7 @@ fn run_loop(
 ) -> anyhow::Result<LiveOutcome> {
     let (tx, mut rx) = mpsc::unbounded_channel::<BackendEvent>();
     let (publish_setup, publish_blocked, publish_base) = make_publish_parts(&prep);
+    let functional_context_status = prep.functional_context.clone();
     let mut app = DescribeApp::new(
         &prep.context.branch,
         &prep.targets,
@@ -1973,9 +2077,13 @@ fn run_loop(
         publish_setup,
         publish_blocked,
     );
+    let mut pending_prep = Some(prep);
     // Backend roda em paralelo e empurra tokens/logs (`tx` fica no loop
     // para a task de publicação criada sob demanda).
-    tokio::spawn(backend_task(prep, tx.clone()));
+    app.set_functional_context_status(functional_context_status);
+    if !app.is_waiting_for_functional_context() {
+        start_backend(&mut pending_prep, &tx);
+    }
 
     let tick_rate = Duration::from_millis(33); // ~30fps p/ barra/status suaves
     let mut last_tick = std::time::Instant::now();
@@ -2047,6 +2155,9 @@ fn run_loop(
                     )? {
                         return Ok(outcome);
                     }
+                    if app.functional_context_fallback_confirmed && pending_prep.is_some() {
+                        start_backend(&mut pending_prep, &tx);
+                    }
                 }
                 _ => {}
             }
@@ -2061,8 +2172,11 @@ fn run_loop(
 mod tests {
     use super::*;
     use crate::ai::PrDescription;
+    use crate::azure::work_items::FunctionalWorkItemContext;
+    use crate::features::describe::FunctionalContextStatus;
     use crate::tui::describe_app::DescribeApp;
     use crate::tui::events::BackendEvent;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::{Terminal, backend::TestBackend};
 
     /// Estado Review de exemplo p/ snapshots: heading + checklist + code fence.
@@ -2078,6 +2192,16 @@ mod tests {
             }),
             None,
         );
+        app.set_functional_context_status(FunctionalContextStatus::Loaded(
+            FunctionalWorkItemContext {
+                id: 11763,
+                title: "Atualiza fluxo de checkout".to_owned(),
+                work_item_type: "User Story".to_owned(),
+                area_path: "Produto\\CLI".to_owned(),
+                description: None,
+                acceptance_criteria: None,
+            },
+        ));
         let desc = PrDescription {
             title: "Atualiza fluxo de checkout".to_owned(),
             body: "## Descrição\nAtualiza o fluxo de checkout para validar o carrinho.\n\n## Checklist\n- [x] Testes locais\n- [ ] Review\n\n```diff\n+ valida carrinho\n- ignora erro\n```\n"
@@ -2088,6 +2212,107 @@ mod tests {
             "{\"title\":\"Atualiza fluxo de checkout\"}".to_owned(),
         ));
         app
+    }
+
+    #[test]
+    fn functional_context_failure_should_require_explicit_git_only_confirmation() {
+        let mut app = DescribeApp::new(
+            "feature/11763-exemplo",
+            &["dev".to_owned()],
+            "11763",
+            false,
+            None,
+            None,
+        );
+        app.set_functional_context_status(FunctionalContextStatus::Unavailable(
+            "Azure DevOps recusou a leitura do Work Item (HTTP 403)".to_owned(),
+        ));
+        assert!(app.is_waiting_for_functional_context());
+        assert_eq!(
+            app.publish_dialog,
+            Some(PublishDialog::FunctionalContextFallback(false))
+        );
+        assert!(!app.functional_context_fallback_confirmed);
+
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend).expect("terminal de teste");
+        terminal
+            .draw(|f| f.render_widget(&app, f.area()))
+            .expect("render");
+        let rendered: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(ratatui::buffer::Cell::symbol)
+            .collect();
+        assert!(rendered.contains("Contexto funcional indisponível"));
+        assert!(rendered.contains("Continuar somente com o contexto Git?"));
+        assert!(rendered.contains("HTTP 403"));
+
+        for key_code in [KeyCode::Char('n'), KeyCode::Esc] {
+            let mut declined = DescribeApp::new(
+                "feature/11763-exemplo",
+                &["dev".to_owned()],
+                "11763",
+                false,
+                None,
+                None,
+            );
+            declined.set_functional_context_status(FunctionalContextStatus::Unavailable(
+                "Azure DevOps recusou a leitura do Work Item (HTTP 403)".to_owned(),
+            ));
+            let mut needs_draw = false;
+            let outcome = handle_functional_context_key(
+                &mut declined,
+                KeyEvent::new(key_code, KeyModifiers::NONE),
+                &mut needs_draw,
+            );
+            assert!(matches!(outcome, Some(LiveOutcome::Aborted)));
+            assert!(!declined.functional_context_fallback_confirmed);
+            assert!(!needs_draw);
+        }
+
+        app.toggle_functional_context_fallback();
+        assert_eq!(
+            app.publish_dialog,
+            Some(PublishDialog::FunctionalContextFallback(true))
+        );
+        assert!(app.confirm_functional_git_only());
+        assert!(!app.is_waiting_for_functional_context());
+        assert!(app.functional_context_fallback_confirmed);
+        assert_eq!(app.publish_dialog, None);
+    }
+
+    #[test]
+    fn functional_context_should_not_leak_raw_work_item_data() {
+        let mut app = review_app();
+        app.set_functional_context_status(FunctionalContextStatus::Loaded(
+            FunctionalWorkItemContext {
+                id: 11763,
+                title: "Enriquecer a descrição".to_owned(),
+                work_item_type: "User Story".to_owned(),
+                area_path: "Produto\\CLI".to_owned(),
+                description: Some("segredo rico que não deve aparecer".to_owned()),
+                acceptance_criteria: Some("critério rico".to_owned()),
+            },
+        ));
+        let backend = TestBackend::new(120, 35);
+        let mut terminal = Terminal::new(backend).expect("terminal de teste");
+        terminal
+            .draw(|f| f.render_widget(&app, f.area()))
+            .expect("render");
+        let rendered: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(ratatui::buffer::Cell::symbol)
+            .collect();
+        assert!(rendered.contains("Contexto funcional: Work Item #11763"));
+        assert!(rendered.contains("Enriquecer a descrição"));
+        assert!(!rendered.contains("segredo rico"));
+        assert!(!rendered.contains("critério rico"));
     }
 
     #[test]
