@@ -1275,6 +1275,14 @@ mod tests {
             description: "PR desc".to_owned(),
             source_ref_name: "refs/heads/feat".to_owned(),
             target_ref_name: "refs/heads/dev".to_owned(),
+            status: "active".to_owned(),
+            repository: crate::azure::pull_requests::PullRequestRepository {
+                id: "repo-id".to_owned(),
+                name: "repo".to_owned(),
+                project: crate::azure::pull_requests::PullRequestProject {
+                    name: "project".to_owned(),
+                },
+            },
         }
     }
 

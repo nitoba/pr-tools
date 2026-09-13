@@ -206,6 +206,42 @@ impl AzureClient {
         self.request(builder, body).await
     }
 
+    /// PATCH com `Content-Type: application/json` (Git Pull Requests).
+    ///
+    /// Este método é separado de [`Self::patch`] porque Work Items exigem
+    /// `application/json-patch+json`, enquanto Git Pull Requests aceitam o
+    /// objeto JSON mínimo de atualização.
+    ///
+    /// # Errors
+    ///
+    /// Retorna [`AppError::Azure`] em status >= 300 ou payload inválido e
+    /// [`AppError::Http`] em falha de transporte.
+    pub async fn patch_json<B: Serialize, T: for<'de> Deserialize<'de>>(
+        &self,
+        path: &str,
+        body: &B,
+    ) -> Result<T> {
+        let builder = self.json_patch_builder(path);
+        self.request(builder, body).await
+    }
+
+    /// Monta uma requisição JSON-PATCH sem enviá-la, para manter o contrato de
+    /// método, cabeçalho e corpo testável sem um servidor HTTP externo.
+    #[cfg(test)]
+    pub(crate) fn build_json_patch_request<B: Serialize>(
+        &self,
+        path: &str,
+        body: &B,
+    ) -> std::result::Result<reqwest::Request, reqwest::Error> {
+        self.json_patch_builder(path).json(body).build()
+    }
+
+    fn json_patch_builder(&self, path: &str) -> reqwest::RequestBuilder {
+        self.inner
+            .patch(self.url(path))
+            .header(CONTENT_TYPE, "application/json")
+    }
+
     /// Executa um `DELETE` que não precisa de corpo de resposta.
     ///
     /// # Errors

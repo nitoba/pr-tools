@@ -87,18 +87,33 @@ pub async fn generate(prep: &DescribePrep) -> Result<PrDescription> {
     let report = |provider: &str, model: &str| {
         info!(provider, model, "tentando gerar descrição");
     };
-    let raw = ai::generate_with_fallback(&prep.config, &prep.config.template, &prep.prompt, report)
-        .await?;
-    let mut desc = ai::normalize_description(&raw, &prep.context.branch);
+    generate_from_prompt(&prep.config, &prep.prompt, &prep.context.branch, report).await
+}
+
+/// Gera uma descrição a partir de um prompt já montado.
+///
+/// Compartilha a validação e a reescrita de limite entre criação e
+/// atualização, sem compartilhar seus publishers remotos.
+///
+/// # Errors
+///
+/// Propaga [`AppError::Ai`] ou [`AppError::DescriptionTooLong`].
+pub async fn generate_from_prompt(
+    config: &Config,
+    prompt: &str,
+    branch: &str,
+    report: impl Fn(&str, &str),
+) -> Result<PrDescription> {
+    let raw = ai::generate_with_fallback(config, &config.template, prompt, &report).await?;
+    let mut desc = ai::normalize_description(&raw, branch);
     if !ai::is_within_limit(&desc.body) {
-        let rewrite_system = format!("{}\n\n{}", prep.config.template, ai::REWRITE_INSTRUCTIONS);
+        let rewrite_system = format!("{}\n\n{}", config.template, ai::REWRITE_INSTRUCTIONS);
         let rewrite_prompt = format!("## Descrição original\n\n# {}\n\n{}", desc.title, desc.body);
         let raw2 =
-            ai::generate_with_fallback(&prep.config, &rewrite_system, &rewrite_prompt, report)
-                .await?;
-        desc = ai::normalize_description(&raw2, &prep.context.branch);
-        ai::validate_description(&desc)?;
+            ai::generate_with_fallback(config, &rewrite_system, &rewrite_prompt, &report).await?;
+        desc = ai::normalize_description(&raw2, branch);
     }
+    ai::validate_description(&desc)?;
     Ok(desc)
 }
 

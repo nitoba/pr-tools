@@ -17,6 +17,7 @@ pub mod notice;
 pub mod shimmer;
 pub mod suspend;
 pub mod test_flow;
+pub mod update_flow;
 
 use ratatui::{
     buffer::Buffer,

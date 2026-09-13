@@ -187,6 +187,9 @@ async fn run_desc(options: &prt::cli::CliOptions) -> anyhow::Result<()> {
         notice::{NoticeKind, show_notice},
     };
     use ratatui::text::Text;
+    if options.pr.is_some() {
+        return run_update(options).await;
+    }
 
     let prep = describe::prepare(options).context("falha ao preparar contexto")?;
     if handle_desc_dry_run(options, &prep).await? {
@@ -223,6 +226,73 @@ async fn run_desc(options: &prt::cli::CliOptions) -> anyhow::Result<()> {
             std::process::exit(130);
         }
         LiveOutcome::Failed(msg) => anyhow::bail!("falha na tui: {msg}"),
+    }
+}
+
+async fn run_update(options: &prt::cli::CliOptions) -> anyhow::Result<()> {
+    use prt::features::update_pull_request;
+    use prt::tui::notice::{NoticeKind, show_notice};
+    use prt::tui::update_flow::{UpdateTuiOutcome, run_update_tui};
+    use ratatui::text::Text;
+
+    let tty = std::io::IsTerminal::is_terminal(&std::io::stdout());
+    if !tty && !options.output.dry_run {
+        return Err(anyhow::Error::new(prt::error::AppError::cli(
+            "atualização de PR requer terminal interativo; use --dry-run para apenas visualizar o prompt",
+        )));
+    }
+    let prep = update_pull_request::prepare(options)
+        .await
+        .context("falha ao preparar atualização do PR")?;
+    if options.output.dry_run {
+        if tty {
+            show_notice(
+                "PR existente · dry run",
+                Text::from(prep.prompt),
+                NoticeKind::Info,
+            )
+            .await?;
+        } else {
+            println!("PR existente · dry run\n\n{}", prep.prompt);
+        }
+        return Ok(());
+    }
+
+    match run_update_tui(&prep)? {
+        UpdateTuiOutcome::Updated { id } => {
+            show_notice(
+                "PR atualizado",
+                Text::from(format!(
+                    "Título e descrição do PR #{id} foram confirmados pelo Azure DevOps."
+                )),
+                NoticeKind::Success,
+            )
+            .await?;
+            println!("✓ PR #{id} atualizado e confirmado");
+            Ok(())
+        }
+        UpdateTuiOutcome::NoOp { id } => {
+            show_notice(
+                "PR sem alterações",
+                Text::from(format!(
+                    "O PR #{id} já contém exatamente a proposta aprovada."
+                )),
+                NoticeKind::Info,
+            )
+            .await?;
+            println!("✓ PR #{id} já estava atualizado");
+            Ok(())
+        }
+        UpdateTuiOutcome::Aborted => {
+            show_notice(
+                "Cancelado",
+                Text::from("Operação cancelada; o PR não foi alterado."),
+                NoticeKind::Warning,
+            )
+            .await?;
+            std::process::exit(130);
+        }
+        UpdateTuiOutcome::Failed(message) => anyhow::bail!("falha na atualização: {message}"),
     }
 }
 

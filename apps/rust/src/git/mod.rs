@@ -144,6 +144,27 @@ fn resolve_ref(branch: &str) -> Option<String> {
         .then_some(remote_branch)
 }
 
+fn resolve_pull_request_ref(remote_ref: &str) -> Option<String> {
+    let branch = remote_ref.strip_prefix("refs/heads/")?;
+    if branch.is_empty() {
+        return None;
+    }
+    if git(&["rev-parse", "--verify", remote_ref]).is_ok() {
+        return Some(remote_ref.to_owned());
+    }
+    let origin_ref = format!("origin/{branch}");
+    git(&["rev-parse", "--verify", &origin_ref])
+        .is_ok()
+        .then_some(origin_ref)
+}
+
+fn pull_request_ranges(source: &str, target: &str) -> (String, String) {
+    (
+        format!("{target}...{source}"),
+        format!("{target}..{source}"),
+    )
+}
+
 /// Faz parse do remote `origin` (ssh, modern e legacy) para Azure.
 #[must_use]
 pub fn parse_azure_remote(url: &str) -> Option<RepositoryRemote> {
@@ -196,6 +217,76 @@ pub fn parse_azure_remote(url: &str) -> Option<RepositoryRemote> {
     None
 }
 
+/// Lê o remote `origin` sem inferir branch ou base.
+///
+/// # Errors
+///
+/// Retorna [`AppError::Git`] somente quando o comando Git falha por uma razão
+/// diferente de `origin` ausente; um remote não parseável vira `None`.
+pub fn origin_remote() -> Result<Option<RepositoryRemote>> {
+    let Ok(url) = git(&["remote", "get-url", "origin"]) else {
+        return Ok(None);
+    };
+    Ok(parse_azure_remote(&url))
+}
+
+/// Coleta diff e log usando exclusivamente as refs retornadas pelo PR.
+///
+/// A resolução aceita a ref local `refs/heads/<branch>` ou a correspondente
+/// `origin/<branch>`. Não faz fetch e não escolhe uma base alternativa.
+///
+/// # Errors
+///
+/// Retorna [`AppError::Git`] quando source/target estão ausentes, quando uma
+/// ref não pode ser resolvida ou quando o Git falha ao coletar o contexto.
+pub fn collect_for_refs(source_ref: &str, target_ref: &str) -> Result<ChangeContext> {
+    let source_branch = source_ref
+        .strip_prefix("refs/heads/")
+        .filter(|branch| !branch.is_empty())
+        .ok_or_else(|| AppError::Git {
+            message: "sourceRefName ausente ou inválido; atualize/fetch das refs do PR".to_owned(),
+        })?;
+    if target_ref
+        .strip_prefix("refs/heads/")
+        .is_none_or(str::is_empty)
+    {
+        return Err(AppError::Git {
+            message: "targetRefName ausente ou inválido; atualize/fetch das refs do PR".to_owned(),
+        });
+    }
+    let source = resolve_pull_request_ref(source_ref).ok_or_else(|| AppError::Git {
+        message: format!(
+            "ref source {source_ref} não encontrada localmente; atualize/fetch as refs do PR"
+        ),
+    })?;
+    let target = resolve_pull_request_ref(target_ref).ok_or_else(|| AppError::Git {
+        message: format!(
+            "ref target {target_ref} não encontrada localmente; atualize/fetch as refs do PR"
+        ),
+    })?;
+    let (diff_range, log_range) = pull_request_ranges(&source, &target);
+    let diff_raw = git(&["diff", &diff_range])?;
+    let diff_original_lines = diff_raw.lines().count();
+    let diff = diff_raw
+        .lines()
+        .take(MAX_DIFF_LINES)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let log = git(&["log", "--oneline", "-50", &log_range])?;
+    let remote = origin_remote()?;
+    Ok(ChangeContext {
+        branch: source_branch.to_owned(),
+        source_ref: source_ref.to_owned(),
+        base_branch: target,
+        sprint_branch: String::new(),
+        diff,
+        diff_original_lines,
+        log,
+        work_item_id: work_item_from_branch(source_branch),
+        remote,
+    })
+}
+
 /// Coleta o contexto Git (branch atual ou `source` explícito).
 ///
 /// # Errors
@@ -244,8 +335,7 @@ pub fn collect(source: Option<&str>) -> Result<ChangeContext> {
         "-50",
         &format!("{base_branch}..{branch}"),
     ])?;
-    let remote_url = git(&["remote", "get-url", "origin"]).ok();
-    let remote = remote_url.as_deref().and_then(parse_azure_remote);
+    let remote = origin_remote()?;
     let work_item_id = work_item_from_branch(&branch);
 
     Ok(ChangeContext {
@@ -313,5 +403,28 @@ mod tests {
         let r = parse_azure_remote("https://dev.azure.com/minhaorg/meuproj/_git/meurepo").unwrap();
         assert_eq!(r.organization, "minhaorg");
         assert_eq!(r.repository, "meurepo");
+    }
+
+    #[test]
+    fn collect_for_refs_should_construct_exact_diff_and_log_ranges() {
+        assert_eq!(
+            pull_request_ranges("refs/heads/feature/42", "origin/dev"),
+            (
+                "origin/dev...refs/heads/feature/42".to_owned(),
+                "origin/dev..refs/heads/feature/42".to_owned()
+            )
+        );
+    }
+
+    #[test]
+    fn exact_pr_refs_should_reject_missing_or_unresolvable_refs_without_fallback() {
+        let error = collect_for_refs("", "refs/heads/dev").unwrap_err();
+        assert!(error.to_string().contains("sourceRefName"));
+
+        let error = collect_for_refs("refs/heads/not-local", "refs/heads/dev").unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("not-local"));
+        assert!(message.contains("fetch"));
+        assert!(!message.contains("fallback"));
     }
 }

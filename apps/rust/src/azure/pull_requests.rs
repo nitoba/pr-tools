@@ -5,7 +5,7 @@
 //! (espelha `pull_requests.dart`, `pull_request_publisher.dart` e
 //! `identities.dart`).
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::azure::{AzureClient, encode_segment};
 use crate::error::Result;
@@ -14,7 +14,7 @@ use crate::error::Result;
 pub const MAX_CHANGES: usize = 200;
 
 /// Pull Request mínimo (espelha `AzurePullRequest` do Dart).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct PullRequest {
     /// ID do PR (`pullRequestId`).
     #[serde(rename = "pullRequestId")]
@@ -39,6 +39,34 @@ pub struct PullRequest {
         rename = "targetRefName"
     )]
     pub target_ref_name: String,
+    /// Estado remoto (`active`, `completed` ou `abandoned`).
+    #[serde(default, deserialize_with = "string_or_empty")]
+    pub status: String,
+    /// Repositório que contém o target do PR.
+    #[serde(default)]
+    pub repository: PullRequestRepository,
+}
+
+/// Identidade mínima do repositório retornado no snapshot do PR.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+pub struct PullRequestRepository {
+    /// ID do repositório.
+    #[serde(default, deserialize_with = "string_or_empty")]
+    pub id: String,
+    /// Nome do repositório.
+    #[serde(default, deserialize_with = "string_or_empty")]
+    pub name: String,
+    /// Projeto do repositório, quando retornado pelo Azure.
+    #[serde(default)]
+    pub project: PullRequestProject,
+}
+
+/// Identidade mínima do projeto retornado no snapshot do PR.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+pub struct PullRequestProject {
+    /// Nome do projeto.
+    #[serde(default, deserialize_with = "string_or_empty")]
+    pub name: String,
 }
 
 /// Alteração de arquivo (`changeType` + `item.path`).
@@ -425,6 +453,30 @@ pub struct CreatePrInput {
     pub work_item_ids: Vec<String>,
 }
 
+/// Allowlist do PATCH de um PR existente.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct UpdatePullRequestInput {
+    /// Título aprovado pelo usuário.
+    pub title: String,
+    /// Descrição aprovada pelo usuário.
+    pub description: String,
+}
+
+/// Monta o payload mínimo do update, sem campos de criação ou merge.
+#[must_use]
+pub fn update_pr_body(input: &UpdatePullRequestInput) -> serde_json::Value {
+    let mut body = serde_json::Map::new();
+    body.insert(
+        "title".to_owned(),
+        serde_json::Value::String(input.title.clone()),
+    );
+    body.insert(
+        "description".to_owned(),
+        serde_json::Value::String(input.description.clone()),
+    );
+    serde_json::Value::Object(body)
+}
+
 /// Monta o corpo JSON de criação (puro; espelha `CreatePullRequestInput.toJson`).
 #[must_use]
 pub fn create_pr_body(input: &CreatePrInput) -> serde_json::Value {
@@ -623,6 +675,31 @@ pub async fn get_pull_request(
         .await
 }
 
+/// Atualiza título e descrição do PR informado, sem alterar outros metadados.
+///
+/// # Errors
+///
+/// Propaga [`crate::error::AppError::Azure`] em falha HTTP ou payload
+/// inválido e [`crate::error::AppError::Http`] em falha de transporte.
+pub async fn update_pull_request(
+    client: &AzureClient,
+    project: &str,
+    repository: &str,
+    id: i64,
+    input: &UpdatePullRequestInput,
+) -> Result<PullRequest> {
+    client
+        .patch_json(
+            &format!(
+                "{}/_apis/git/repositories/{}/pullRequests/{id}",
+                encode_segment(project),
+                encode_segment(repository),
+            ),
+            &update_pr_body(input),
+        )
+        .await
+}
+
 /// IDs dos Work Items vinculados ao PR (`.../pullRequests/{id}/workitems`).
 ///
 /// # Errors
@@ -716,6 +793,58 @@ mod tests {
     }
 
     #[test]
+    fn pull_request_should_deserialize_update_snapshot_fields_and_get_should_build_exact_route() {
+        let pr: PullRequest = serde_json::from_value(serde_json::json!({
+            "pullRequestId": 42,
+            "status": "active",
+            "repository": {
+                "id": "repo-id",
+                "name": "repo",
+                "project": {"name": "project"}
+            },
+            "sourceRefName": "refs/heads/feature/42",
+            "targetRefName": "refs/heads/dev",
+            "title": "Atual",
+            "description": "Body"
+        }))
+        .unwrap();
+        assert_eq!(pr.status, "active");
+        assert_eq!(pr.repository.name, "repo");
+        assert_eq!(pr.repository.project.name, "project");
+        assert_eq!(pr.source_ref_name, "refs/heads/feature/42");
+        assert_eq!(pr.target_ref_name, "refs/heads/dev");
+        assert_eq!(pr.title, "Atual");
+        assert_eq!(pr.description, "Body");
+
+        let client = AzureClient::new("org", "pat");
+        let request = client
+            .build_json_patch_request(
+                "project/_apis/git/repositories/repo/pullRequests/42",
+                &update_pr_body(&UpdatePullRequestInput {
+                    title: "Novo".to_owned(),
+                    description: "Descrição".to_owned(),
+                }),
+            )
+            .unwrap();
+        assert_eq!(
+            request.url().path(),
+            "/org/project/_apis/git/repositories/repo/pullRequests/42"
+        );
+        assert_eq!(request.url().query(), Some("api-version=7.1"));
+        assert_eq!(request.method(), reqwest::Method::PATCH);
+        assert_eq!(
+            request
+                .headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok()),
+            Some("application/json")
+        );
+        let body = request.body().and_then(reqwest::Body::as_bytes);
+        let expected_body = r#"{"description":"Descrição","title":"Novo"}"#;
+        assert_eq!(body, Some(expected_body.as_bytes()));
+    }
+
+    #[test]
     fn changes_should_read_change_entries() {
         let list: ChangesList = serde_json::from_value(serde_json::json!({
             "changeEntries": [
@@ -764,6 +893,23 @@ mod tests {
         });
         assert!(body.get("reviewers").is_none());
         assert!(body.get("workItemRefs").is_none());
+    }
+
+    #[test]
+    fn update_pr_body_should_allow_only_title_and_description() {
+        let input = UpdatePullRequestInput {
+            title: "  Título ✅  ".to_owned(),
+            description: "Body\n- [ ] validar  ".to_owned(),
+        };
+        let body = update_pr_body(&input);
+        assert_eq!(
+            body,
+            serde_json::json!({
+                "title": "  Título ✅  ",
+                "description": "Body\n- [ ] validar  "
+            })
+        );
+        assert_eq!(body.as_object().unwrap().len(), 2);
     }
 
     #[test]
