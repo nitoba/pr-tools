@@ -106,6 +106,26 @@ async fn handle_desc_dry_run(
 }
 
 /// Caminho não-interativo de `desc` (`--raw` ou sem tty).
+fn format_desc_plain_output(
+    desc: &prt::ai::PrDescription,
+    targets: &[String],
+    work_item_id: &str,
+    functional_context: &prt::features::describe::FunctionalContextStatus,
+    raw: bool,
+) -> String {
+    if raw {
+        return desc.body.clone();
+    }
+    format!(
+        "Pull Request\n\nTítulo: {}\nTargets: {}\nWork Item: #{}\nContexto funcional: {}\n\n{}\n",
+        desc.title,
+        targets.join(", "),
+        work_item_id,
+        functional_context.display_label(),
+        desc.body
+    )
+}
+
 async fn run_desc_plain(
     options: &prt::cli::CliOptions,
     prep: &prt::features::describe::DescribePrep,
@@ -118,17 +138,16 @@ async fn run_desc_plain(
     }
     eprintln!("Gerando descrição via IA…");
     let desc = describe::generate(prep).await.map_err(anyhow::Error::new)?;
-    if options.output.raw {
-        println!("{}", desc.body);
-    } else {
-        println!(
-            "Pull Request\n\nTítulo: {}\nTargets: {}\nWork Item: #{}\n\n{}\n",
-            desc.title,
-            prep.targets.join(", "),
-            prep.work_item_id,
-            desc.body
-        );
-    }
+    println!(
+        "{}",
+        format_desc_plain_output(
+            &desc,
+            &prep.targets,
+            &prep.work_item_id,
+            &prep.functional_context,
+            options.output.raw,
+        )
+    );
     if options.output.copy && describe::copy_to_clipboard(&desc.body) {
         eprintln!("Descrição copiada para o clipboard.");
     }
@@ -188,12 +207,21 @@ async fn run_desc(options: &prt::cli::CliOptions) -> anyhow::Result<()> {
     };
     use ratatui::text::Text;
 
-    let prep = describe::prepare(options).context("falha ao preparar contexto")?;
+    let prep = describe::prepare(options)
+        .await
+        .context("falha ao preparar contexto")?;
+    let tty = std::io::IsTerminal::is_terminal(&std::io::stdout());
+    if options.output.dry_run || options.output.raw || !tty {
+        if let Some(error) =
+            describe::non_interactive_functional_context_error(&prep.functional_context)
+        {
+            return Err(anyhow::Error::new(error));
+        }
+    }
     if handle_desc_dry_run(options, &prep).await? {
         return Ok(());
     }
     // `--raw` ou saída não-tty: texto puro (script-friendly, sem tela).
-    let tty = std::io::IsTerminal::is_terminal(&std::io::stdout());
     if !tty || options.output.raw {
         return run_desc_plain(options, &prep).await;
     }
@@ -352,4 +380,36 @@ async fn run_doctor(options: &prt::cli::CliOptions) -> anyhow::Result<()> {
         std::process::exit(code);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn desc_output_should_show_functional_context_but_raw_should_be_body_only() {
+        let status = prt::features::describe::FunctionalContextStatus::Loaded(
+            prt::azure::work_items::FunctionalWorkItemContext {
+                id: 11763,
+                title: "Enriquecer a descrição".to_owned(),
+                work_item_type: "User Story".to_owned(),
+                area_path: "Produto\\CLI".to_owned(),
+                description: Some("não deve ser impresso".to_owned()),
+                acceptance_criteria: Some("não deve ser impresso".to_owned()),
+            },
+        );
+        let desc = prt::ai::PrDescription {
+            title: "Título gerado".to_owned(),
+            body: "## Descrição\nmudança real".to_owned(),
+        };
+        let formatted =
+            format_desc_plain_output(&desc, &["dev".to_owned()], "11763", &status, false);
+        assert!(formatted.contains("Contexto funcional: Work Item #11763"));
+        assert!(formatted.contains("Enriquecer a descrição"));
+
+        let raw = format_desc_plain_output(&desc, &["dev".to_owned()], "11763", &status, true);
+        assert_eq!(raw, desc.body);
+        assert!(!raw.contains("Contexto funcional"));
+        assert!(!raw.contains("Enriquecer a descrição"));
+    }
 }

@@ -12,7 +12,7 @@ use super::events::BackendEvent;
 use super::shimmer::u16_from_i32_clamped;
 use crate::ai::PrDescription;
 use crate::azure::pull_requests::{PublishedPr, PullRequestCandidate};
-use crate::features::describe::{PublishFailure, PublishFailureKind};
+use crate::features::describe::{FunctionalContextStatus, PublishFailure, PublishFailureKind};
 
 /// Fase do fluxo.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -56,6 +56,8 @@ impl PublishSetup {
 /// Diálogo modal do fluxo de publicação.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PublishDialog {
+    /// Falha ao carregar Work Item: continuar somente com Git?
+    FunctionalContextFallback(bool),
     /// "Criar PR(s)?" — bool = Sim selecionado?
     ConfirmCreate(bool),
     /// Um campo de reviewer por target.
@@ -91,6 +93,10 @@ pub struct DescribeApp {
     pub selected_target: usize,
     /// Work Item.
     pub work_item_id: String,
+    /// Estado do contexto funcional projetado.
+    pub functional_context_status: FunctionalContextStatus,
+    /// O usuário confirmou geração Git-only após falha funcional.
+    pub functional_context_fallback_confirmed: bool,
     /// Fase atual.
     pub phase: Phase,
     /// Rótulo da fase (ex.: "tentando codex…").
@@ -173,6 +179,8 @@ impl DescribeApp {
             targets: targets.to_vec(),
             selected_target: 0,
             work_item_id: work_item_id.to_owned(),
+            functional_context_status: FunctionalContextStatus::NotRequested,
+            functional_context_fallback_confirmed: false,
             phase: Phase::Boot,
             phase_label: "inicializando…".to_owned(),
             started_at: Instant::now(),
@@ -205,6 +213,50 @@ impl DescribeApp {
             candidates: Vec::new(),
             candidate_activity: CandidateActivity::Idle,
             candidate_message: None,
+        }
+    }
+
+    /// Instala o estado funcional preparado antes de iniciar o backend.
+    pub fn set_functional_context_status(&mut self, status: FunctionalContextStatus) {
+        self.functional_context_status = status;
+        if self.functional_context_status.requires_confirmation() {
+            "contexto funcional indisponível".clone_into(&mut self.phase_label);
+            "confirme para continuar somente com Git".clone_into(&mut self.progress_label);
+            self.publish_dialog = Some(PublishDialog::FunctionalContextFallback(false));
+            self.push_log(format!(
+                "contexto funcional {}",
+                self.functional_context_status.display_label()
+            ));
+        }
+    }
+
+    /// Retorna se a TUI aguarda uma decisão de fallback.
+    #[must_use]
+    pub fn is_waiting_for_functional_context(&self) -> bool {
+        self.phase == Phase::Boot
+            && self
+                .publish_dialog
+                .is_some_and(|dialog| matches!(dialog, PublishDialog::FunctionalContextFallback(_)))
+    }
+
+    /// Confirma a geração somente com Git após falha do Work Item.
+    #[must_use]
+    pub fn confirm_functional_git_only(&mut self) -> bool {
+        if !self.is_waiting_for_functional_context() {
+            return false;
+        }
+        self.functional_context_fallback_confirmed = true;
+        self.publish_dialog = None;
+        "coletando contexto git…".clone_into(&mut self.phase_label);
+        "contexto Git pronto".clone_into(&mut self.progress_label);
+        self.push_log("fallback Git-only confirmado pelo usuário".to_owned());
+        true
+    }
+
+    /// Alterna a opção Sim/Não do diálogo de fallback.
+    pub fn toggle_functional_context_fallback(&mut self) {
+        if let Some(PublishDialog::FunctionalContextFallback(yes)) = self.publish_dialog {
+            self.publish_dialog = Some(PublishDialog::FunctionalContextFallback(!yes));
         }
     }
 
