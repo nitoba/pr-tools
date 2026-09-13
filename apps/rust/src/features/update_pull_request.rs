@@ -131,16 +131,6 @@ pub(crate) fn gateway_for(prep: &UpdatePrep) -> Result<AzureUpdateGateway> {
     .map_err(actionable_update_error)
 }
 
-#[cfg(test)]
-pub(crate) fn gateway_for_test() -> AzureUpdateGateway {
-    AzureUpdateGateway {
-        client: azure::AzureClient::new("org", "pat"),
-        project: "project".to_owned(),
-        repository: "repo".to_owned(),
-        id: 42,
-    }
-}
-
 /// Prepara leitura remota, elegibilidade, refs exatas e prompt.
 ///
 /// # Errors
@@ -173,9 +163,30 @@ pub async fn prepare(options: &CliOptions) -> Result<UpdatePrep> {
         repository: remote.repository.clone(),
         id: pr_id,
     };
-    let current = read_initial(&initial_gateway, pr_id).await?;
+    prepare_with_gateway(
+        config,
+        remote,
+        pr_id,
+        &initial_gateway,
+        git::collect_for_refs,
+    )
+    .await
+}
+
+async fn prepare_with_gateway<G, F>(
+    config: Config,
+    remote: RepositoryRemote,
+    pr_id: i64,
+    gateway: &G,
+    collect: F,
+) -> Result<UpdatePrep>
+where
+    G: UpdateGateway,
+    F: FnOnce(&str, &str) -> Result<ChangeContext>,
+{
+    let current = read_initial(gateway, pr_id).await?;
     validate_eligibility(&current, &remote)?;
-    let context = git::collect_for_refs(&current.source_ref_name, &current.target_ref_name)?;
+    let context = collect(&current.source_ref_name, &current.target_ref_name)?;
     let prompt = ai::build_update_prompt(
         &current.source_ref_name,
         &current.target_ref_name,
@@ -411,6 +422,7 @@ mod tests {
     use std::collections::VecDeque;
     use std::io::{Read, Write};
     use std::net::TcpListener;
+    use std::sync::mpsc::{Receiver, channel};
     use std::sync::{Arc, Mutex};
     use std::thread::{JoinHandle, spawn};
     use std::time::Duration;
@@ -465,6 +477,23 @@ mod tests {
         }
     }
 
+    fn pull_request_json(pr: &PullRequest) -> String {
+        serde_json::json!({
+            "pullRequestId": pr.pull_request_id,
+            "status": pr.status,
+            "repository": {
+                "id": pr.repository.id,
+                "name": pr.repository.name,
+                "project": {"name": pr.repository.project.name}
+            },
+            "sourceRefName": pr.source_ref_name,
+            "targetRefName": pr.target_ref_name,
+            "title": pr.title,
+            "description": pr.description
+        })
+        .to_string()
+    }
+
     fn approved() -> PrDescription {
         PrDescription {
             title: "Título aprovado".to_owned(),
@@ -472,55 +501,78 @@ mod tests {
         }
     }
 
-    fn spawn_http_response(
-        status: &str,
-        body: impl Into<String>,
-        delay: Option<Duration>,
-    ) -> (String, JoinHandle<()>) {
+    fn drain_http_request(stream: &mut std::net::TcpStream) -> String {
+        let mut request = Vec::new();
+        loop {
+            let mut chunk = [0_u8; 4096];
+            let read = stream.read(&mut chunk).expect("requisição HTTP");
+            if read == 0 {
+                break;
+            }
+            request.extend_from_slice(&chunk[..read]);
+            let Some(header_end) = request.windows(4).position(|window| window == b"\r\n\r\n")
+            else {
+                continue;
+            };
+            let headers = String::from_utf8_lossy(&request[..header_end]);
+            let content_length = headers
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("content-length")
+                        .then(|| value.trim().parse::<usize>().unwrap())
+                })
+                .unwrap_or(0);
+            if request.len() >= header_end + 4 + content_length {
+                break;
+            }
+        }
+        String::from_utf8_lossy(&request)
+            .lines()
+            .next()
+            .and_then(|line| line.split_whitespace().next())
+            .unwrap_or_default()
+            .to_owned()
+    }
+
+    fn spawn_http_script(
+        responses: Vec<(String, String, Option<Duration>)>,
+    ) -> (String, Receiver<String>, JoinHandle<()>) {
         let listener = TcpListener::bind(("127.0.0.1", 0)).expect("listener local");
         let address = listener.local_addr().expect("endereço local");
-        let status = status.to_owned();
-        let body = body.into();
+        let (sender, receiver) = channel();
         let handle = spawn(move || {
-            let (mut stream, _) = listener.accept().expect("cliente HTTP");
-            let mut request = Vec::new();
-            loop {
-                let mut chunk = [0_u8; 4096];
-                let read = stream.read(&mut chunk).expect("requisição HTTP");
-                if read == 0 {
-                    break;
-                }
-                request.extend_from_slice(&chunk[..read]);
-                let Some(header_end) = request.windows(4).position(|window| window == b"\r\n\r\n")
-                else {
+            for (status, body, delay) in responses {
+                let (mut stream, _) = listener.accept().expect("cliente HTTP");
+                let method = drain_http_request(&mut stream);
+                sender.send(method).expect("captura HTTP");
+                if let Some(delay) = delay {
+                    std::thread::sleep(delay);
                     continue;
-                };
-                let headers = String::from_utf8_lossy(&request[..header_end]);
-                let content_length = headers
-                    .lines()
-                    .find_map(|line| {
-                        let (name, value) = line.split_once(':')?;
-                        name.eq_ignore_ascii_case("content-length")
-                            .then(|| value.trim().parse::<usize>().unwrap())
-                    })
-                    .unwrap_or(0);
-                if request.len() >= header_end + 4 + content_length {
-                    break;
                 }
+                let response = format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                stream
+                    .write_all(response.as_bytes())
+                    .expect("resposta HTTP");
             }
-            if let Some(delay) = delay {
-                std::thread::sleep(delay);
-                return;
-            }
-            let response = format!(
-                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                body.len()
-            );
-            stream
-                .write_all(response.as_bytes())
-                .expect("resposta HTTP");
         });
-        (format!("http://{address}/org"), handle)
+        (format!("http://{address}/org"), receiver, handle)
+    }
+
+    fn azure_gateway_for_test(base_url: &str, timeout: Option<Duration>) -> AzureUpdateGateway {
+        let client = timeout.map_or_else(
+            || azure::AzureClient::new_for_test(base_url, "pat"),
+            |timeout| azure::AzureClient::new_for_test_with_timeout(base_url, "pat", timeout),
+        );
+        AzureUpdateGateway {
+            client,
+            project: "project".to_owned(),
+            repository: "repo".to_owned(),
+            id: 42,
+        }
     }
 
     #[derive(Clone)]
@@ -626,10 +678,19 @@ mod tests {
             })],
             Ok(pull_request()),
         );
-        let error = read_initial(&gateway, 42).await.unwrap_err();
+        let mut collect_calls = 0;
+        let result = prepare_with_gateway(Config::default(), remote(), 42, &gateway, |_, _| {
+            collect_calls += 1;
+            Err(AppError::Git {
+                message: "coleta não deveria iniciar".to_owned(),
+            })
+        })
+        .await;
+        let error = result.unwrap_err();
         assert!(error.to_string().contains("PR #42 não encontrado"));
         assert_eq!(gateway.get_count(), 1);
         assert_eq!(gateway.patch_count(), 0);
+        assert_eq!(collect_calls, 0);
 
         let source = include_str!("update_pull_request.rs");
         let initial_read = source
@@ -654,10 +715,19 @@ mod tests {
             ))],
             Ok(pull_request()),
         );
-        let error = read_initial(&gateway, 42).await.unwrap_err();
+        let mut collect_calls = 0;
+        let result = prepare_with_gateway(Config::default(), remote(), 42, &gateway, |_, _| {
+            collect_calls += 1;
+            Err(AppError::Git {
+                message: "coleta não deveria iniciar".to_owned(),
+            })
+        })
+        .await;
+        let error = result.unwrap_err();
         assert!(matches!(error, AppError::Http(_)));
         assert_eq!(gateway.get_count(), 1);
         assert_eq!(gateway.patch_count(), 0);
+        assert_eq!(collect_calls, 0);
     }
 
     #[tokio::test]
@@ -703,7 +773,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn update_should_freeze_approved_content_before_remote_operation() {
+    async fn update_feature_should_freeze_approved_content_before_remote_operation() {
         let mut app = crate::tui::update_flow::UpdateApp::new(42, &pull_request());
         app.on_proposal(Ok(approved()));
         let frozen = app.proposal.clone().unwrap();
@@ -891,7 +961,7 @@ mod tests {
             .await
             .unwrap_err();
         let gateway = FakeGateway::new(
-            vec![Ok(initial.clone()), Ok(confirmed)],
+            vec![Ok(initial.clone()), Ok(confirmed.clone())],
             Err(AppError::Http(transport)),
         );
         let result = execute_update(&gateway, &initial, &approved())
@@ -901,48 +971,38 @@ mod tests {
         assert_eq!(gateway.patch_count(), 1);
         assert_eq!(gateway.get_count(), 2);
 
-        let (base_url, server) = spawn_http_response("200 OK", "not-json", None);
-        let client = azure::AzureClient::new_for_test(&base_url, "pat");
-        let invalid_response = update_pull_request(
-            &client,
-            "project",
-            "repo",
-            42,
-            &UpdatePullRequestInput {
-                title: approved().title,
-                description: approved().body,
-            },
-        )
-        .await
-        .unwrap_err();
-        assert!(matches!(
-            &invalid_response,
-            AppError::Azure { status: 200, .. }
-        ));
-        assert!(is_uncertain_patch_error(&invalid_response));
+        let (base_url, requests, server) = spawn_http_script(vec![
+            ("200 OK".to_owned(), pull_request_json(&initial), None),
+            ("200 OK".to_owned(), "not-json".to_owned(), None),
+            ("200 OK".to_owned(), pull_request_json(&confirmed), None),
+        ]);
+        let gateway = azure_gateway_for_test(&base_url, None);
+        let result = execute_update(&gateway, &initial, &approved())
+            .await
+            .unwrap();
+        assert!(matches!(result, UpdateOutcome::Updated { .. }));
+        assert_eq!(requests.recv().unwrap(), "GET");
+        assert_eq!(requests.recv().unwrap(), "PATCH");
+        assert_eq!(requests.recv().unwrap(), "GET");
         server.join().unwrap();
 
-        let (base_url, server) =
-            spawn_http_response("200 OK", "", Some(Duration::from_millis(100)));
-        let client = azure::AzureClient::new_for_test_with_timeout(
-            &base_url,
-            "pat",
-            Duration::from_millis(20),
-        );
-        let timeout = update_pull_request(
-            &client,
-            "project",
-            "repo",
-            42,
-            &UpdatePullRequestInput {
-                title: "Novo".to_owned(),
-                description: "Descrição".to_owned(),
-            },
-        )
-        .await
-        .unwrap_err();
-        assert!(matches!(&timeout, AppError::Http(_)));
-        assert!(is_uncertain_patch_error(&timeout));
+        let (base_url, requests, server) = spawn_http_script(vec![
+            ("200 OK".to_owned(), pull_request_json(&initial), None),
+            (
+                "200 OK".to_owned(),
+                String::new(),
+                Some(Duration::from_millis(100)),
+            ),
+            ("200 OK".to_owned(), "not-json".to_owned(), None),
+        ]);
+        let gateway = azure_gateway_for_test(&base_url, Some(Duration::from_millis(20)));
+        let result = execute_update(&gateway, &initial, &approved())
+            .await
+            .unwrap();
+        assert!(matches!(result, UpdateOutcome::Unknown { .. }));
+        assert_eq!(requests.recv().unwrap(), "GET");
+        assert_eq!(requests.recv().unwrap(), "PATCH");
+        assert_eq!(requests.recv().unwrap(), "GET");
         server.join().unwrap();
     }
 
@@ -992,38 +1052,19 @@ mod tests {
         assert!(matches!(result, UpdateOutcome::Updated { .. }));
         assert_eq!(gateway.patch_count(), 1);
 
-        let (base_url, server) = spawn_http_response(
-            "200 OK",
-            serde_json::json!({
-                "pullRequestId": confirmed.pull_request_id,
-                "status": confirmed.status,
-                "repository": {
-                    "id": confirmed.repository.id,
-                    "name": confirmed.repository.name,
-                    "project": {"name": confirmed.repository.project.name}
-                },
-                "sourceRefName": confirmed.source_ref_name,
-                "targetRefName": confirmed.target_ref_name,
-                "title": confirmed.title,
-                "description": confirmed.description
-            })
-            .to_string(),
-            None,
-        );
-        let client = azure::AzureClient::new_for_test(&base_url, "pat");
-        let remote_result = update_pull_request(
-            &client,
-            "project",
-            "repo",
-            42,
-            &UpdatePullRequestInput {
-                title: "Título aprovado".to_owned(),
-                description: "Body aprovado\n- [ ] validar".to_owned(),
-            },
-        )
-        .await
-        .unwrap();
-        assert_eq!(remote_result, confirmed);
+        let (base_url, requests, server) = spawn_http_script(vec![
+            ("200 OK".to_owned(), pull_request_json(&initial), None),
+            ("200 OK".to_owned(), pull_request_json(&confirmed), None),
+            ("200 OK".to_owned(), pull_request_json(&confirmed), None),
+        ]);
+        let gateway = azure_gateway_for_test(&base_url, None);
+        let remote_result = execute_update(&gateway, &initial, &approved())
+            .await
+            .unwrap();
+        assert!(matches!(remote_result, UpdateOutcome::Updated { .. }));
+        assert_eq!(requests.recv().unwrap(), "GET");
+        assert_eq!(requests.recv().unwrap(), "PATCH");
+        assert_eq!(requests.recv().unwrap(), "GET");
         server.join().unwrap();
 
         let update_source = include_str!("update_pull_request.rs");

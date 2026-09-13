@@ -250,6 +250,18 @@ async fn run_update_prepared(
     tty: bool,
     prep: prt::features::update_pull_request::UpdatePrep,
 ) -> anyhow::Result<()> {
+    run_update_prepared_with(options, tty, prep, |text| println!("{text}")).await
+}
+
+async fn run_update_prepared_with<F>(
+    options: &prt::cli::CliOptions,
+    tty: bool,
+    prep: prt::features::update_pull_request::UpdatePrep,
+    emit: F,
+) -> anyhow::Result<()>
+where
+    F: FnOnce(String),
+{
     use prt::tui::notice::{NoticeKind, show_notice};
     use prt::tui::update_flow::{UpdateTuiOutcome, run_update_tui};
     use ratatui::text::Text;
@@ -263,7 +275,7 @@ async fn run_update_prepared(
             )
             .await?;
         } else {
-            println!("{}", update_dry_run_text(&prep.prompt));
+            emit(update_dry_run_text(&prep.prompt));
         }
         return Ok(());
     }
@@ -487,12 +499,14 @@ mod tests {
 
         let dry_run = prt::cli::parse_cli(["prt", "desc", "--pr", "42", "--dry-run"]).unwrap();
         assert!(dry_run.output.dry_run);
-        run_update_prepared(&dry_run, false, update_prep())
+        let mut output = String::new();
+        run_update_prepared_with(&dry_run, false, update_prep(), |text| output = text)
             .await
             .unwrap();
-        assert_eq!(
-            update_dry_run_text("contexto preservado"),
-            "PR existente · dry run\n\ncontexto preservado"
-        );
+        assert_eq!(output, update_dry_run_text("contexto preservado"));
+        for extra in ["--raw", "--create", "--no-create"] {
+            let error = prt::cli::parse_cli(["prt", "desc", "--pr", "42", extra]).unwrap_err();
+            assert_eq!(error.exit_code(), 2);
+        }
     }
 }

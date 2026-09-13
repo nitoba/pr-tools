@@ -26,7 +26,7 @@ use super::{
 use crate::ai::PrDescription;
 use crate::azure::pull_requests::PullRequest;
 use crate::features::update_pull_request::{
-    self, AzureUpdateGateway, UpdateOutcome, UpdatePrep, execute_update,
+    self, UpdateGateway, UpdateOutcome, UpdatePrep, execute_update,
 };
 
 /// Fase visual da atualização de PR.
@@ -581,12 +581,15 @@ fn phase_style(phase: UpdatePhase) -> Style {
     }
 }
 
-fn handle_key(
+fn handle_key<G>(
     app: &mut UpdateApp,
     key: KeyEvent,
-    gateway: &AzureUpdateGateway,
+    gateway: &G,
     tx: &mpsc::UnboundedSender<UpdateBackendEvent>,
-) -> Option<UpdateTuiOutcome> {
+) -> Option<UpdateTuiOutcome>
+where
+    G: UpdateGateway + Clone + Send + Sync + 'static,
+{
     if app.content_edit.is_some() {
         app.handle_content_key(key);
         return None;
@@ -657,13 +660,16 @@ fn quit_outcome(app: &UpdateApp) -> UpdateTuiOutcome {
     }
 }
 
-fn run_loop(
+fn run_loop<G>(
     terminal: &mut DefaultTerminal,
     mut app: UpdateApp,
-    gateway: &AzureUpdateGateway,
+    gateway: &G,
     mut rx: mpsc::UnboundedReceiver<UpdateBackendEvent>,
     tx: &mpsc::UnboundedSender<UpdateBackendEvent>,
-) -> anyhow::Result<UpdateTuiOutcome> {
+) -> anyhow::Result<UpdateTuiOutcome>
+where
+    G: UpdateGateway + Clone + Send + Sync + 'static,
+{
     let tick_rate = Duration::from_millis(33);
     let mut last_tick = std::time::Instant::now();
     let mut needs_draw = true;
@@ -766,6 +772,14 @@ pub fn run_update_tui(prep: &UpdatePrep) -> anyhow::Result<UpdateTuiOutcome> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::VecDeque;
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
     use crossterm::event::KeyModifiers;
 
     use super::*;
@@ -797,6 +811,88 @@ mod tests {
             body: "Body proposto\n- [ ] validar".to_owned(),
         }));
         app
+    }
+
+    #[derive(Clone)]
+    struct SpyGateway {
+        writes: Arc<AtomicUsize>,
+    }
+
+    impl UpdateGateway for SpyGateway {
+        fn get<'a>(
+            &'a self,
+        ) -> Pin<Box<dyn Future<Output = crate::error::Result<PullRequest>> + Send + 'a>> {
+            Box::pin(async {
+                Err(crate::error::AppError::Git {
+                    message: "GET não deveria iniciar".to_owned(),
+                })
+            })
+        }
+
+        fn patch<'a>(
+            &'a self,
+            _input: &'a crate::azure::pull_requests::UpdatePullRequestInput,
+        ) -> Pin<Box<dyn Future<Output = crate::error::Result<PullRequest>> + Send + 'a>> {
+            self.writes.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async {
+                Err(crate::error::AppError::Git {
+                    message: "PATCH não deveria iniciar".to_owned(),
+                })
+            })
+        }
+    }
+
+    #[derive(Clone)]
+    struct BlockingGateway {
+        gets: Arc<std::sync::Mutex<VecDeque<crate::error::Result<PullRequest>>>>,
+        patch_result: Arc<std::sync::Mutex<Option<crate::error::Result<PullRequest>>>>,
+        patches: Arc<AtomicUsize>,
+        get_calls: Arc<AtomicUsize>,
+        first_get_started: Arc<tokio::sync::Notify>,
+        release_first_get: Arc<tokio::sync::Notify>,
+    }
+
+    impl UpdateGateway for BlockingGateway {
+        fn get<'a>(
+            &'a self,
+        ) -> Pin<Box<dyn Future<Output = crate::error::Result<PullRequest>> + Send + 'a>> {
+            let gets = self.gets.clone();
+            let call = self.get_calls.fetch_add(1, Ordering::SeqCst) + 1;
+            let started = self.first_get_started.clone();
+            let release = self.release_first_get.clone();
+            Box::pin(async move {
+                if call == 1 {
+                    started.notify_one();
+                    release.notified().await;
+                }
+                gets.lock()
+                    .expect("mutex não envenenado")
+                    .pop_front()
+                    .unwrap_or_else(|| {
+                        Err(crate::error::AppError::Git {
+                            message: "GET não roteado".to_owned(),
+                        })
+                    })
+            })
+        }
+
+        fn patch<'a>(
+            &'a self,
+            _input: &'a crate::azure::pull_requests::UpdatePullRequestInput,
+        ) -> Pin<Box<dyn Future<Output = crate::error::Result<PullRequest>> + Send + 'a>> {
+            self.patches.fetch_add(1, Ordering::SeqCst);
+            let result = self
+                .patch_result
+                .lock()
+                .expect("mutex não envenenado")
+                .take()
+                .unwrap_or_else(|| {
+                    Err(crate::error::AppError::Git {
+                        message: "PATCH não roteado".to_owned(),
+                    })
+                });
+            Box::pin(async move { result })
+        }
     }
 
     #[test]
@@ -908,7 +1004,10 @@ mod tests {
         assert!(app.frozen_content.is_none());
         assert_eq!(app.phase, UpdatePhase::Review);
 
-        let gateway = update_pull_request::gateway_for_test();
+        let writes = Arc::new(AtomicUsize::new(0));
+        let gateway = SpyGateway {
+            writes: writes.clone(),
+        };
         let (tx, mut rx) = mpsc::unbounded_channel();
         assert!(matches!(
             handle_key(
@@ -920,6 +1019,7 @@ mod tests {
             Some(UpdateTuiOutcome::Aborted)
         ));
         assert!(rx.try_recv().is_err());
+        assert_eq!(writes.load(Ordering::SeqCst), 0);
         assert_eq!(app.phase, UpdatePhase::Review);
         assert_eq!(review_app().proposal, original);
     }
@@ -936,6 +1036,65 @@ mod tests {
         assert!(!app.open_content_edit());
         app.on_outcome(Ok(UpdateOutcome::Conflict {
             remote: pull_request(),
+            reason: "mudou".to_owned(),
+        }));
+        assert!(!app.open_content_edit());
+        app.on_outcome(Ok(UpdateOutcome::Unknown {
+            reason: "incerto".to_owned(),
+        }));
+        assert!(!app.open_content_edit());
+    }
+
+    #[tokio::test]
+    async fn update_should_freeze_approved_content_before_remote_operation() {
+        let initial = pull_request();
+        let mut confirmed = initial.clone();
+        confirmed.title = "Título proposto".to_owned();
+        confirmed.description = "Body proposto\n- [ ] validar".to_owned();
+        let gateway = BlockingGateway {
+            gets: Arc::new(std::sync::Mutex::new(
+                vec![Ok(initial.clone()), Ok(confirmed.clone())]
+                    .into_iter()
+                    .collect(),
+            )),
+            patch_result: Arc::new(std::sync::Mutex::new(Some(Ok(confirmed)))),
+            patches: Arc::new(AtomicUsize::new(0)),
+            get_calls: Arc::new(AtomicUsize::new(0)),
+            first_get_started: Arc::new(tokio::sync::Notify::new()),
+            release_first_get: Arc::new(tokio::sync::Notify::new()),
+        };
+        let mut app = review_app();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        assert!(
+            handle_key(
+                &mut app,
+                KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+                &gateway,
+                &tx,
+            )
+            .is_none()
+        );
+
+        gateway.first_get_started.notified().await;
+        assert_eq!(app.phase, UpdatePhase::Updating);
+        assert_eq!(
+            app.frozen_content,
+            Some(PrDescription {
+                title: "Título proposto".to_owned(),
+                body: "Body proposto\n- [ ] validar".to_owned(),
+            })
+        );
+        gateway.release_first_get.notify_one();
+        let outcome = match rx.recv().await.unwrap() {
+            UpdateBackendEvent::Outcome(result) => result.unwrap(),
+            UpdateBackendEvent::Proposal(_) => panic!("proposta não deveria chegar"),
+        };
+        assert!(matches!(outcome, UpdateOutcome::Updated { .. }));
+        assert_eq!(gateway.get_calls.load(Ordering::SeqCst), 2);
+        assert_eq!(gateway.patches.load(Ordering::SeqCst), 1);
+
+        app.on_outcome(Ok(UpdateOutcome::Conflict {
+            remote: initial,
             reason: "mudou".to_owned(),
         }));
         assert!(!app.open_content_edit());
