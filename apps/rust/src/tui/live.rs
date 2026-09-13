@@ -1761,8 +1761,12 @@ fn session_selector_loop(
                         .collect::<Vec<_>>()
                         .join(", ");
                     ListItem::new(Line::from(format!(
-                        "{} · {} · {} · {}",
-                        session.session_id, session.repository, session.source_branch, targets
+                        "{} · {} · {} · {} · {}",
+                        session.session_id,
+                        session.repository,
+                        session.source_branch,
+                        session.updated_at,
+                        targets
                     )))
                 })
                 .collect::<Vec<_>>();

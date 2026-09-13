@@ -417,7 +417,12 @@ impl SessionStore {
                 });
             }
         }
-        summaries.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
+        summaries.sort_by(|left, right| {
+            right
+                .updated_at
+                .cmp(&left.updated_at)
+                .then_with(|| left.session_id.cmp(&right.session_id))
+        });
         Ok(summaries)
     }
 

@@ -279,8 +279,12 @@ async fn run_desc_resume(options: &prt::cli::CliOptions) -> anyhow::Result<()> {
                     .collect::<Vec<_>>()
                     .join(", ");
                 println!(
-                    "{} · {} · {} · {}",
-                    session.session_id, session.repository, session.source_branch, targets
+                    "{} · {} · {} · {} · {}",
+                    session.session_id,
+                    session.repository,
+                    session.source_branch,
+                    session.updated_at,
+                    targets
                 );
             }
             return Ok(());
