@@ -474,13 +474,13 @@ mod tests {
 
     fn spawn_http_response(
         status: &str,
-        body: &str,
+        body: impl Into<String>,
         delay: Option<Duration>,
     ) -> (String, JoinHandle<()>) {
         let listener = TcpListener::bind(("127.0.0.1", 0)).expect("listener local");
         let address = listener.local_addr().expect("endereço local");
         let status = status.to_owned();
-        let body = body.to_owned();
+        let body = body.into();
         let handle = spawn(move || {
             let (mut stream, _) = listener.accept().expect("cliente HTTP");
             let mut request = Vec::new();
@@ -643,6 +643,21 @@ mod tests {
             .expect("contexto após elegibilidade");
         assert!(initial_read < eligibility);
         assert!(eligibility < context);
+
+        let gateway = FakeGateway::new(
+            vec![Err(AppError::Http(
+                reqwest::Client::new()
+                    .get("http://[::1")
+                    .send()
+                    .await
+                    .unwrap_err(),
+            ))],
+            Ok(pull_request()),
+        );
+        let error = read_initial(&gateway, 42).await.unwrap_err();
+        assert!(matches!(error, AppError::Http(_)));
+        assert_eq!(gateway.get_count(), 1);
+        assert_eq!(gateway.patch_count(), 0);
     }
 
     #[tokio::test]
@@ -661,6 +676,12 @@ mod tests {
         assert!(prompt.contains("Descrição atual"));
         assert!(prompt.contains("abc123 commit"));
         assert!(prompt.contains("diff --git"));
+
+        let mut failed_provider_prep = prep_for(pull_request());
+        failed_provider_prep.config.providers = vec!["openai-compatible".to_owned()];
+        failed_provider_prep.config.base_url = "http://[::1".to_owned();
+        let provider_error = generate(&failed_provider_prep).await.unwrap_err();
+        assert!(matches!(provider_error, AppError::Ai { .. }));
 
         let gateway = FakeGateway::new(Vec::new(), Ok(pull_request()));
         let invalid = PrDescription {
@@ -688,6 +709,9 @@ mod tests {
         let frozen = app.proposal.clone().unwrap();
         let approved_for_write = app.begin_update().unwrap();
         assert_eq!(app.frozen_content, Some(frozen.clone()));
+        assert_eq!(app.phase, crate::tui::update_flow::UpdatePhase::Confirming);
+        assert!(!app.open_content_edit());
+        app.mark_updating();
         assert_eq!(app.phase, crate::tui::update_flow::UpdatePhase::Updating);
         assert!(!app.open_content_edit());
 
@@ -703,6 +727,16 @@ mod tests {
         assert_eq!(gateway.get_count(), 2);
         assert_eq!(gateway.patch_count(), 1);
         assert_eq!(app.frozen_content, Some(frozen));
+
+        app.on_outcome(Ok(UpdateOutcome::Conflict {
+            remote: pull_request(),
+            reason: "mudou".to_owned(),
+        }));
+        assert!(!app.open_content_edit());
+        app.on_outcome(Ok(UpdateOutcome::Unknown {
+            reason: "incerto".to_owned(),
+        }));
+        assert!(!app.open_content_edit());
     }
 
     #[tokio::test]
@@ -772,7 +806,7 @@ mod tests {
         confirmed.description = approved().body;
         let gateway = FakeGateway::new(
             vec![Ok(initial.clone()), Ok(confirmed.clone())],
-            Ok(confirmed),
+            Ok(confirmed.clone()),
         );
         let result = execute_update(&gateway, &initial, &approved())
             .await
@@ -819,6 +853,25 @@ mod tests {
             .await
             .unwrap();
         assert!(matches!(result, UpdateOutcome::Updated { .. }));
+        assert_eq!(gateway.patch_count(), 1);
+        assert_eq!(gateway.get_count(), 2);
+
+        let gateway = FakeGateway::new(
+            vec![
+                Ok(initial.clone()),
+                Err(AppError::Git {
+                    message: "reconciliação indisponível".to_owned(),
+                }),
+            ],
+            Err(AppError::Azure {
+                status: 504,
+                message: "timeout".to_owned(),
+            }),
+        );
+        let result = execute_update(&gateway, &initial, &approved())
+            .await
+            .unwrap();
+        assert!(matches!(result, UpdateOutcome::Unknown { .. }));
         assert_eq!(gateway.patch_count(), 1);
         assert_eq!(gateway.get_count(), 2);
 
@@ -929,7 +982,7 @@ mod tests {
         confirmed.description = approved().body;
         let gateway = FakeGateway::new(
             vec![Ok(initial.clone()), Ok(confirmed.clone())],
-            Ok(confirmed),
+            Ok(confirmed.clone()),
         );
 
         let result = execute_update(&gateway, &initial, &approved())
@@ -938,6 +991,40 @@ mod tests {
 
         assert!(matches!(result, UpdateOutcome::Updated { .. }));
         assert_eq!(gateway.patch_count(), 1);
+
+        let (base_url, server) = spawn_http_response(
+            "200 OK",
+            serde_json::json!({
+                "pullRequestId": confirmed.pull_request_id,
+                "status": confirmed.status,
+                "repository": {
+                    "id": confirmed.repository.id,
+                    "name": confirmed.repository.name,
+                    "project": {"name": confirmed.repository.project.name}
+                },
+                "sourceRefName": confirmed.source_ref_name,
+                "targetRefName": confirmed.target_ref_name,
+                "title": confirmed.title,
+                "description": confirmed.description
+            })
+            .to_string(),
+            None,
+        );
+        let client = azure::AzureClient::new_for_test(&base_url, "pat");
+        let remote_result = update_pull_request(
+            &client,
+            "project",
+            "repo",
+            42,
+            &UpdatePullRequestInput {
+                title: "Título aprovado".to_owned(),
+                description: "Body aprovado\n- [ ] validar".to_owned(),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(remote_result, confirmed);
+        server.join().unwrap();
 
         let update_source = include_str!("update_pull_request.rs");
         let live_source = include_str!("../tui/live.rs");
@@ -948,6 +1035,15 @@ mod tests {
         assert!(!update_source.contains(&creator));
         assert!(live_source.contains(&publisher));
         assert!(azure_source.contains(&creator));
+        let update_start = azure_source
+            .find("pub async fn update_pull_request")
+            .expect("operação de update existente");
+        let update_body = &azure_source[update_start..];
+        let update_end = update_body
+            .find("pub async fn ")
+            .filter(|end| *end > 0)
+            .unwrap_or(update_body.len());
+        assert!(!update_body[..update_end].contains(".post("));
 
         let main_source = include_str!("../main.rs");
         let update_dispatch = main_source

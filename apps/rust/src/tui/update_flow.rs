@@ -251,15 +251,22 @@ impl UpdateApp {
         Some(proposal)
     }
 
-    /// Congela a proposta e marca o início da operação remota.
+    /// Congela a proposta antes do início da operação remota.
     ///
     /// A chamada remota só deve ser agendada pelo chamador depois que este
-    /// método devolver o conteúdo congelado.
+    /// método devolver o conteúdo congelado e a fase `Confirming` tiver sido
+    /// observada.
     pub fn begin_update(&mut self) -> Option<PrDescription> {
-        let proposal = self.confirm()?;
+        self.confirm()
+    }
+
+    /// Marca a proposta já congelada como pronta para a operação remota.
+    pub fn mark_updating(&mut self) {
+        if self.phase != UpdatePhase::Confirming || self.frozen_content.is_none() {
+            return;
+        }
         self.phase = UpdatePhase::Updating;
         self.set_phase_label("relendo e atualizando…");
-        Some(proposal)
     }
 
     /// Retorna do conflito para uma nova revisão do snapshot atualizado.
@@ -612,6 +619,7 @@ fn handle_key(
         }
         KeyCode::Enter if app.phase == UpdatePhase::Review => {
             if let Some(approved) = app.begin_update() {
+                app.mark_updating();
                 let gateway = gateway.clone();
                 let initial = app.current.clone();
                 let tx = tx.clone();
@@ -901,7 +909,7 @@ mod tests {
         assert_eq!(app.phase, UpdatePhase::Review);
 
         let gateway = update_pull_request::gateway_for_test();
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, mut rx) = mpsc::unbounded_channel();
         assert!(matches!(
             handle_key(
                 &mut app,
@@ -911,7 +919,9 @@ mod tests {
             ),
             Some(UpdateTuiOutcome::Aborted)
         ));
+        assert!(rx.try_recv().is_err());
         assert_eq!(app.phase, UpdatePhase::Review);
+        assert_eq!(review_app().proposal, original);
     }
 
     #[test]
@@ -920,6 +930,8 @@ mod tests {
         let approved = app.proposal.clone().unwrap();
         assert_eq!(app.begin_update(), Some(approved.clone()));
         assert_eq!(app.frozen_content, Some(approved));
+        assert_eq!(app.phase, UpdatePhase::Confirming);
+        app.mark_updating();
         assert_eq!(app.phase, UpdatePhase::Updating);
         assert!(!app.open_content_edit());
         app.on_outcome(Ok(UpdateOutcome::Conflict {

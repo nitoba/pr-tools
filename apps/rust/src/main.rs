@@ -231,9 +231,6 @@ async fn run_desc(options: &prt::cli::CliOptions) -> anyhow::Result<()> {
 
 async fn run_update(options: &prt::cli::CliOptions) -> anyhow::Result<()> {
     use prt::features::update_pull_request;
-    use prt::tui::notice::{NoticeKind, show_notice};
-    use prt::tui::update_flow::{UpdateTuiOutcome, run_update_tui};
-    use ratatui::text::Text;
 
     let tty = std::io::IsTerminal::is_terminal(&std::io::stdout());
     prt::cli::ensure_update_execution_mode(tty, options.output.dry_run)
@@ -241,6 +238,22 @@ async fn run_update(options: &prt::cli::CliOptions) -> anyhow::Result<()> {
     let prep = update_pull_request::prepare(options)
         .await
         .context("falha ao preparar atualização do PR")?;
+    run_update_prepared(options, tty, prep).await
+}
+
+fn update_dry_run_text(prompt: &str) -> String {
+    format!("PR existente · dry run\n\n{prompt}")
+}
+
+async fn run_update_prepared(
+    options: &prt::cli::CliOptions,
+    tty: bool,
+    prep: prt::features::update_pull_request::UpdatePrep,
+) -> anyhow::Result<()> {
+    use prt::tui::notice::{NoticeKind, show_notice};
+    use prt::tui::update_flow::{UpdateTuiOutcome, run_update_tui};
+    use ratatui::text::Text;
+
     if options.output.dry_run {
         if tty {
             show_notice(
@@ -250,7 +263,7 @@ async fn run_update(options: &prt::cli::CliOptions) -> anyhow::Result<()> {
             )
             .await?;
         } else {
-            println!("PR existente · dry run\n\n{}", prep.prompt);
+            println!("{}", update_dry_run_text(&prep.prompt));
         }
         return Ok(());
     }
@@ -425,6 +438,47 @@ async fn run_doctor(options: &prt::cli::CliOptions) -> anyhow::Result<()> {
 mod tests {
     use super::*;
 
+    fn update_prep() -> prt::features::update_pull_request::UpdatePrep {
+        let remote = prt::git::RepositoryRemote {
+            organization: "org".to_owned(),
+            project: "project".to_owned(),
+            repository: "repo".to_owned(),
+        };
+        let current = prt::azure::pull_requests::PullRequest {
+            pull_request_id: 42,
+            title: "Atual".to_owned(),
+            description: "Body".to_owned(),
+            source_ref_name: "refs/heads/feature/42".to_owned(),
+            target_ref_name: "refs/heads/dev".to_owned(),
+            status: "active".to_owned(),
+            repository: prt::azure::pull_requests::PullRequestRepository {
+                id: "repo-id".to_owned(),
+                name: "repo".to_owned(),
+                project: prt::azure::pull_requests::PullRequestProject {
+                    name: "project".to_owned(),
+                },
+            },
+        };
+        prt::features::update_pull_request::UpdatePrep {
+            config: prt::config::Config::default(),
+            remote: remote.clone(),
+            pr_id: 42,
+            current,
+            context: prt::git::ChangeContext {
+                branch: "feature/42".to_owned(),
+                source_ref: "refs/heads/feature/42".to_owned(),
+                base_branch: "origin/dev".to_owned(),
+                sprint_branch: String::new(),
+                diff: "diff".to_owned(),
+                diff_original_lines: 1,
+                log: "log".to_owned(),
+                work_item_id: String::new(),
+                remote: Some(remote),
+            },
+            prompt: "contexto preservado".to_owned(),
+        }
+    }
+
     #[tokio::test]
     async fn update_dry_run_and_non_interactive_combinations_should_not_start_provider_or_writer() {
         let options = prt::cli::parse_cli(["prt", "desc", "--pr", "42"]).unwrap();
@@ -433,5 +487,12 @@ mod tests {
 
         let dry_run = prt::cli::parse_cli(["prt", "desc", "--pr", "42", "--dry-run"]).unwrap();
         assert!(dry_run.output.dry_run);
+        run_update_prepared(&dry_run, false, update_prep())
+            .await
+            .unwrap();
+        assert_eq!(
+            update_dry_run_text("contexto preservado"),
+            "PR existente · dry run\n\ncontexto preservado"
+        );
     }
 }
