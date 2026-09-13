@@ -247,6 +247,7 @@ impl DescribeApp {
             body: snapshot.body.clone(),
         });
         self.raw_final.clear();
+        self.work_item_id.clone_from(&snapshot.work_item_id);
         self.targets = snapshot
             .targets
             .iter()
@@ -289,6 +290,23 @@ impl DescribeApp {
                 target: Some(target.target.clone()),
             });
             self.publish_dialog = Some(PublishDialog::PublishRecovery(1));
+        } else if let Some(target) = snapshot
+            .targets
+            .iter()
+            .find(|target| matches!(target.state, TargetState::Failed { .. }))
+        {
+            let message = match &target.state {
+                TargetState::Failed { message } => message.clone(),
+                TargetState::Pending
+                | TargetState::AttemptingOrUncertain { .. }
+                | TargetState::Confirmed { .. } => String::new(),
+            };
+            self.publish_failure = Some(PublishFailure {
+                message,
+                kind: PublishFailureKind::Confirmed,
+                target: Some(target.target.clone()),
+            });
+            self.publish_dialog = Some(PublishDialog::PublishRecovery(0));
         }
         self.phase = Phase::Review;
         "revisão — sessão retomada".clone_into(&mut self.phase_label);
@@ -829,6 +847,34 @@ mod tests {
         )
     }
 
+    fn session_snapshot(states: &[TargetState; 2]) -> SessionSnapshot {
+        let fingerprint = crate::git::GitContextFingerprint {
+            repository: "C:\\repo".to_owned(),
+            source_branch: "feature/11763-x".to_owned(),
+            source_oid: "a".repeat(40),
+            target_oids: std::collections::BTreeMap::from([
+                ("dev".to_owned(), "b".repeat(40)),
+                ("sprint/12".to_owned(), "c".repeat(40)),
+            ]),
+        };
+        let mut snapshot = SessionSnapshot::new(
+            fingerprint.repository.clone(),
+            None,
+            fingerprint.source_branch.clone(),
+            "refs/heads/feature/11763-x".to_owned(),
+            &fingerprint,
+            "Título salvo".to_owned(),
+            "Body salvo".to_owned(),
+            "11763".to_owned(),
+            vec!["dev@x.com".to_owned(), "sprint@x.com".to_owned()],
+            vec!["dev".to_owned(), "sprint/12".to_owned()],
+        );
+        snapshot.targets[0].state = states[0].clone();
+        snapshot.targets[1].state = states[1].clone();
+        snapshot.revision = 1;
+        snapshot
+    }
+
     #[test]
     fn token_should_switch_to_generating_and_update_preview() {
         let mut a = app();
@@ -1048,6 +1094,22 @@ mod tests {
         }));
         assert_eq!(a.target_state("sprint/12"), "failed");
         assert!(a.session_id.is_some());
+        assert_eq!(a.targets, vec!["dev", "sprint/12"]);
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30)).expect("terminal");
+        terminal
+            .draw(|frame| frame.render_widget(&a, frame.area()))
+            .expect("render");
+        let rendered: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol().to_owned())
+            .collect();
+        assert!(rendered.contains("550e8400-e29b-41d4-a716-446655440000"));
+        assert!(rendered.contains("confirmed"));
+        assert!(rendered.contains("failed"));
     }
 
     #[test]
@@ -1060,6 +1122,20 @@ mod tests {
         }));
         assert_eq!(a.target_state("sprint/12"), "failed");
         assert_eq!(a.target_state("dev"), "pending");
+
+        let mut resumed = app();
+        resumed.restore_session(&session_snapshot(&[
+            TargetState::Pending,
+            TargetState::Failed {
+                message: "HTTP 403".to_owned(),
+            },
+        ]));
+        assert_eq!(resumed.target_state("sprint/12"), "failed");
+        assert_eq!(resumed.target_state("dev"), "pending");
+        assert_eq!(
+            resumed.publish_dialog,
+            Some(PublishDialog::PublishRecovery(0))
+        );
     }
 
     #[test]
@@ -1072,6 +1148,19 @@ mod tests {
         }));
         assert_eq!(a.target_state("dev"), "attempting_or_uncertain");
         assert_eq!(a.publish_dialog, Some(PublishDialog::PublishRecovery(1)));
+
+        let mut resumed = app();
+        resumed.restore_session(&session_snapshot(&[
+            TargetState::AttemptingOrUncertain {
+                message: Some("resultado perdido".to_owned()),
+            },
+            TargetState::Pending,
+        ]));
+        assert_eq!(resumed.target_state("dev"), "attempting_or_uncertain");
+        assert_eq!(
+            resumed.publish_dialog,
+            Some(PublishDialog::PublishRecovery(1))
+        );
     }
 
     #[test]
@@ -1102,11 +1191,17 @@ mod tests {
     #[test]
     fn zero_candidates_require_explicit_retry() {
         let mut a = app();
+        a.on_backend(BackendEvent::PublishFailed(PublishFailure {
+            message: "resposta perdida".to_owned(),
+            kind: PublishFailureKind::OutcomeUnknown,
+            target: Some("dev".to_owned()),
+        }));
         a.on_candidates_loaded(Vec::new(), None);
         assert!(
             a.candidate_message
                 .as_deref()
                 .is_some_and(|message| message.contains("retry explicitamente"))
         );
+        assert_eq!(a.publish_dialog, Some(PublishDialog::PublishRecovery(1)));
     }
 }

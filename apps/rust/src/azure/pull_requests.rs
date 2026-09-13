@@ -1213,10 +1213,70 @@ mod tests {
             repository: "repo".to_owned(),
         };
         let targets = ["dev".to_owned(), "sprint/12".to_owned()];
-        let events = std::sync::Mutex::new(Vec::new());
-        let on_started = |target: &str| events.lock().unwrap().push(format!("start:{target}"));
-        let on_confirmed = |item: &PublishedPr| {
-            events
+        let directory = tempfile::tempdir().expect("tempdir");
+        let paths = crate::config::ConfigPaths {
+            directory: directory.path().join("pr-tools"),
+            config_file: directory.path().join("pr-tools/config.json"),
+            env_file: directory.path().join("pr-tools/.env"),
+            template_file: directory.path().join("pr-tools/pr-template.md"),
+        };
+        let fingerprint = crate::git::GitContextFingerprint {
+            repository: "C:\\repo".to_owned(),
+            source_branch: "feature/42".to_owned(),
+            source_oid: "a".repeat(40),
+            target_oids: std::collections::BTreeMap::from([
+                ("dev".to_owned(), "b".repeat(40)),
+                ("sprint/12".to_owned(), "c".repeat(40)),
+            ]),
+        };
+        let snapshot = crate::features::session::SessionSnapshot::new(
+            fingerprint.repository.clone(),
+            Some(&remote),
+            fingerprint.source_branch.clone(),
+            "refs/heads/feature/42".to_owned(),
+            &fingerprint,
+            "Título".to_owned(),
+            "Descrição".to_owned(),
+            String::new(),
+            vec![String::new(), String::new()],
+            targets.to_vec(),
+        );
+        let id = uuid::Uuid::parse_str(&snapshot.session_id).expect("uuid");
+        let (store, saved) =
+            crate::features::session::SessionStore::create(&paths, snapshot).expect("session");
+        let durable = std::sync::Arc::new(std::sync::Mutex::new((store, saved)));
+        let durable_started = std::sync::Arc::clone(&durable);
+        let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let events_started = std::sync::Arc::clone(&events);
+        let on_started = move |target: &str| {
+            if target == "sprint/12" {
+                let guard = durable_started.lock().unwrap();
+                assert!(matches!(
+                    guard.1.targets[0].state,
+                    crate::features::session::TargetState::Confirmed { id: 101, .. }
+                ));
+            }
+            events_started
+                .lock()
+                .unwrap()
+                .push(format!("start:{target}"));
+        };
+        let durable_confirmed = std::sync::Arc::clone(&durable);
+        let events_confirmed = std::sync::Arc::clone(&events);
+        let on_confirmed = move |item: &PublishedPr| {
+            let mut guard = durable_confirmed.lock().unwrap();
+            let mut next = guard.1.clone();
+            let target = next
+                .targets
+                .iter_mut()
+                .find(|target| target.target == item.target)
+                .expect("target persistido");
+            target.state = crate::features::session::TargetState::Confirmed {
+                id: item.id,
+                url: item.url.clone(),
+            };
+            guard.1 = guard.0.save(next).expect("receipt durável");
+            events_confirmed
                 .lock()
                 .unwrap()
                 .push(format!("confirmed:{}", item.target));
@@ -1255,5 +1315,14 @@ mod tests {
         assert_eq!(requests[1].method, "POST");
         assert_eq!(requests[2].method, "POST");
         server.join().expect("servidor");
+        drop(on_started);
+        drop(on_confirmed);
+        drop(durable);
+        let (_store, loaded) =
+            crate::features::session::SessionStore::open(&paths, id).expect("snapshot final");
+        assert!(matches!(
+            loaded.targets[0].state,
+            crate::features::session::TargetState::Confirmed { id: 101, .. }
+        ));
     }
 }

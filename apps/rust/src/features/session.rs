@@ -223,7 +223,25 @@ impl SessionSnapshot {
             if target.target.trim().is_empty() || names.contains(&target.target) {
                 return Err(invalid_session("targets vazios ou duplicados"));
             }
+            match &target.state {
+                TargetState::Confirmed { id, url } if *id <= 0 || !is_navigable_url(url) => {
+                    return Err(invalid_session("receipt confirmado inválido"));
+                }
+                TargetState::Pending
+                | TargetState::AttemptingOrUncertain { .. }
+                | TargetState::Confirmed { .. }
+                | TargetState::Failed { .. } => {}
+            }
             names.push(target.target.clone());
+        }
+        if self.target_oids.len() != names.len()
+            || names
+                .iter()
+                .any(|target| !self.target_oids.contains_key(target))
+        {
+            return Err(invalid_session(
+                "fingerprint não cobre exatamente os targets",
+            ));
         }
         if self.reviewers.len() != self.targets.len() {
             return Err(invalid_session(
@@ -369,7 +387,7 @@ impl SessionStore {
     pub fn discard_files(&self) -> Result<()> {
         let directory = self.directory.clone();
         let id = self.session_id;
-        for path in session_files(&directory, id)? {
+        for path in session_artifacts(&directory, id)? {
             fs::remove_file(path)?;
         }
         self.remove_lock_on_drop.set(true);
@@ -453,11 +471,18 @@ impl SessionStore {
         let path = paths
             .pop()
             .ok_or_else(|| invalid_session("sessão não encontrada"))?;
+        let expected_revision =
+            snapshot_revision(&path).ok_or_else(|| invalid_session("nome de snapshot inválido"))?;
         let mut contents = String::new();
         File::open(path)?.read_to_string(&mut contents)?;
         let snapshot: SessionSnapshot = serde_json::from_str(&contents)
             .map_err(|error| invalid_session(format!("snapshot inválido: {error}")))?;
         snapshot.validate()?;
+        if snapshot.revision != expected_revision {
+            return Err(invalid_session(
+                "revisão do snapshot não corresponde ao nome do arquivo",
+            ));
+        }
         Ok(snapshot)
     }
 
@@ -504,6 +529,26 @@ fn session_files(directory: &Path, id: Uuid) -> Result<Vec<PathBuf>> {
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().into_owned();
         if name.starts_with(&prefix) && name.ends_with(FILE_SUFFIX) {
+            files.push(path);
+        }
+    }
+    Ok(files)
+}
+
+fn session_artifacts(directory: &Path, id: Uuid) -> Result<Vec<PathBuf>> {
+    let prefix = format!("{FILE_PREFIX}{id}-");
+    if !directory.exists() {
+        return Ok(Vec::new());
+    }
+    let mut files = Vec::new();
+    for entry in fs::read_dir(directory)? {
+        let entry = entry?;
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let is_temporary = Path::new(&name)
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("tmp"));
+        if name.starts_with(&prefix) && (name.ends_with(FILE_SUFFIX) || is_temporary) {
             files.push(path);
         }
     }
@@ -586,7 +631,7 @@ fn civil_from_days(days_since_epoch: i64) -> (i64, u32, u32) {
 
 fn is_utc_rfc3339(value: &str) -> bool {
     let bytes = value.as_bytes();
-    bytes.len() == 20
+    if !(bytes.len() == 20
         && bytes[4] == b'-'
         && bytes[7] == b'-'
         && bytes[10] == b'T'
@@ -595,7 +640,46 @@ fn is_utc_rfc3339(value: &str) -> bool {
         && bytes[19] == b'Z'
         && bytes.iter().enumerate().all(|(index, byte)| {
             matches!(index, 4 | 7 | 10 | 13 | 16 | 19) || byte.is_ascii_digit()
-        })
+        }))
+    {
+        return false;
+    }
+    let number = |start: usize, end: usize| {
+        value
+            .get(start..end)
+            .and_then(|part| part.parse::<u32>().ok())
+    };
+    let (Some(year), Some(month), Some(day), Some(hour), Some(minute), Some(second)) = (
+        number(0, 4),
+        number(5, 7),
+        number(8, 10),
+        number(11, 13),
+        number(14, 16),
+        number(17, 19),
+    ) else {
+        return false;
+    };
+    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let days_in_month = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if leap => 29,
+        2 => 28,
+        _ => return false,
+    };
+    (1..=days_in_month).contains(&day) && hour < 24 && minute < 60 && second < 60
+}
+
+fn is_navigable_url(value: &str) -> bool {
+    let Some(host_and_path) = value
+        .strip_prefix("https://")
+        .or_else(|| value.strip_prefix("http://"))
+    else {
+        return false;
+    };
+    !host_and_path.is_empty()
+        && !host_and_path.starts_with('/')
+        && !value.chars().any(char::is_whitespace)
 }
 
 #[cfg(test)]
@@ -647,6 +731,22 @@ mod tests {
         let id = Uuid::parse_str(&id).expect("uuid");
         let (_store, loaded) = SessionStore::open(&paths, id).expect("load");
         assert_eq!(loaded.title, "Título");
+        assert_eq!(loaded.body, "Body");
+        assert_eq!(loaded.work_item_id, "42");
+        assert_eq!(loaded.source_branch, "feature/1");
+        assert_eq!(loaded.source_ref, "refs/heads/feature/1");
+        assert_eq!(loaded.source_oid, "a".repeat(40));
+        assert_eq!(loaded.target_oids["dev"], "b".repeat(40));
+        assert_eq!(loaded.reviewers, vec![String::new()]);
+        assert!(matches!(loaded.targets[0].state, TargetState::Pending));
+        assert_eq!(
+            Uuid::parse_str(&loaded.session_id)
+                .unwrap()
+                .get_version_num(),
+            4
+        );
+        assert!(is_utc_rfc3339(&loaded.created_at));
+        assert!(is_utc_rfc3339(&loaded.updated_at));
     }
 
     #[test]
@@ -661,6 +761,16 @@ mod tests {
         let list = SessionStore::list(&paths).expect("list");
         assert_eq!(list.len(), 2);
         assert!(list[0].updated_at >= list[1].updated_at);
+        assert!(list.iter().all(|item| {
+            !item.session_id.is_empty()
+                && !item.repository.is_empty()
+                && !item.source_branch.is_empty()
+                && is_utc_rfc3339(&item.updated_at)
+                && item.targets == vec![("dev".to_owned(), "pending")]
+        }));
+        if list[0].updated_at == list[1].updated_at {
+            assert!(list[0].session_id < list[1].session_id);
+        }
     }
 
     #[test]
@@ -676,7 +786,43 @@ mod tests {
                 .get_version_num(),
             4
         );
+        assert_eq!(encoded["targets"][0]["state"]["kind"], "pending");
+        for state in [
+            TargetState::Pending,
+            TargetState::AttemptingOrUncertain { message: None },
+            TargetState::Confirmed {
+                id: 7,
+                url: "https://example.test/pr/7".to_owned(),
+            },
+            TargetState::Failed {
+                message: "HTTP 403".to_owned(),
+            },
+        ] {
+            let kind = serde_json::to_value(state).expect("state json")["kind"]
+                .as_str()
+                .unwrap()
+                .to_owned();
+            assert!(matches!(
+                kind.as_str(),
+                "pending" | "attempting_or_uncertain" | "confirmed" | "failed"
+            ));
+        }
         assert!(encoded.get("azurePat").is_none());
+
+        let mut invalid = snapshot();
+        invalid.revision = 1;
+        invalid.created_at = "2026-02-30T12:00:00Z".to_owned();
+        assert!(invalid.validate().is_err());
+        invalid.created_at = "2026-02-28T12:00:00Z".to_owned();
+        invalid.updated_at = invalid.created_at.clone();
+        invalid.targets[0].state = TargetState::Confirmed {
+            id: 0,
+            url: String::new(),
+        };
+        assert!(invalid.validate().is_err());
+        invalid.targets[0].state = TargetState::Pending;
+        invalid.target_oids.clear();
+        assert!(invalid.validate().is_err());
     }
 
     #[test]
@@ -690,7 +836,7 @@ mod tests {
     #[test]
     fn snapshot_revision_is_atomic_and_recovers_previous_file() {
         let (_dir, paths) = paths();
-        let (_store, saved) = SessionStore::create(&paths, snapshot()).expect("create");
+        let (store, saved) = SessionStore::create(&paths, snapshot()).expect("create");
         let files: Vec<_> = fs::read_dir(paths.directory.join("sessions"))
             .expect("read")
             .filter_map(std::result::Result::ok)
@@ -705,6 +851,22 @@ mod tests {
                 .filter_map(std::result::Result::ok)
                 .all(|entry| entry.path().extension().is_none_or(|ext| ext != "tmp"))
         );
+        drop(store);
+        let (mut store, mut next) =
+            SessionStore::open(&paths, Uuid::parse_str(&saved.session_id).expect("uuid"))
+                .expect("reopen");
+        next.title = "Título 2".to_owned();
+        let saved = store.save(next).expect("second revision");
+        assert_eq!(saved.revision, 2);
+        let temp = store.temporary_path(3);
+        fs::write(&temp, b"interrupted before rename").expect("temporary write");
+        drop(store);
+        let (_store, recovered) =
+            SessionStore::open(&paths, Uuid::parse_str(&saved.session_id).expect("uuid"))
+                .expect("recover previous durable revision");
+        assert_eq!(recovered.revision, 2);
+        assert_eq!(recovered.title, "Título 2");
+        assert!(temp.exists());
     }
 
     #[test]
@@ -714,6 +876,10 @@ mod tests {
         let session_dir = fs::canonicalize(paths.directory.join("sessions")).expect("canonical");
         let config_dir = fs::canonicalize(paths.directory).expect("canonical");
         assert!(session_dir.starts_with(config_dir));
+        for entry in fs::read_dir(&session_dir).expect("read session files") {
+            let path = fs::canonicalize(entry.expect("entry").path()).expect("canonical file");
+            assert!(path.starts_with(&session_dir));
+        }
     }
 
     #[test]
@@ -722,8 +888,17 @@ mod tests {
         let initial = snapshot();
         let id = Uuid::parse_str(&initial.session_id).expect("uuid");
         let (store, _) = SessionStore::create(&paths, initial).expect("create");
+        let before = fs::read_dir(paths.directory.join("sessions"))
+            .expect("read")
+            .map(|entry| entry.expect("entry").path())
+            .collect::<Vec<_>>();
         let error = SessionStore::open(&paths, id).expect_err("lock must fail");
         assert!(error.to_string().contains("sessão já está em uso"));
+        let after = fs::read_dir(paths.directory.join("sessions"))
+            .expect("read")
+            .map(|entry| entry.expect("entry").path())
+            .collect::<Vec<_>>();
+        assert_eq!(before, after);
         drop(store);
     }
 
@@ -733,9 +908,12 @@ mod tests {
         let initial = snapshot();
         let id = Uuid::parse_str(&initial.session_id).expect("uuid");
         let (store, _) = SessionStore::create(&paths, initial).expect("create");
+        let temporary = store.temporary_path(2);
+        fs::write(&temporary, b"interrupted").expect("temporary");
         assert!(SessionStore::open(&paths, id).is_err());
         store.discard().expect("discard");
         assert!(!lock_path(&sessions_directory(&paths), id).exists());
+        assert!(!temporary.exists());
         assert!(SessionStore::open(&paths, id).is_err());
     }
 
@@ -754,7 +932,18 @@ mod tests {
             .map(|entry| entry.path())
             .find(|path| path.extension().is_some_and(|ext| ext == "json"))
             .expect("snapshot");
-        fs::write(path, b"not-json").expect("corrupt");
+        let valid = fs::read_to_string(&path).expect("valid snapshot");
+        fs::write(&path, b"not-json").expect("corrupt");
+        assert!(SessionStore::open(&paths, id).is_err());
+        fs::write(&path, &valid).expect("restore valid snapshot");
+        let mut json: serde_json::Value = serde_json::from_str(&valid).expect("json");
+        json["schemaVersion"] = serde_json::json!(2);
+        fs::write(&path, serde_json::to_vec(&json).expect("json")).expect("unknown schema");
+        assert!(SessionStore::open(&paths, id).is_err());
+        fs::write(&path, &valid).expect("restore valid snapshot");
+        json["schemaVersion"] = serde_json::json!(1);
+        json["unexpectedSecret"] = serde_json::json!("do-not-load");
+        fs::write(&path, serde_json::to_vec(&json).expect("json")).expect("unknown field");
         assert!(SessionStore::open(&paths, id).is_err());
     }
 
@@ -770,6 +959,17 @@ mod tests {
         drop(store);
         let (_store, loaded) = SessionStore::open(&paths, id).expect("previous snapshot");
         assert_eq!(loaded.revision, 1);
+
+        let initial = snapshot();
+        let id = Uuid::parse_str(&initial.session_id).expect("uuid");
+        let (store, saved) = SessionStore::create(&paths, initial).expect("second create");
+        let path = store.snapshot_path(saved.revision);
+        drop(store);
+        let mut json: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).expect("snapshot")).expect("json");
+        json["unknownField"] = serde_json::json!("must reject");
+        fs::write(&path, serde_json::to_vec(&json).expect("json")).expect("write unknown field");
+        assert!(SessionStore::open(&paths, id).is_err());
     }
 
     #[test]
@@ -791,15 +991,18 @@ mod tests {
     fn publish_is_blocked_when_attempting_snapshot_cannot_flush() {
         let (_dir, paths) = paths();
         let initial = snapshot();
+        let id = Uuid::parse_str(&initial.session_id).expect("uuid");
         let (mut store, saved) = SessionStore::create(&paths, initial).expect("create");
-        let mut invalid = saved;
-        invalid.targets.clear();
-        let error = store
-            .save(invalid)
-            .expect_err("invalid state must not flush");
-        assert!(error.to_string().contains("ao menos um target"));
+        assert!(matches!(saved.targets[0].state, TargetState::Pending));
+        let mut attempting = saved;
+        attempting.targets[0].state = TargetState::AttemptingOrUncertain { message: None };
+        let temporary = store.temporary_path(2);
+        fs::write(&temporary, b"write collision").expect("temporary");
+        let error = store.save(attempting).expect_err("durable write must fail");
+        assert!(!error.to_string().is_empty());
         drop(store);
-        assert_eq!(SessionStore::list(&paths).expect("list").len(), 1);
+        let (_store, loaded) = SessionStore::open(&paths, id).expect("previous snapshot");
+        assert_eq!(loaded.targets[0].state.label(), "pending");
     }
 
     #[test]
@@ -812,11 +1015,27 @@ mod tests {
             message: Some("receipt não persistida".to_owned()),
         };
         store.save(saved).expect("uncertain");
+        let remote_create_calls = std::sync::atomic::AtomicUsize::new(0);
+        remote_create_calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let temporary = store.temporary_path(3);
+        fs::write(&temporary, b"confirmation write collision").expect("temporary");
+        let mut confirmed = snapshot();
+        confirmed.session_id = id.to_string();
+        confirmed.revision = 2;
+        confirmed.targets[0].state = TargetState::Confirmed {
+            id: 99,
+            url: "https://example.test/pr/99".to_owned(),
+        };
+        assert!(store.save(confirmed).is_err());
         drop(store);
         let (_store, loaded) = SessionStore::open(&paths, id).expect("load");
         assert!(matches!(
             loaded.targets[0].state,
             TargetState::AttemptingOrUncertain { .. }
         ));
+        assert_eq!(
+            remote_create_calls.load(std::sync::atomic::Ordering::Relaxed),
+            1
+        );
     }
 }

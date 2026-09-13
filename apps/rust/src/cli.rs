@@ -739,11 +739,14 @@ mod tests {
     #[test]
     fn resume_flags_conflict_with_generation_and_publish_options() {
         for extra in [
+            "--source",
             "--provider",
             "--model",
-            "--temperature",
-            "--system-prompt",
-            "--prompt",
+            "--base-url",
+            "--api-key",
+            "--create",
+            "--dry-run",
+            "--raw",
             "--target",
             "--work-item",
             "--pr",
@@ -753,7 +756,14 @@ mod tests {
             let mut args = vec!["prt", "desc", "--resume", extra];
             if matches!(
                 extra,
-                "--provider" | "--model" | "--target" | "--work-item" | "--pr"
+                "--source"
+                    | "--provider"
+                    | "--model"
+                    | "--base-url"
+                    | "--api-key"
+                    | "--target"
+                    | "--work-item"
+                    | "--pr"
             ) {
                 args.push("value");
             }

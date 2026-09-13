@@ -101,14 +101,14 @@ impl GitContextFingerprint {
         if repository != self.repository || current_branch != self.source_branch {
             return FingerprintStatus::RepositoryOrBranchChanged;
         }
-        if ref_oid(&self.source_branch) != self.source_oid {
+        let source_oid = ref_oid(&self.source_branch);
+        if source_oid.is_empty() || self.source_oid.is_empty() || source_oid != self.source_oid {
             return FingerprintStatus::ObjectChanged;
         }
-        if self
-            .target_oids
-            .iter()
-            .any(|(target, expected)| ref_oid(target) != *expected)
-        {
+        if self.target_oids.iter().any(|(target, expected)| {
+            let actual = ref_oid(target);
+            actual.is_empty() || expected.is_empty() || actual != *expected
+        }) {
             return FingerprintStatus::ObjectChanged;
         }
         FingerprintStatus::Exact
@@ -677,10 +677,16 @@ mod tests {
         let mut changed = current.clone();
         changed.source_oid = "changed-oid".to_owned();
         assert_eq!(changed.compare_current(), FingerprintStatus::ObjectChanged);
-        if !current.source_oid.is_empty() {
-            changed.source_oid.clear();
-            assert_eq!(changed.compare_current(), FingerprintStatus::ObjectChanged);
-        }
+        changed.source_oid.clear();
+        assert_eq!(changed.compare_current(), FingerprintStatus::ObjectChanged);
+        let mut missing_target = current;
+        missing_target
+            .target_oids
+            .insert("missing-target".to_owned(), String::new());
+        assert_eq!(
+            missing_target.compare_current(),
+            FingerprintStatus::ObjectChanged
+        );
     }
 
     #[test]

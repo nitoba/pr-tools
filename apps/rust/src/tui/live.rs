@@ -279,6 +279,14 @@ impl SessionRuntime {
         Self { store, snapshot }
     }
 
+    fn save(&mut self, snapshot: SessionSnapshot) -> crate::error::Result<SessionSnapshot> {
+        self.store
+            .save(snapshot)
+            .map_err(|error| crate::error::AppError::Session {
+                message: error.to_string(),
+            })
+    }
+
     fn persist_app(&mut self, app: &DescribeApp) -> crate::error::Result<()> {
         let Some(content) = app.frozen_publish_content.as_ref().or(app.desc.as_ref()) else {
             return Ok(());
@@ -315,7 +323,7 @@ impl SessionRuntime {
                 _ => target.state.clone(),
             };
         }
-        self.snapshot = self.store.save(next)?;
+        self.snapshot = self.save(next)?;
         Ok(())
     }
 
@@ -329,7 +337,7 @@ impl SessionRuntime {
                 message: format!("target ausente no snapshot: {target}"),
             })?;
         target_state.state = TargetState::AttemptingOrUncertain { message: None };
-        self.snapshot = self.store.save(next)?;
+        self.snapshot = self.save(next)?;
         Ok(())
     }
 
@@ -346,7 +354,7 @@ impl SessionRuntime {
             id: item.id,
             url: item.url.clone(),
         };
-        self.snapshot = self.store.save(next)?;
+        self.snapshot = self.save(next)?;
         Ok(())
     }
 }
@@ -732,7 +740,8 @@ fn render_header(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
 fn render_body(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
     let show_context = app.phase == Phase::Review;
     let context_height = if show_context {
-        4 + u16::from(app.publish_context_warning.is_some())
+        let session_lines = u16::from(app.session_id.is_some()) * 2;
+        4 + session_lines + u16::from(app.publish_context_warning.is_some())
     } else {
         0
     };
@@ -3890,7 +3899,14 @@ mod tests {
             app.desc.as_ref().expect("description").title,
             snapshot.title
         );
+        assert_eq!(app.desc.as_ref().expect("description").body, snapshot.body);
+        assert_eq!(app.reviewers, snapshot.reviewers);
+        assert_eq!(app.work_item_id, snapshot.work_item_id);
+        assert_eq!(app.targets, vec!["dev", "sprint/12"]);
+        assert_eq!(app.target_state("dev"), "confirmed");
+        assert_eq!(app.target_state("sprint/12"), "pending");
         assert_eq!(app.published[0].id, 77);
+        assert_eq!(app.published[0].url, "https://example.test/pr/77");
         assert!(app.streamed_raw.is_empty());
     }
 

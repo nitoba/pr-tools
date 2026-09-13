@@ -49,7 +49,7 @@ Proof: `cargo test --manifest-path apps/rust/Cargo.toml --locked session::tests:
 
 Status: Implemented
 
-**C8** — `--resume` and `--session` reject every content-generation/publish modifier (`--provider`, `--model`, `--temperature`, `--system-prompt`, `--prompt`, `--target`, `--work-item`, `--pr`, `--no-copy`, `--no-create`) with exit code 2.
+**C8** — `--resume` and `--session` reject every supported content-generation/publish modifier (`--source`, `--provider`, `--model`, `--base-url`, `--api-key`, `--create`, `--dry-run`, `--raw`, `--target`, `--work-item`, `--pr`, `--no-copy`, `--no-create`) with exit code 2.
 
 Proof: `cargo test --manifest-path apps/rust/Cargo.toml --locked cli::tests::resume_flags_conflict_with_generation_and_publish_options`
 
