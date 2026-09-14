@@ -2,7 +2,7 @@
 source: src/tui/doctor_flow.rs
 expression: terminal.backend()
 ---
-"◆ prt 4.0.11  ·  doctor  ·  diagnóstico                                         "
+"◆ prt 6.0.1  ·  doctor  ·  diagnóstico                                          "
 "1 falha(s) e 1 aviso(s)  ·  ███████████████████████████████████████████  ·  100%"
 "╭ Checks (3) ──────────────────────────────────────────────────────────────────╮"
 "│ › ✔ Git  git 2.45.0                                                          │"

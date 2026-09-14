@@ -2,10 +2,10 @@
 # Instalador interativo do `prt` Rust — Linux e macOS.
 #
 #   curl -fsSL https://raw.githubusercontent.com/nitoba/pr-tools/main/scripts/install-rust.sh | bash
-#   PR_TOOLS_VERSION=v4.0.11 bash scripts/install-rust.sh
+#   PR_TOOLS_VERSION=v6.0.1 bash scripts/install-rust.sh
 #
 # Env (todos opcionais, têm precedência sobre as perguntas):
-#   PR_TOOLS_VERSION      tag (v4.0.11) ou 'latest' (padrão)
+#   PR_TOOLS_VERSION      tag (v6.0.1) ou 'latest' (padrão)
 #   PR_TOOLS_REPOSITORY   owner/repo (padrão: nitoba/pr-tools)
 #   PR_TOOLS_INSTALL_DIR  diretório de instalação (padrão: ~/.local/bin)
 #   PR_TOOLS_BINARY       usa um binário local em vez de baixar do GitHub
@@ -132,9 +132,10 @@ if [[ -z "$BINARY_PATH" ]]; then
   trap 'rm -rf "$TMP_DIR"' EXIT
   if [[ "$VERSION" == 'latest' ]]; then
     DOWNLOAD_URL="https://github.com/$REPOSITORY/releases/latest/download/$ASSET"
-    # Descobre a tag real só para exibir (best-effort).
-    TAG="$(curl --fail --silent --show-error --location --output /dev/null --write-out '%{url_effective}' \
-      "$DOWNLOAD_URL" 2>/dev/null | grep -o '[^/]*$' || true)"
+    # Descobre a tag real no primeiro redirect (best-effort).
+    TAG="$(curl --silent --show-error --location --max-redirs 0 --output /dev/null \
+      --write-out '%{redirect_url}' "$DOWNLOAD_URL" 2>/dev/null || true)"
+    TAG="$(printf '%s' "$TAG" | sed -n 's#.*/releases/download/\([^/]*\)/.*#\1#p')"
     [[ -n "$TAG" ]] && dim "  última release: $TAG"
   else
     TAG="v${VERSION#v}"

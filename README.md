@@ -23,7 +23,7 @@ Para instalar uma versão específica:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/nitoba/pr-tools/main/scripts/install.sh \
-  | PR_TOOLS_VERSION=v4.0.11 bash
+  | PR_TOOLS_VERSION=v6.0.1 bash
 ```
 
 Abra um novo terminal após a instalação. O instalador configura `.profile`/`.bashrc`, `.zprofile` ou `config.fish`, conforme o shell usado.

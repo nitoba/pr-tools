@@ -2,7 +2,7 @@
 source: src/tui/init_wizard.rs
 expression: terminal.backend()
 ---
-"◆ prt 4.0.11  ·  init  ·  configuração                                          "
+"◆ prt 6.0.1  ·  init  ·  configuração                                           "
 "Azure DevOps  ·  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  ·  0%"
 "╭──────────────────────────────────────────────────────────────────────────────╮"
 "│ ▸ Azure DevOps PAT  ·  dev.azure.com → User settings → Personal access token │"

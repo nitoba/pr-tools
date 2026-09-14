@@ -2,7 +2,7 @@
 source: src/tui/doctor_flow.rs
 expression: terminal.backend()
 ---
-"◆ prt 4.0.11  ·  doctor  ·  diagnóstico                                         "
+"◆ prt 6.0.1  ·  doctor  ·  diagnóstico                                          "
 "verificando ambiente…  ·  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░"
 "                                                                                "
 "                                                                                "

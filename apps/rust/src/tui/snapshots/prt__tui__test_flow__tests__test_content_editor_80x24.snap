@@ -2,7 +2,7 @@
 source: apps/rust/src/tui/test_flow.rs
 expression: terminal.backend()
 ---
-"◆ prt 4.0.11  ·  test  ·  revisão                                               "
+"◆ prt 6.0.1  ·  test  ·  revisão                                                "
 "╭ Editar conteúdo ─────────────────────────────────────────────────────────────╮"
 "│ RASCUNHO  ·  Test Case                                                       │"
 "│ Tab muda campo · Enter cria linha no body · setas navegam                    │"

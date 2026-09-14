@@ -2,7 +2,7 @@
 source: src/tui/test_flow.rs
 expression: terminal.backend()
 ---
-"◆ prt 4.0.11  ·  test  ·  gerando                                                                   "
+"◆ prt 6.0.1  ·  test  ·  gerando                                                                    "
 "card via IA…  ·  ███████████████████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  ·  42%"
 "╭ Card de teste ────────────────────────────────────────╮ ╭ ⚙ Settings ────────────────────────────╮"
 "│ # Card de teste                                     ▲ │ │   AreaPath  ·  ex.: MeuProjeto\Time    │"

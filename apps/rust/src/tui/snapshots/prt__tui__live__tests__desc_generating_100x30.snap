@@ -2,7 +2,7 @@
 source: src/tui/live.rs
 expression: terminal.backend()
 ---
-"◆ prt 4.0.11  ·  desc  ·  Geração via IA                                                            "
+"◆ prt 6.0.1  ·  desc  ·  Geração via IA                                                             "
 "streaming provider…  ·  ████████████████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  ·  42%"
 "╭──────────────────────────────────────────────────────────────────────────────────────────────────╮"
 "│ # Atualiza checkout                                                                            ▲ │"

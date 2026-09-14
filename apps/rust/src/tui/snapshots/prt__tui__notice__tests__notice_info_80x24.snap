@@ -2,7 +2,7 @@
 source: src/tui/notice.rs
 expression: terminal.backend()
 ---
-"● ◆ prt 4.0.11                                                                  "
+"● ◆ prt 6.0.1                                                                   "
 "╭ ◆ Teste ─────────────────────────────────────────────────────────────────────╮"
 "│ Operação concluída.                                                        ▲ │"
 "│ Revise o resumo acima.                                                     █ │"
