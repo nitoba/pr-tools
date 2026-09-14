@@ -3,7 +3,7 @@
 //! Precedência: CLI > env (`PR_AI_*`, `AZURE_PAT`, `PR_REVIEWER_*`, `TEST_CARD_*`)
 //! > dotenv (`.env`) > `config.json` > defaults.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -179,7 +179,7 @@ impl Default for Config {
     }
 }
 
-/// Caminhos de configuração (`~/.config/pr-tools/...` ou `$XDG_CONFIG_HOME`).
+/// Caminhos de configuração (`BaseDirs::config_dir()/pr-tools` ou `$XDG_CONFIG_HOME`).
 #[derive(Debug, Clone)]
 pub struct ConfigPaths {
     /// Diretório base.
@@ -195,12 +195,9 @@ pub struct ConfigPaths {
 /// Resolve os caminhos de configuração.
 #[must_use]
 pub fn config_paths() -> ConfigPaths {
-    let base = std::env::var("XDG_CONFIG_HOME").map_or_else(
-        |_| {
-            directories::BaseDirs::new()
-                .map_or_else(|| PathBuf::from("."), |d| d.home_dir().join(".config"))
-        },
-        PathBuf::from,
+    let base = config_base_dir(
+        std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from),
+        directories::BaseDirs::new().map(|dirs| dirs.config_dir().to_path_buf()),
     );
     let dir = base.join("pr-tools");
     ConfigPaths {
@@ -209,6 +206,40 @@ pub fn config_paths() -> ConfigPaths {
         template_file: dir.join("pr-template.md"),
         directory: dir,
     }
+}
+
+#[cfg(windows)]
+fn legacy_config_paths() -> Option<ConfigPaths> {
+    let dir = directories::BaseDirs::new()?
+        .home_dir()
+        .join(".config")
+        .join("pr-tools");
+    Some(ConfigPaths {
+        config_file: dir.join("config.json"),
+        env_file: dir.join(".env"),
+        template_file: dir.join("pr-template.md"),
+        directory: dir,
+    })
+}
+
+#[cfg(not(windows))]
+fn legacy_config_paths() -> Option<ConfigPaths> {
+    None
+}
+
+fn read_config_file(primary: &Path, legacy: Option<&Path>) -> Option<String> {
+    std::fs::read_to_string(primary)
+        .ok()
+        .or_else(|| legacy.and_then(|path| std::fs::read_to_string(path).ok()))
+}
+
+fn config_base_dir(
+    xdg_config_home: Option<PathBuf>,
+    platform_config_dir: Option<PathBuf>,
+) -> PathBuf {
+    xdg_config_home
+        .or(platform_config_dir)
+        .unwrap_or_else(|| PathBuf::from("."))
 }
 
 /// Aplica overrides da CLI sobre a config (precedência máxima).
@@ -247,9 +278,13 @@ pub fn apply_cli_overrides(
 /// Retorna [`crate::error::AppError::Config`] se o JSON for inválido.
 pub fn load_config() -> crate::error::Result<Config> {
     let paths = config_paths();
+    let legacy = legacy_config_paths();
     let mut config = Config::default();
 
-    if let Ok(raw) = std::fs::read_to_string(&paths.config_file) {
+    if let Some(raw) = read_config_file(
+        &paths.config_file,
+        legacy.as_ref().map(|paths| paths.config_file.as_path()),
+    ) {
         let file_cfg: Config =
             serde_json::from_str(&raw).map_err(|e| crate::error::AppError::Config {
                 message: format!("{}: {e}", paths.config_file.display()),
@@ -257,7 +292,10 @@ pub fn load_config() -> crate::error::Result<Config> {
         config = file_cfg;
     }
     // `.env` opcional (merge simples `KEY=VAL`).
-    if let Ok(raw) = std::fs::read_to_string(&paths.env_file) {
+    if let Some(raw) = read_config_file(
+        &paths.env_file,
+        legacy.as_ref().map(|paths| paths.env_file.as_path()),
+    ) {
         for line in raw.lines() {
             let line = line.trim();
             if line.is_empty() || line.starts_with('#') {
@@ -274,7 +312,10 @@ pub fn load_config() -> crate::error::Result<Config> {
         apply_env_kv(&mut config, &k, &v);
     }
     // Template em arquivo tem precedência sobre o JSON.
-    if let Ok(t) = std::fs::read_to_string(&paths.template_file) {
+    if let Some(t) = read_config_file(
+        &paths.template_file,
+        legacy.as_ref().map(|paths| paths.template_file.as_path()),
+    ) {
         if !t.trim().is_empty() {
             config.template = t;
         }
@@ -342,5 +383,29 @@ mod tests {
         assert_eq!(parse_dotenv_value("  \"token\"  "), "token");
         assert_eq!(parse_dotenv_value("'token'"), "token");
         assert_eq!(parse_dotenv_value("token"), "token");
+    }
+
+    #[test]
+    fn config_base_should_prefer_explicit_xdg_directory() {
+        let base = config_base_dir(
+            Some(PathBuf::from("/custom/config")),
+            Some(PathBuf::from("/platform/config")),
+        );
+        assert_eq!(base, PathBuf::from("/custom/config"));
+    }
+
+    #[test]
+    fn config_base_should_use_platform_directory_without_xdg_override() {
+        let base = config_base_dir(None, Some(PathBuf::from("C:/Users/test/AppData/Roaming")));
+        assert_eq!(base, PathBuf::from("C:/Users/test/AppData/Roaming"));
+    }
+
+    #[test]
+    fn config_paths_should_use_platform_config_directory() {
+        let expected = directories::BaseDirs::new()
+            .expect("diretórios base disponíveis")
+            .config_dir()
+            .join("pr-tools");
+        assert_eq!(config_paths().directory, expected);
     }
 }

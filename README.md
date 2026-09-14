@@ -54,7 +54,7 @@ O wizard pergunta:
 - modelo e thinking level do provider escolhido;
 - Base URL e API key quando o provider for OpenAI-compatible.
 
-A configuração fica em `~/.config/pr-tools/config.json` e `~/.config/pr-tools/.env` (ou em `XDG_CONFIG_HOME/pr-tools`). Os arquivos são criados com permissão restrita.
+A configuração fica no diretório de configuração do usuário (`%APPDATA%/pr-tools` no Windows, `~/.config/pr-tools` no Linux e `~/Library/Application Support/pr-tools` no macOS; `XDG_CONFIG_HOME/pr-tools` pode substituir no Linux). Os arquivos são criados com permissão restrita.
 
 Autentique os providers locais antes de usá-los:
 
