@@ -373,7 +373,9 @@ impl SessionStore {
     pub fn discard(mut self) -> Result<()> {
         self.discard_files()?;
         let lock_path = lock_path(&self.directory, self.session_id);
-        drop(self.lock.take());
+        if let Some(lock) = self.lock.take() {
+            let _ = FileExt::unlock(&lock);
+        }
         self.remove_lock_on_drop.set(false);
         let _ = fs::remove_file(lock_path);
         Ok(())
@@ -503,7 +505,9 @@ impl Drop for SessionStore {
     fn drop(&mut self) {
         let remove_lock = self.remove_lock_on_drop.get();
         let lock_path = lock_path(&self.directory, self.session_id);
-        drop(self.lock.take());
+        if let Some(lock) = self.lock.take() {
+            let _ = FileExt::unlock(&lock);
+        }
         if remove_lock {
             let _ = fs::remove_file(lock_path);
         }

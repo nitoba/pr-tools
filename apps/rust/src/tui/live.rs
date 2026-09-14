@@ -3912,10 +3912,12 @@ mod tests {
 
     #[test]
     fn successful_completion_removes_session_but_abort_keeps_it() {
-        let (_directory, paths, runtime, saved) = persisted_test_runtime();
-        let id = uuid::Uuid::parse_str(&saved.session_id).expect("uuid");
-        runtime.store.discard().expect("successful cleanup");
-        assert!(SessionStore::open(&paths, id).is_err());
+        {
+            let (_directory, paths, runtime, saved) = persisted_test_runtime();
+            let id = uuid::Uuid::parse_str(&saved.session_id).expect("uuid");
+            runtime.store.discard().expect("successful cleanup");
+            assert!(SessionStore::open(&paths, id).is_err());
+        }
 
         let (_directory, paths, runtime, saved) = persisted_test_runtime();
         let id = uuid::Uuid::parse_str(&saved.session_id).expect("uuid");

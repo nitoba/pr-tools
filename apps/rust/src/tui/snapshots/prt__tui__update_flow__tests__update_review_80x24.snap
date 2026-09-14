@@ -2,7 +2,7 @@
 source: apps/rust/src/tui/update_flow.rs
 expression: terminal.backend()
 ---
-"◆ prt 4.0.11  ·  desc --pr  ·  Revisão                                          "
+"◆ prt 6.0.1  ·  desc --pr  ·  Revisão                                           "
 "proposta pronta — conteúdo atual preservado  ·  ███████████████████████  ·  100%"
 "╭ Atual ───────────────────────────────╮╭ Proposta ────────────────────────────╮"
 "│ # Título atual                       ││ # Título proposto                    │"

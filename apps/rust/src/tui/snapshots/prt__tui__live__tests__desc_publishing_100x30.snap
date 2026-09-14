@@ -2,7 +2,7 @@
 source: src/tui/live.rs
 expression: terminal.backend()
 ---
-"◆ prt 4.0.11  ·  desc  ·  Publicação                                                                "
+"◆ prt 6.0.1  ·  desc  ·  Publicação                                                                 "
 "enviando descrição  ·  █████████████████████████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  ·  55%"
 "                                                                                                    "
 "                                                                                                    "

@@ -9,8 +9,8 @@ use uuid::Uuid;
 
 use crate::error::{AppError, Result};
 
-/// Versão da CLI (espelha `version` do Dart).
-pub const VERSION: &str = "4.0.11";
+/// Versão da CLI, mantida em sincronia com o pacote Rust publicado.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Providers de IA suportados.
 pub const PROVIDERS: &[&str] = &["codex", "opencode", "openai-compatible"];
