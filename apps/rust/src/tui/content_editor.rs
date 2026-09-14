@@ -13,6 +13,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Paragraph, Widget, Wrap},
 };
+use ratatui_textarea::{CursorMove, DataCursor, TextArea};
 use unicode_width::UnicodeWidthChar;
 
 use super::{ascii_only, modal_frame, theme};
@@ -109,8 +110,8 @@ pub struct TextEditor {
     scroll_row: usize,
     /// Primeira coluna visual visível.
     scroll_col: usize,
-    /// Coluna desejada durante movimento vertical.
-    preferred_column: Option<usize>,
+    /// Motor de edição e navegação fornecido por ratatui-textarea.
+    textarea: TextArea<'static>,
 }
 
 impl TextEditor {
@@ -118,15 +119,19 @@ impl TextEditor {
     #[must_use]
     pub fn new(value: impl Into<String>, single_line: bool) -> Self {
         let value = value.into();
-        let cursor = value.chars().count();
-        Self {
+        let mut textarea = TextArea::from(value.split('\n').map(str::to_owned));
+        textarea.move_cursor(CursorMove::Bottom);
+        textarea.move_cursor(CursorMove::End);
+        let mut editor = Self {
             value,
-            cursor,
+            cursor: 0,
             single_line,
             scroll_row: 0,
             scroll_col: 0,
-            preferred_column: None,
-        }
+            textarea,
+        };
+        editor.sync_from_textarea();
+        editor
     }
 
     /// Retorna o texto atual sem normalização.
@@ -143,12 +148,13 @@ impl TextEditor {
 
     /// Insere texto como foi recebido, respeitando a restrição single-line.
     pub fn insert_text(&mut self, text: &str) {
-        for character in text.chars() {
-            if self.single_line && matches!(character, '\n' | '\r') {
-                continue;
-            }
-            self.insert_char(character);
+        if self.single_line {
+            let filtered = text.replace(['\n', '\r'], "");
+            self.textarea.insert_str(filtered);
+        } else {
+            self.textarea.insert_str(text);
         }
+        self.sync_from_textarea();
     }
 
     /// Trata uma tecla de edição; retorna `true` quando a tecla foi consumida.
@@ -160,106 +166,59 @@ impl TextEditor {
         {
             return false;
         }
+        if self.single_line && key.code == KeyCode::Enter {
+            return true;
+        }
         match key.code {
-            KeyCode::Char(character) => {
-                self.insert_char(character);
-                true
-            }
-            KeyCode::Backspace => {
-                self.delete_before_cursor();
-                true
-            }
-            KeyCode::Delete => {
-                self.delete_at_cursor();
-                true
-            }
-            KeyCode::Left => {
-                self.cursor = self.cursor.saturating_sub(1);
-                self.reset_vertical_navigation();
-                true
-            }
-            KeyCode::Right => {
-                self.cursor = (self.cursor + 1).min(self.value.chars().count());
-                self.reset_vertical_navigation();
-                true
-            }
-            KeyCode::Up => {
-                self.move_vertical(-1);
-                true
-            }
-            KeyCode::Down => {
-                self.move_vertical(1);
-                true
-            }
-            KeyCode::Enter => {
-                self.handle_enter();
-                true
-            }
-            KeyCode::Home => {
-                let (line, _) = self.current_line_and_column();
-                self.cursor = self.line_starts()[line];
-                self.reset_vertical_navigation();
-                true
-            }
-            KeyCode::End => {
-                let (line, _) = self.current_line_and_column();
-                self.cursor = self.line_end(line);
-                self.reset_vertical_navigation();
-                true
-            }
             KeyCode::PageUp => {
                 self.scroll_row = self.scroll_row.saturating_sub(5);
-                true
+                return true;
             }
             KeyCode::PageDown => {
                 self.scroll_row = self.scroll_row.saturating_add(5);
-                true
+                return true;
             }
-            _ => false,
+            _ => {}
         }
+        let consumed = matches!(
+            key.code,
+            KeyCode::Char(_)
+                | KeyCode::Backspace
+                | KeyCode::Delete
+                | KeyCode::Left
+                | KeyCode::Right
+                | KeyCode::Up
+                | KeyCode::Down
+                | KeyCode::Enter
+                | KeyCode::Home
+                | KeyCode::End
+        );
+        if consumed {
+            let _ = self.textarea.input(key);
+            self.sync_from_textarea();
+        }
+        consumed
     }
 
     /// Insere uma quebra no body ou consome `Enter` no título.
     fn handle_enter(&mut self) {
         if !self.single_line {
-            self.insert_char('\n');
+            self.textarea.insert_newline();
+            self.sync_from_textarea();
         }
     }
 
-    fn insert_char(&mut self, character: char) {
-        if self.single_line && matches!(character, '\n' | '\r') {
-            return;
-        }
-        let byte = char_byte_index(&self.value, self.cursor);
-        self.value.insert(byte, character);
-        self.cursor += 1;
-        self.reset_vertical_navigation();
-    }
-
-    fn delete_before_cursor(&mut self) {
-        if self.cursor == 0 {
-            return;
-        }
-        let byte = char_byte_index(&self.value, self.cursor);
-        let previous = char_byte_index(&self.value, self.cursor - 1);
-        self.value.drain(previous..byte);
-        self.cursor -= 1;
-        self.reset_vertical_navigation();
-    }
-
-    fn delete_at_cursor(&mut self) {
-        let length = self.value.chars().count();
-        if self.cursor >= length {
-            return;
-        }
-        let byte = char_byte_index(&self.value, self.cursor);
-        let next = char_byte_index(&self.value, self.cursor + 1);
-        self.value.drain(byte..next);
-        self.reset_vertical_navigation();
-    }
-
-    fn reset_vertical_navigation(&mut self) {
-        self.preferred_column = None;
+    fn sync_from_textarea(&mut self) {
+        self.value = self.textarea.lines().join("\n");
+        let DataCursor(row, column) = self.textarea.cursor();
+        self.cursor = self
+            .textarea
+            .lines()
+            .iter()
+            .take(row)
+            .map(|line| line.chars().count() + 1)
+            .sum::<usize>()
+            + column;
     }
 
     fn line_starts(&self) -> Vec<usize> {
@@ -295,22 +254,6 @@ impl TextEditor {
             line,
             column.min(self.line_end(line).saturating_sub(starts[line])),
         )
-    }
-
-    fn move_vertical(&mut self, delta: isize) {
-        let (line, column) = self.current_line_and_column();
-        let desired = self.preferred_column.unwrap_or(column);
-        let target = if delta.is_negative() {
-            line.saturating_sub(delta.unsigned_abs())
-        } else {
-            line.saturating_add(delta.unsigned_abs())
-        };
-        let starts = self.line_starts();
-        let target = target.min(starts.len().saturating_sub(1));
-        let target_start = starts[target];
-        let target_column = desired.min(self.line_end(target).saturating_sub(target_start));
-        self.cursor = target_start + target_column;
-        self.preferred_column = Some(desired);
     }
 
     fn line_text(&self, line: usize) -> Vec<char> {
@@ -770,14 +713,6 @@ fn render_divider(area: Rect, buf: &mut Buffer) {
         theme().border,
     )))
     .render(area, buf);
-}
-
-/// Índice de byte do n-ésimo `char`, saturado no fim.
-fn char_byte_index(value: &str, char_index: usize) -> usize {
-    value
-        .char_indices()
-        .nth(char_index)
-        .map_or(value.len(), |(byte, _)| byte)
 }
 
 #[cfg(test)]

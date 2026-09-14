@@ -2,7 +2,7 @@
 name = "prt"
 version = "6.0.1"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.86"
 description = "CLI para gerar descrições de PR e Test Cases a partir do contexto Git (Azure DevOps)"
 license = "MIT"
 
@@ -38,6 +38,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 unicode-width = "0.2"
 uuid = { version = "1", features = ["v4"] }
 ratatui = "0.30"
+ratatui-textarea = "0.9.2"
 tui-shimmer = { git = "https://github.com/vinhnx/tui-shimmer", tag = "v0.1.4" }
 aisdk = { version = "0.5", features = ["openai", "openaicompatible"] }
 schemars = "1"
