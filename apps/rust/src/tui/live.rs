@@ -3261,7 +3261,7 @@ mod tests {
         let backend = TestBackend::new(100, 30);
         let mut terminal = Terminal::new(backend)?;
         terminal.draw(|f| f.render_widget(&app, f.area()))?;
-        insta::assert_snapshot!("desc_content_editor_100x30", terminal.backend());
+        crate::assert_tui_snapshot!("desc_content_editor_100x30", terminal.backend());
         Ok(())
     }
 
@@ -3272,7 +3272,7 @@ mod tests {
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend)?;
         terminal.draw(|f| f.render_widget(&app, f.area()))?;
-        insta::assert_snapshot!("desc_content_editor_80x24", terminal.backend());
+        crate::assert_tui_snapshot!("desc_content_editor_80x24", terminal.backend());
         Ok(())
     }
 
@@ -3282,7 +3282,7 @@ mod tests {
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend)?;
         terminal.draw(|f| f.render_widget(&app, f.area()))?;
-        insta::assert_snapshot!("desc_review_80x24", terminal.backend());
+        crate::assert_tui_snapshot!("desc_review_80x24", terminal.backend());
         Ok(())
     }
 
@@ -3292,7 +3292,7 @@ mod tests {
         let backend = TestBackend::new(100, 30);
         let mut terminal = Terminal::new(backend)?;
         terminal.draw(|f| f.render_widget(&app, f.area()))?;
-        insta::assert_snapshot!("desc_review_100x30", terminal.backend());
+        crate::assert_tui_snapshot!("desc_review_100x30", terminal.backend());
         Ok(())
     }
 
@@ -3309,7 +3309,7 @@ mod tests {
         let backend = TestBackend::new(100, 30);
         let mut terminal = Terminal::new(backend)?;
         terminal.draw(|f| f.render_widget(&app, f.area()))?;
-        insta::assert_snapshot!("desc_boot_100x30", terminal.backend());
+        crate::assert_tui_snapshot!("desc_boot_100x30", terminal.backend());
         Ok(())
     }
 
@@ -3332,7 +3332,7 @@ mod tests {
         let backend = TestBackend::new(100, 30);
         let mut terminal = Terminal::new(backend)?;
         terminal.draw(|f| f.render_widget(&app, f.area()))?;
-        insta::assert_snapshot!("desc_generating_100x30", terminal.backend());
+        crate::assert_tui_snapshot!("desc_generating_100x30", terminal.backend());
         Ok(())
     }
 
@@ -3347,7 +3347,7 @@ mod tests {
         let backend = TestBackend::new(100, 30);
         let mut terminal = Terminal::new(backend)?;
         terminal.draw(|f| f.render_widget(&app, f.area()))?;
-        insta::assert_snapshot!("desc_publishing_100x30", terminal.backend());
+        crate::assert_tui_snapshot!("desc_publishing_100x30", terminal.backend());
         Ok(())
     }
 
@@ -3364,7 +3364,7 @@ mod tests {
         let backend = TestBackend::new(100, 30);
         let mut terminal = Terminal::new(backend)?;
         terminal.draw(|f| f.render_widget(&app, f.area()))?;
-        insta::assert_snapshot!("desc_done_100x30", terminal.backend());
+        crate::assert_tui_snapshot!("desc_done_100x30", terminal.backend());
         Ok(())
     }
 
@@ -3785,7 +3785,7 @@ mod tests {
         let backend = TestBackend::new(100, 30);
         let mut terminal = Terminal::new(backend)?;
         terminal.draw(|f| f.render_widget(&app, f.area()))?;
-        insta::assert_snapshot!("desc_error_100x30", terminal.backend());
+        crate::assert_tui_snapshot!("desc_error_100x30", terminal.backend());
         Ok(())
     }
 
@@ -3795,7 +3795,7 @@ mod tests {
         let backend = TestBackend::new(50, 15);
         let mut terminal = Terminal::new(backend)?;
         terminal.draw(|f| f.render_widget(&app, f.area()))?;
-        insta::assert_snapshot!("desc_too_small_50x15", terminal.backend());
+        crate::assert_tui_snapshot!("desc_too_small_50x15", terminal.backend());
         Ok(())
     }
 
@@ -3862,7 +3862,7 @@ mod tests {
         let backend = TestBackend::new(100, 30);
         let mut terminal = Terminal::new(backend)?;
         terminal.draw(|f| f.render_widget(&app, f.area()))?;
-        insta::assert_snapshot!("desc_reviewers_dialog_100x30", terminal.backend());
+        crate::assert_tui_snapshot!("desc_reviewers_dialog_100x30", terminal.backend());
         Ok(())
     }
 
@@ -3875,7 +3875,7 @@ mod tests {
         let backend = TestBackend::new(100, 30);
         let mut terminal = Terminal::new(backend)?;
         terminal.draw(|f| f.render_widget(&app, f.area()))?;
-        insta::assert_snapshot!("desc_confirm_publish_100x30", terminal.backend());
+        crate::assert_tui_snapshot!("desc_confirm_publish_100x30", terminal.backend());
         Ok(())
     }
 
@@ -3893,7 +3893,7 @@ mod tests {
         let backend = TestBackend::new(100, 30);
         let mut terminal = Terminal::new(backend)?;
         terminal.draw(|f| f.render_widget(&app, f.area()))?;
-        insta::assert_snapshot!(
+        crate::assert_tui_snapshot!(
             "desc_confirm_publish_multiple_targets_100x30",
             terminal.backend()
         );

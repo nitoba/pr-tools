@@ -1,8 +1,8 @@
 ---
-source: src/tui/doctor_flow.rs
-expression: terminal.backend()
+source: apps/rust/src/tui/doctor_flow.rs
+expression: "$crate :: tui :: snapshot_value(terminal.backend())"
 ---
-"◆ prt 6.0.1  ·  doctor  ·  diagnóstico                                          "
+"◆ prt <version>  ·  doctor  ·  diagnóstico                                          "
 "verificando ambiente…  ·  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░"
 "                                                                                "
 "                                                                                "

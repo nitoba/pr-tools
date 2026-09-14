@@ -1,8 +1,8 @@
 ---
-source: src/tui/live.rs
-expression: terminal.backend()
+source: apps/rust/src/tui/live.rs
+expression: "$crate :: tui :: snapshot_value(terminal.backend())"
 ---
-"◆ prt 6.0.1  ·  desc  ·  Publicação                                                                 "
+"◆ prt <version>  ·  desc  ·  Publicação                                                                 "
 "enviando descrição  ·  █████████████████████████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  ·  55%"
 "                                                                                                    "
 "                                                                                                    "

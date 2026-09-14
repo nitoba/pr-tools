@@ -1,8 +1,8 @@
 ---
-source: src/tui/live.rs
-expression: terminal.backend()
+source: apps/rust/src/tui/live.rs
+expression: "$crate :: tui :: snapshot_value(terminal.backend())"
 ---
-"◆ prt 6.0.1  ·  desc  ·  Revisão                                                "
+"◆ prt <version>  ·  desc  ·  Revisão                                                "
 "descrição pronta  ·  ██████████████████████████████████████████████████  ·  100%"
 "╭ Body do PR · 159/4000 ✓ ─────────────────────────────────────────────────────╮"
 "│ # Atualiza fluxo de checkout                                               ▲ │"

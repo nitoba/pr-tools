@@ -1,8 +1,8 @@
 ---
-source: src/tui/notice.rs
-expression: terminal.backend()
+source: apps/rust/src/tui/notice.rs
+expression: "$crate :: tui :: snapshot_value(terminal.backend())"
 ---
-"● ◆ prt 6.0.1                                                                   "
+"● ◆ prt <version>                                                                   "
 "╭ ◆ Teste ─────────────────────────────────────────────────────────────────────╮"
 "│ Operação concluída.                                                        ▲ │"
 "│ Revise o resumo acima.                                                     █ │"

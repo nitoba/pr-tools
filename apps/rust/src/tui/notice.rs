@@ -316,7 +316,7 @@ mod tests {
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend)?;
         terminal.draw(|f| f.render_widget(&notice, f.area()))?;
-        insta::assert_snapshot!("notice_info_80x24", terminal.backend());
+        crate::assert_tui_snapshot!("notice_info_80x24", terminal.backend());
         Ok(())
     }
 }

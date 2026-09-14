@@ -31,6 +31,21 @@ use ratatui::{
 
 use self::shimmer::{filled_cells, percent_u16, shimmer_bar, shimmer_text};
 
+#[cfg(test)]
+/// Formats a TUI snapshot with the package version redacted.
+pub fn snapshot_value(value: &impl std::fmt::Display) -> String {
+    value.to_string().replace(crate::cli::VERSION, "<version>")
+}
+
+#[cfg(test)]
+/// Asserts a TUI snapshot while ignoring the release-specific package version.
+#[macro_export]
+macro_rules! assert_tui_snapshot {
+    ($name:expr, $value:expr) => {
+        insta::assert_snapshot!($name, $crate::tui::snapshot_value($value));
+    };
+}
+
 /// Tema global da TUI.
 #[derive(Debug, Clone, Copy)]
 pub struct Theme {

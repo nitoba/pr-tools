@@ -1109,7 +1109,7 @@ mod tests {
         let app = review_app();
         let mut terminal = Terminal::new(TestBackend::new(80, 24))?;
         terminal.draw(|frame| frame.render_widget(&app, frame.area()))?;
-        insta::assert_snapshot!("update_review_80x24", terminal.backend());
+        crate::assert_tui_snapshot!("update_review_80x24", terminal.backend());
         Ok(())
     }
 
@@ -1119,7 +1119,7 @@ mod tests {
         app.open_content_edit();
         let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
         terminal.draw(|frame| frame.render_widget(&app, frame.area()))?;
-        insta::assert_snapshot!("update_editor_100x30", terminal.backend());
+        crate::assert_tui_snapshot!("update_editor_100x30", terminal.backend());
         Ok(())
     }
 }
