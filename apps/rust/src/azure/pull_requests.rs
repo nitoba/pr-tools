@@ -1203,6 +1203,59 @@ mod tests {
         server.join().unwrap();
     }
 
+    type DurableReceipt = std::sync::Arc<
+        std::sync::Mutex<(
+            crate::features::session::SessionStore,
+            crate::features::session::SessionSnapshot,
+        )>,
+    >;
+
+    fn durable_receipt_fixture(
+        remote: &crate::git::RepositoryRemote,
+        targets: &[String],
+    ) -> (
+        tempfile::TempDir,
+        crate::config::ConfigPaths,
+        uuid::Uuid,
+        DurableReceipt,
+        std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    ) {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let paths = crate::config::ConfigPaths {
+            directory: directory.path().join("pr-tools"),
+            config_file: directory.path().join("pr-tools/config.json"),
+            env_file: directory.path().join("pr-tools/.env"),
+            template_file: directory.path().join("pr-tools/pr-template.md"),
+        };
+        let fingerprint = crate::git::GitContextFingerprint {
+            repository: "C:\\repo".to_owned(),
+            source_branch: "feature/42".to_owned(),
+            source_oid: "a".repeat(40),
+            target_oids: std::collections::BTreeMap::from([
+                ("dev".to_owned(), "b".repeat(40)),
+                ("sprint/12".to_owned(), "c".repeat(40)),
+            ]),
+        };
+        let snapshot = crate::features::session::SessionSnapshot::new(
+            fingerprint.repository.clone(),
+            Some(remote),
+            fingerprint.source_branch.clone(),
+            "refs/heads/feature/42".to_owned(),
+            &fingerprint,
+            "Título".to_owned(),
+            "Descrição".to_owned(),
+            String::new(),
+            vec![String::new(), String::new()],
+            targets.to_vec(),
+        );
+        let id = uuid::Uuid::parse_str(&snapshot.session_id).expect("uuid");
+        let (store, saved) =
+            crate::features::session::SessionStore::create(&paths, snapshot).expect("session");
+        let durable = std::sync::Arc::new(std::sync::Mutex::new((store, saved)));
+        let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        (directory, paths, id, durable, events)
+    }
+
     #[tokio::test]
     async fn confirmed_receipt_is_persisted_before_next_target() {
         let (base_url, requests, server) = spawn_json_server(vec![
@@ -1225,40 +1278,8 @@ mod tests {
             repository: "repo".to_owned(),
         };
         let targets = ["dev".to_owned(), "sprint/12".to_owned()];
-        let directory = tempfile::tempdir().expect("tempdir");
-        let paths = crate::config::ConfigPaths {
-            directory: directory.path().join("pr-tools"),
-            config_file: directory.path().join("pr-tools/config.json"),
-            env_file: directory.path().join("pr-tools/.env"),
-            template_file: directory.path().join("pr-tools/pr-template.md"),
-        };
-        let fingerprint = crate::git::GitContextFingerprint {
-            repository: "C:\\repo".to_owned(),
-            source_branch: "feature/42".to_owned(),
-            source_oid: "a".repeat(40),
-            target_oids: std::collections::BTreeMap::from([
-                ("dev".to_owned(), "b".repeat(40)),
-                ("sprint/12".to_owned(), "c".repeat(40)),
-            ]),
-        };
-        let snapshot = crate::features::session::SessionSnapshot::new(
-            fingerprint.repository.clone(),
-            Some(&remote),
-            fingerprint.source_branch.clone(),
-            "refs/heads/feature/42".to_owned(),
-            &fingerprint,
-            "Título".to_owned(),
-            "Descrição".to_owned(),
-            String::new(),
-            vec![String::new(), String::new()],
-            targets.to_vec(),
-        );
-        let id = uuid::Uuid::parse_str(&snapshot.session_id).expect("uuid");
-        let (store, saved) =
-            crate::features::session::SessionStore::create(&paths, snapshot).expect("session");
-        let durable = std::sync::Arc::new(std::sync::Mutex::new((store, saved)));
+        let (_directory, paths, id, durable, events) = durable_receipt_fixture(&remote, &targets);
         let durable_started = std::sync::Arc::clone(&durable);
-        let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let events_started = std::sync::Arc::clone(&events);
         let on_started = move |target: &str| {
             if target == "sprint/12" {

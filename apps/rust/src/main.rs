@@ -54,7 +54,7 @@ async fn main() {
     }
 
     let result = match options.command {
-        prt::cli::Command::Desc => run_desc(&options).await,
+        prt::cli::Command::Desc => Box::pin(run_desc(&options)).await,
         prt::cli::Command::Test => run_test(&options).await,
         prt::cli::Command::Init => run_init(&options).await,
         prt::cli::Command::Doctor => run_doctor(&options).await,
