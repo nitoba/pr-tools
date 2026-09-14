@@ -1,8 +1,8 @@
 ---
 source: apps/rust/src/tui/update_flow.rs
-expression: terminal.backend()
+expression: "$crate :: tui :: snapshot_value(terminal.backend())"
 ---
-"◆ prt 6.0.1  ·  desc --pr  ·  Revisão                                           "
+"◆ prt <version>  ·  desc --pr  ·  Revisão                                           "
 "proposta pronta — conteúdo atual preservado  ·  ███████████████████████  ·  100%"
 "╭ Atual ───────────────────────────────╮╭ Proposta ────────────────────────────╮"
 "│ # Título atual                       ││ # Título proposto                    │"

@@ -596,7 +596,7 @@ mod tests {
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend)?;
         terminal.draw(|f| render_app(&mut app, f.area(), f.buffer_mut()))?;
-        insta::assert_snapshot!("doctor_checking_80x24", terminal.backend());
+        crate::assert_tui_snapshot!("doctor_checking_80x24", terminal.backend());
         Ok(())
     }
 
@@ -607,7 +607,7 @@ mod tests {
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend)?;
         terminal.draw(|f| render_app(&mut app, f.area(), f.buffer_mut()))?;
-        insta::assert_snapshot!("doctor_ready_80x24", terminal.backend());
+        crate::assert_tui_snapshot!("doctor_ready_80x24", terminal.backend());
         Ok(())
     }
 

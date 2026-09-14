@@ -1,8 +1,8 @@
 ---
-source: src/tui/init_wizard.rs
-expression: terminal.backend()
+source: apps/rust/src/tui/init_wizard.rs
+expression: "$crate :: tui :: snapshot_value(terminal.backend())"
 ---
-"◆ prt 6.0.1  ·  init  ·  configuração                       "
+"◆ prt <version>  ·  init  ·  configuração                       "
 "Azure DevOps  ·  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  ·  0%"
 "╭──────────────────────────────────────────────────────────╮"
 "│ ▸ Azure DevOps PAT  ·  dev.azure.com → User settings → P │"

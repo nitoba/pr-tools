@@ -1382,7 +1382,7 @@ mod tests {
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend)?;
         terminal.draw(|f| f.render_widget(&app, f.area()))?;
-        insta::assert_snapshot!("init_azure_80x24", terminal.backend());
+        crate::assert_tui_snapshot!("init_azure_80x24", terminal.backend());
         Ok(())
     }
 
@@ -1393,7 +1393,7 @@ mod tests {
         let backend = TestBackend::new(60, 22);
         let mut terminal = Terminal::new(backend)?;
         terminal.draw(|f| f.render_widget(&app, f.area()))?;
-        insta::assert_snapshot!("init_azure_60x22", terminal.backend());
+        crate::assert_tui_snapshot!("init_azure_60x22", terminal.backend());
         Ok(())
     }
 }

@@ -1,8 +1,8 @@
 ---
-source: src/tui/test_flow.rs
-expression: terminal.backend()
+source: apps/rust/src/tui/test_flow.rs
+expression: "$crate :: tui :: snapshot_value(terminal.backend())"
 ---
-"◆ prt 6.0.1  ·  test  ·  gerando                                                                    "
+"◆ prt <version>  ·  test  ·  gerando                                                                    "
 "card via IA…  ·  ███████████████████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  ·  42%"
 "╭ Card de teste ────────────────────────────────────────╮ ╭ ⚙ Settings ────────────────────────────╮"
 "│ # Card de teste                                     ▲ │ │   AreaPath  ·  ex.: MeuProjeto\Time    │"
