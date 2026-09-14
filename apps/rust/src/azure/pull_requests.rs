@@ -17,7 +17,10 @@ pub const MAX_CHANGES: usize = 200;
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct PullRequest {
     /// ID do PR (`pullRequestId`).
-    #[serde(rename = "pullRequestId")]
+    #[serde(
+        deserialize_with = "crate::azure::deserialize_i64_or_string",
+        rename = "pullRequestId"
+    )]
     pub pull_request_id: i64,
     /// Título.
     #[serde(default, deserialize_with = "string_or_empty")]
@@ -92,6 +95,7 @@ struct ChangeItem {
 #[derive(Debug, Clone, Deserialize)]
 struct Iteration {
     /// ID da iteração.
+    #[serde(deserialize_with = "crate::azure::deserialize_i64_or_string")]
     id: i64,
 }
 
@@ -108,6 +112,7 @@ struct ValueList<T> {
 #[derive(Debug, Deserialize)]
 struct LinkedRef {
     /// ID.
+    #[serde(deserialize_with = "crate::azure::deserialize_i64_or_string")]
     id: i64,
 }
 
@@ -123,7 +128,11 @@ struct ChangesList {
 #[derive(Debug, Clone, Deserialize)]
 struct PullRequestListItem {
     /// ID do PR.
-    #[serde(default, rename = "pullRequestId")]
+    #[serde(
+        default,
+        deserialize_with = "crate::azure::deserialize_i64_or_string",
+        rename = "pullRequestId"
+    )]
     pull_request_id: i64,
     /// Título.
     #[serde(default, deserialize_with = "string_or_empty")]
@@ -313,7 +322,10 @@ struct IdentityItem {
 #[derive(Debug, Clone, Deserialize)]
 pub struct CreatedPullRequest {
     /// ID (`pullRequestId`).
-    #[serde(rename = "pullRequestId")]
+    #[serde(
+        deserialize_with = "crate::azure::deserialize_i64_or_string",
+        rename = "pullRequestId"
+    )]
     pub pull_request_id: i64,
     /// URL (`url`).
     #[serde(default, deserialize_with = "string_or_empty")]
@@ -870,7 +882,7 @@ mod tests {
     #[test]
     fn pull_request_should_deserialize_azure_payload() {
         let pr: PullRequest = serde_json::from_value(serde_json::json!({
-            "pullRequestId": 42,
+            "pullRequestId": "42",
             "title": "Corrige fluxo",
             "description": null,
             "sourceRefName": "refs/heads/feature/1",
