@@ -1,0 +1,13 @@
+---
+source: apps/rust/src/tui/live.rs
+expression: "$crate :: tui :: snapshot_value(terminal.backend())"
+---
+"╭ prt · desc --resume ─────────────────╮"
+"│        Terminal muito pequeno        │"
+"│ A sessão precisa de pelo menos 44×10.│"
+"│   Aumente a janela para continuar.   │"
+"│                                      │"
+"│                                      │"
+"│                                      │"
+"│                                      │"
+"╰──────────────────────────────────────╯"

@@ -185,10 +185,12 @@ pub fn checkbox(checked: bool) -> &'static str {
 
 /// Renderiza header `◆ prt vX — subtítulo`.
 pub fn header(area: Rect, buf: &mut Buffer, subtitle: &str) {
+    let brand = if ascii_only() { "prt " } else { "◆ prt " };
+    let separator = if ascii_only() { " - " } else { "  ·  " };
     let line = Line::from(vec![
-        Span::styled("◆ prt ", theme().app_title),
+        Span::styled(brand, theme().app_title),
         Span::styled(crate::cli::VERSION, theme().muted),
-        Span::styled(format!("  ·  {subtitle}"), theme().muted),
+        Span::styled(format!("{separator}{subtitle}"), theme().muted),
     ]);
     Paragraph::new(line).render(area, buf);
 }
