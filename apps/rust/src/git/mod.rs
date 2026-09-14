@@ -275,6 +275,17 @@ fn pull_request_ranges(source: &str, target: &str) -> (String, String) {
     )
 }
 
+/// Separa host e caminho de um remote HTTPS, descartando o `userinfo`
+/// opcional que o Git Credential Manager pode persistir no Windows.
+fn https_remote_parts(url: &str) -> Option<(&str, &str)> {
+    let rest = url.trim().strip_prefix("https://")?;
+    let (authority, path) = rest.split_once('/').unwrap_or((rest, ""));
+    let host = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    Some((host, path))
+}
+
 /// Faz parse do remote `origin` (ssh, modern e legacy) para Azure.
 #[must_use]
 pub fn parse_azure_remote(url: &str) -> Option<RepositoryRemote> {
@@ -289,8 +300,10 @@ pub fn parse_azure_remote(url: &str) -> Option<RepositoryRemote> {
             });
         }
     }
-    // modern: https://dev.azure.com/org/project/_git/repo
-    if let Some(rest) = url.strip_prefix("https://dev.azure.com/") {
+    // modern: https://[userinfo@]dev.azure.com/org/project/_git/repo
+    if let Some((host, rest)) = https_remote_parts(url)
+        && host.eq_ignore_ascii_case("dev.azure.com")
+    {
         let rest = rest.trim_end_matches(".git");
         let parts: Vec<&str> = rest.split("/_git/").collect();
         if parts.len() == 2 {
@@ -304,19 +317,20 @@ pub fn parse_azure_remote(url: &str) -> Option<RepositoryRemote> {
             }
         }
     }
-    // legacy: https://org.visualstudio.com/project/_git/repo
-    if let Some(rest) = url.strip_prefix("https://") {
-        if let Some(org) = rest.strip_suffix(".visualstudio.com") {
+    // legacy: https://[userinfo@]org.visualstudio.com/project/_git/repo
+    if let Some((host, path)) = https_remote_parts(url) {
+        if path.is_empty()
+            && let Some(org) = host.strip_suffix(".visualstudio.com")
+        {
             return Some(RepositoryRemote {
                 organization: org.to_owned(),
                 project: String::new(),
                 repository: String::new(),
             });
         }
-        if rest.contains(".visualstudio.com/") {
-            let (org, tail) = rest.split_once(".visualstudio.com/").unwrap_or(("", ""));
-            let repo = tail.split("/_git/").last().unwrap_or("").to_owned();
-            let project = tail.split("/_git/").next().unwrap_or("").to_owned();
+        if let Some(org) = host.strip_suffix(".visualstudio.com") {
+            let repo = path.split("/_git/").last().unwrap_or("").to_owned();
+            let project = path.split("/_git/").next().unwrap_or("").to_owned();
             return Some(RepositoryRemote {
                 organization: org.to_owned(),
                 project,
@@ -527,6 +541,37 @@ mod tests {
         let r = parse_azure_remote("https://dev.azure.com/minhaorg/meuproj/_git/meurepo").unwrap();
         assert_eq!(r.organization, "minhaorg");
         assert_eq!(r.repository, "meurepo");
+    }
+
+    #[test]
+    fn remote_should_parse_modern_https_with_embedded_username() {
+        let r = parse_azure_remote(
+            "https://ibsbiosistemico@dev.azure.com/ibsbiosistemico/AGROTRACE/_git/agrotrace-v3",
+        )
+        .unwrap();
+
+        assert_eq!(
+            r,
+            RepositoryRemote {
+                organization: "ibsbiosistemico".to_owned(),
+                project: "AGROTRACE".to_owned(),
+                repository: "agrotrace-v3".to_owned(),
+            }
+        );
+    }
+
+    #[test]
+    fn remote_should_parse_https_credentials_and_legacy_host() {
+        let modern =
+            parse_azure_remote("https://user:password@dev.azure.com/org/project/_git/repo.git")
+                .unwrap();
+        assert_eq!(modern.repository, "repo");
+
+        let legacy =
+            parse_azure_remote("https://user@org.visualstudio.com/project/_git/repo").unwrap();
+        assert_eq!(legacy.organization, "org");
+        assert_eq!(legacy.project, "project");
+        assert_eq!(legacy.repository, "repo");
     }
 
     #[test]
