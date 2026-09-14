@@ -569,6 +569,7 @@ async fn run_init(_options: &prt::cli::CliOptions) -> anyhow::Result<()> {
     if !std::io::IsTerminal::is_terminal(&std::io::stdout()) {
         let res = prt::features::init::ensure_defaults().map_err(anyhow::Error::new)?;
         eprintln!("Config salva em {}", res.config_file);
+        eprintln!(".env salvo em {}", res.env_file);
         return Ok(());
     }
     match run_init_wizard().await {

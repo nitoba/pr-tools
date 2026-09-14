@@ -1019,6 +1019,10 @@ fn render_success(wiz: &InitWizard, area: Rect, buf: &mut Buffer) {
             Span::styled(res.config_file.clone(), Style::new()),
         ]),
         Line::from(vec![
+            Span::styled(".env     ", theme().muted),
+            Span::styled(res.env_file.clone(), Style::new()),
+        ]),
+        Line::from(vec![
             Span::styled("pat      ", theme().muted),
             Span::styled(secret_state(res.pat_configured), Style::new()),
         ]),

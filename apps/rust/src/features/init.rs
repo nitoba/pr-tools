@@ -226,6 +226,8 @@ pub struct InitResult {
     pub pat_configured: bool,
     /// Caminhos usados (para exibir).
     pub config_file: String,
+    /// Arquivo `.env` usado para segredos e overrides.
+    pub env_file: String,
 }
 
 /// Salva o rascunho: `config.json` (0600) + merge `.env` + template.
@@ -271,6 +273,7 @@ pub fn save_draft(draft: &InitDraft) -> Result<InitResult> {
         saved: true,
         pat_configured: !cfg.azure_pat.is_empty(),
         config_file: paths.config_file.display().to_string(),
+        env_file: paths.env_file.display().to_string(),
     })
 }
 
