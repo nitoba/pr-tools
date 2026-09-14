@@ -2,8 +2,31 @@
 
 Todas as mudanças relevantes do `prt` serão documentadas neste arquivo.
 
-O histórico das próximas versões será atualizado automaticamente pelo
-`release-plz`, usando o `git-cliff` e os commits do repositório.
+O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/),
+e as versões seguem [Semantic Versioning](https://semver.org/lang/pt-BR/).
+
+## [7.1.0] - 2026-09-14
+
+
+
+### Correções
+
+
+- use published tui-shimmer crate ([1f91d4b](https://github.com/nitoba/pr-tools/commit/1f91d4b63f74210388fa1d9e4e089c1b7a43fdc0))
+
+- use published tui-shimmer compatibility range ([992af51](https://github.com/nitoba/pr-tools/commit/992af51c5fff6ad44af4d687175e7eb3743f6916))
+
+- add tui-shimmer version requirement ([92d90de](https://github.com/nitoba/pr-tools/commit/92d90de623bb4736e62c3f59c9221b8ae33c103e))
+
+- use platform config directory on Windows ([6627684](https://github.com/nitoba/pr-tools/commit/6627684ba7b3141f07388d1dbe92d0335b822340))
+
+
+### Outras mudanças
+
+
+- ✨ feat(init): add env file path to init result and display ([2f42263](https://github.com/nitoba/pr-tools/commit/2f422635b136d8a68ad6320edf3b5e0e236670e9))
+
+- ✨ feat(tui): add enter key support for test case preparation ([ae22fb6](https://github.com/nitoba/pr-tools/commit/ae22fb6da99c523fe0b9ea66ed5e4271353ddb13))
 
 ## [Unreleased]
 
