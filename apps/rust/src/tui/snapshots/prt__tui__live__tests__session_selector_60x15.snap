@@ -1,0 +1,19 @@
+---
+source: apps/rust/src/tui/live.rs
+expression: "$crate :: tui :: snapshot_value(terminal.backend())"
+---
+"◆ prt <version>  ·  desc --resume                               "
+"Retomar publicação  ·  2 sessões incompletas                "
+"╭ Sessões incompletas ─────────────────────────────────────╮"
+"│ ▸ feature/11763-atualiza-checkout  pr-tools              │"
+"│     1/2 confirmados  ·  targets                          │"
+"│   bugfix/timeout  billing                                │"
+"│     0/1 confirmados  ·  target                           │"
+"│                                                          │"
+"│                                                          │"
+"│                                                          │"
+"│                                                          │"
+"│                                                          │"
+"│                                                          │"
+"╰──────────────────────────────────────────────────────────╯"
+"↑/↓ ou j/k mover · Enter retomar · Esc/q sair            1/2"

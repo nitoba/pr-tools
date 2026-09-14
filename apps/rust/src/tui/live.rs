@@ -24,6 +24,7 @@ use ratatui::{
 };
 use ratatui_toaster::{ToastBuilder, ToastEngineBuilder, ToastMessage, ToastPosition, ToastType};
 use tokio::sync::mpsc;
+use unicode_width::UnicodeWidthStr;
 
 use super::content_editor::{
     ContentEditAction, ContentEditState, ContentField, render_content_editor,
@@ -32,7 +33,7 @@ use super::describe_app::{CandidateActivity, DescribeApp, Phase, PublishDialog, 
 use super::events::{BackendEvent, LiveOutcome};
 use super::shimmer::f64_from_usize;
 use super::{
-    StatusHeader, ascii_only, border_type, centered_buttons, modal_frame, status_header,
+    StatusHeader, ascii_only, border_type, centered_buttons, header, modal_frame, status_header,
     status_layout, theme,
 };
 use crate::ai;
@@ -1747,53 +1748,7 @@ fn session_selector_loop(
     let mut selected = 0usize;
     loop {
         terminal.draw(|frame| {
-            let [heading, list_area, footer] = Layout::vertical([
-                Constraint::Length(3),
-                Constraint::Min(1),
-                Constraint::Length(1),
-            ])
-            .areas(frame.area());
-            frame.render_widget(
-                Paragraph::new("Escolha uma sessão de descrição para retomar").block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .title(" Sessões locais "),
-                ),
-                heading,
-            );
-            let items = sessions
-                .iter()
-                .map(|session| {
-                    let targets = session
-                        .targets
-                        .iter()
-                        .map(|(target, state)| format!("{target}={state}"))
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    ListItem::new(Line::from(format!(
-                        "{} · {} · {} · {} · {}",
-                        session.session_id,
-                        session.repository,
-                        session.source_branch,
-                        session.updated_at,
-                        targets
-                    )))
-                })
-                .collect::<Vec<_>>();
-            let mut state = ListState::default();
-            state.select(Some(selected));
-            frame.render_stateful_widget(
-                List::new(items)
-                    .block(Block::default().borders(Borders::ALL))
-                    .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
-                    .highlight_symbol("▸ "),
-                list_area,
-                &mut state,
-            );
-            frame.render_widget(
-                Paragraph::new("↑/↓ mover · enter retomar · q/esc sair"),
-                footer,
-            );
+            render_session_selector(frame.area(), sessions, selected, frame.buffer_mut());
         })?;
 
         if !event::poll(Duration::from_millis(100))? {
@@ -1806,8 +1761,16 @@ fn session_selector_loop(
             continue;
         }
         match key.code {
-            KeyCode::Up => selected = selected.saturating_sub(1),
-            KeyCode::Down => selected = (selected + 1).min(sessions.len().saturating_sub(1)),
+            KeyCode::Up | KeyCode::Char('k') => selected = selected.saturating_sub(1),
+            KeyCode::Down | KeyCode::Char('j') => {
+                selected = (selected + 1).min(sessions.len().saturating_sub(1));
+            }
+            KeyCode::PageUp => selected = selected.saturating_sub(5),
+            KeyCode::PageDown => {
+                selected = (selected + 5).min(sessions.len().saturating_sub(1));
+            }
+            KeyCode::Home => selected = 0,
+            KeyCode::End => selected = sessions.len().saturating_sub(1),
             KeyCode::Enter => {
                 let id = sessions
                     .get(selected)
@@ -1818,6 +1781,314 @@ fn session_selector_loop(
             _ => {}
         }
     }
+}
+
+const SESSION_SELECTOR_MIN_WIDTH: u16 = 44;
+const SESSION_SELECTOR_MIN_HEIGHT: u16 = 10;
+const SESSION_SELECTOR_DETAILS_WIDTH: u16 = 120;
+
+fn render_session_selector(
+    area: Rect,
+    sessions: &[SessionSummary],
+    selected: usize,
+    buf: &mut Buffer,
+) {
+    Block::new().style(theme().root).render(area, buf);
+    if area.width < SESSION_SELECTOR_MIN_WIDTH || area.height < SESSION_SELECTOR_MIN_HEIGHT {
+        render_session_selector_too_small(area, buf);
+        return;
+    }
+
+    let [heading, body, footer] = Layout::vertical([
+        Constraint::Length(2),
+        Constraint::Min(1),
+        Constraint::Length(1),
+    ])
+    .areas(area);
+    let count_label = if sessions.len() == 1 {
+        "1 sessão incompleta".to_owned()
+    } else {
+        format!("{} sessões incompletas", sessions.len())
+    };
+    header(heading, buf, "desc --resume");
+    Paragraph::new(Line::from(vec![
+        Span::styled("Retomar publicação", theme().app_title),
+        Span::styled(format!("  ·  {count_label}"), theme().muted),
+    ]))
+    .render(
+        Rect::new(0, heading.y.saturating_add(1), heading.width, 1),
+        buf,
+    );
+
+    let selected = selected.min(sessions.len().saturating_sub(1));
+    if sessions.is_empty() {
+        render_session_empty(body, buf);
+    } else if area.width >= SESSION_SELECTOR_DETAILS_WIDTH {
+        let [list_area, details_area] =
+            Layout::horizontal([Constraint::Percentage(62), Constraint::Min(30)]).areas(body);
+        render_session_list(list_area, sessions, selected, buf);
+        render_session_details(details_area, &sessions[selected], buf);
+    } else {
+        render_session_list(body, sessions, selected, buf);
+    }
+
+    let [hints_area, position] =
+        Layout::horizontal([Constraint::Min(0), Constraint::Length(9)]).areas(footer);
+    let hints = if ascii_only() {
+        "up/down ou j/k mover - enter retomar - esc/q sair"
+    } else {
+        "↑/↓ ou j/k mover · Enter retomar · Esc/q sair"
+    };
+    Paragraph::new(terminal_text(hints))
+        .style(theme().muted)
+        .render(hints_area, buf);
+    let position_label = if sessions.is_empty() {
+        "0/0".to_owned()
+    } else {
+        format!("{}/{}", selected.saturating_add(1), sessions.len())
+    };
+    Paragraph::new(position_label)
+        .style(theme().muted)
+        .alignment(ratatui::layout::Alignment::Right)
+        .render(position, buf);
+}
+
+fn render_session_selector_too_small(area: Rect, buf: &mut Buffer) {
+    let block = Block::default()
+        .title(Span::styled(" prt · desc --resume ", theme().warning))
+        .borders(Borders::ALL)
+        .border_style(theme().warning)
+        .border_type(border_type());
+    let inner = block.inner(area);
+    block.render(area, buf);
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+    Paragraph::new(vec![
+        Line::from(Span::styled("Terminal muito pequeno", theme().warning)),
+        Line::from(format!(
+            "A sessão precisa de pelo menos {SESSION_SELECTOR_MIN_WIDTH}×{SESSION_SELECTOR_MIN_HEIGHT}."
+        )),
+        Line::from("Aumente a janela para continuar."),
+    ])
+    .style(theme().muted)
+    .alignment(ratatui::layout::Alignment::Center)
+    .wrap(Wrap { trim: true })
+    .render(inner, buf);
+}
+
+fn render_session_empty(area: Rect, buf: &mut Buffer) {
+    let block = Block::default()
+        .title(Span::styled(" Sessões incompletas ", theme().border))
+        .borders(Borders::ALL)
+        .border_style(theme().border)
+        .border_type(border_type());
+    let inner = block.inner(area);
+    block.render(area, buf);
+    Paragraph::new("Nenhuma sessão incompleta para retomar.")
+        .style(theme().muted)
+        .alignment(ratatui::layout::Alignment::Center)
+        .wrap(Wrap { trim: true })
+        .render(inner, buf);
+}
+
+fn render_session_list(area: Rect, sessions: &[SessionSummary], selected: usize, buf: &mut Buffer) {
+    let title = if sessions.len() == 1 {
+        " Sessão incompleta · 1 "
+    } else {
+        " Sessões incompletas "
+    };
+    let block = Block::default()
+        .title(Span::styled(title, theme().accent))
+        .borders(Borders::ALL)
+        .border_style(theme().accent)
+        .border_type(border_type())
+        .padding(ratatui::widgets::Padding::horizontal(1));
+    let inner = block.inner(area);
+    block.render(area, buf);
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+
+    let items = sessions
+        .iter()
+        .map(|session| session_list_item(session, inner.width.saturating_sub(2)))
+        .collect::<Vec<_>>();
+    let mut state = ListState::default();
+    state.select(Some(selected.min(items.len().saturating_sub(1))));
+    ratatui::widgets::StatefulWidget::render(
+        List::new(items)
+            .highlight_style(Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD))
+            .highlight_symbol(if ascii_only() { "> " } else { "▸ " }),
+        inner,
+        buf,
+        &mut state,
+    );
+}
+
+fn session_list_item(session: &SessionSummary, width: u16) -> ListItem<'static> {
+    let available = usize::from(width);
+    let repository = compact_repository(&session.repository);
+    let branch_width = available.saturating_sub(repository.width().saturating_add(4));
+    let branch = truncate_cells(&session.source_branch, branch_width.max(8));
+    let repository = truncate_cells(
+        &repository,
+        available.saturating_sub(branch.width()).saturating_sub(4),
+    );
+    let (confirmed, total) = session_progress(session);
+    let target_word = if total == 1 { "target" } else { "targets" };
+    let progress_style = if confirmed == 0 {
+        theme().muted
+    } else {
+        theme().success
+    };
+    let details = if available < 45 {
+        format!("  {confirmed}/{total} confirmados")
+    } else if available < 68 {
+        format!("  {confirmed}/{total} confirmados  ·  {target_word}")
+    } else {
+        format!(
+            "  {confirmed}/{total} confirmados  ·  {target_word}  ·  atualizado {}",
+            short_session_timestamp(&session.updated_at)
+        )
+    };
+    ListItem::new(vec![
+        Line::from(vec![
+            Span::styled(branch, theme().accent.add_modifier(Modifier::BOLD)),
+            Span::styled("  ", theme().muted),
+            Span::styled(repository, theme().muted),
+        ]),
+        Line::from(Span::styled(details, progress_style)),
+    ])
+}
+
+fn render_session_details(area: Rect, session: &SessionSummary, buf: &mut Buffer) {
+    let block = Block::default()
+        .title(Span::styled(" Sessão selecionada ", theme().border))
+        .borders(Borders::ALL)
+        .border_style(theme().border)
+        .border_type(border_type())
+        .padding(ratatui::widgets::Padding::horizontal(1));
+    let inner = block.inner(area);
+    block.render(area, buf);
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+
+    let (confirmed, total) = session_progress(session);
+    let mut lines = vec![
+        detail_label("Repositório"),
+        Line::from(Span::styled(session.repository.clone(), theme().accent)),
+        detail_label("Branch de origem"),
+        Line::from(Span::styled(session.source_branch.clone(), theme().accent)),
+        detail_label("Última atualização"),
+        Line::from(Span::styled(
+            short_session_timestamp(&session.updated_at),
+            theme().muted,
+        )),
+        detail_label("Progresso"),
+        Line::from(Span::styled(
+            format!("{confirmed}/{total} targets confirmados"),
+            if confirmed == total {
+                theme().success
+            } else {
+                theme().warning
+            },
+        )),
+        Line::from(""),
+        detail_label("Targets"),
+    ];
+    lines.extend(session.targets.iter().map(|(target, state)| {
+        let (mark, label, style) = session_target_status(state);
+        Line::from(vec![
+            Span::styled(format!("{mark} "), style),
+            Span::styled(target.clone(), theme().accent),
+            Span::styled(format!("  {label}"), theme().muted),
+        ])
+    }));
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled("ID ", theme().muted),
+        Span::styled(session.session_id.clone(), theme().muted),
+    ]));
+    Paragraph::new(lines)
+        .wrap(Wrap { trim: false })
+        .render(inner, buf);
+}
+
+fn detail_label(value: &str) -> Line<'static> {
+    Line::from(Span::styled(
+        value.to_owned(),
+        theme().muted.add_modifier(Modifier::BOLD),
+    ))
+}
+
+fn session_progress(session: &SessionSummary) -> (usize, usize) {
+    let confirmed = session
+        .targets
+        .iter()
+        .filter(|(_, state)| *state == "confirmed")
+        .count();
+    (confirmed, session.targets.len())
+}
+
+fn session_target_status(state: &str) -> (&'static str, &'static str, Style) {
+    match state {
+        "confirmed" => (
+            if ascii_only() { "+" } else { "✓" },
+            "confirmado",
+            theme().success,
+        ),
+        "failed" => (
+            if ascii_only() { "x" } else { "✘" },
+            "falhou",
+            theme().error,
+        ),
+        "attempting_or_uncertain" => ("?", "resultado incerto", theme().warning),
+        _ => (
+            if ascii_only() { "o" } else { "○" },
+            "pendente",
+            theme().muted,
+        ),
+    }
+}
+
+fn compact_repository(value: &str) -> String {
+    value
+        .trim_end_matches(['/', '\\'])
+        .rsplit(['/', '\\'])
+        .next()
+        .filter(|name| !name.is_empty())
+        .unwrap_or(value)
+        .to_owned()
+}
+
+fn short_session_timestamp(value: &str) -> String {
+    let normalized = value.replace('T', " ");
+    normalized.trim_end_matches('Z').chars().take(16).collect()
+}
+
+fn truncate_cells(value: &str, max_width: usize) -> String {
+    if UnicodeWidthStr::width(value) <= max_width {
+        return value.to_owned();
+    }
+    let ellipsis = if ascii_only() { "..." } else { "…" };
+    let ellipsis_width = UnicodeWidthStr::width(ellipsis);
+    if max_width <= ellipsis_width {
+        return ellipsis.chars().take(max_width).collect();
+    }
+    let mut result = String::new();
+    let mut width = 0;
+    for ch in value.chars() {
+        let ch_width = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+        if width + ch_width > max_width - ellipsis_width {
+            break;
+        }
+        result.push(ch);
+        width += ch_width;
+    }
+    result.push_str(ellipsis);
+    result
 }
 
 /// Retoma uma sessão local sem executar qualquer etapa de geração.
@@ -2947,6 +3218,28 @@ mod tests {
         .expect("terminal de teste")
     }
 
+    fn session_summaries() -> Vec<SessionSummary> {
+        vec![
+            SessionSummary {
+                session_id: "550e8400-e29b-41d4-a716-446655440000".to_owned(),
+                repository: "/home/dev/pr-tools".to_owned(),
+                source_branch: "feature/11763-atualiza-checkout".to_owned(),
+                updated_at: "2026-09-14T14:32:00Z".to_owned(),
+                targets: vec![
+                    ("dev".to_owned(), "confirmed"),
+                    ("sprint/12".to_owned(), "attempting_or_uncertain"),
+                ],
+            },
+            SessionSummary {
+                session_id: "650e8400-e29b-41d4-a716-446655440001".to_owned(),
+                repository: "C:\\work\\billing".to_owned(),
+                source_branch: "bugfix/timeout".to_owned(),
+                updated_at: "2026-09-13T09:05:00Z".to_owned(),
+                targets: vec![("dev".to_owned(), "failed")],
+            },
+        ]
+    }
+
     fn buffer_text(terminal: &Terminal<TestBackend>) -> String {
         terminal
             .backend()
@@ -2955,6 +3248,50 @@ mod tests {
             .iter()
             .map(ratatui::buffer::Cell::symbol)
             .collect()
+    }
+
+    #[test]
+    fn session_selector_120x30() -> anyhow::Result<()> {
+        let sessions = session_summaries();
+        let mut terminal = Terminal::new(TestBackend::new(120, 30))?;
+        terminal.draw(|frame| {
+            render_session_selector(frame.area(), &sessions, 0, frame.buffer_mut());
+        })?;
+        crate::assert_tui_snapshot!("session_selector_120x30", terminal.backend());
+        Ok(())
+    }
+
+    #[test]
+    fn session_selector_80x24() -> anyhow::Result<()> {
+        let sessions = session_summaries();
+        let mut terminal = Terminal::new(TestBackend::new(80, 24))?;
+        terminal.draw(|frame| {
+            render_session_selector(frame.area(), &sessions, 1, frame.buffer_mut());
+        })?;
+        crate::assert_tui_snapshot!("session_selector_80x24", terminal.backend());
+        Ok(())
+    }
+
+    #[test]
+    fn session_selector_60x15() -> anyhow::Result<()> {
+        let sessions = session_summaries();
+        let mut terminal = Terminal::new(TestBackend::new(60, 15))?;
+        terminal.draw(|frame| {
+            render_session_selector(frame.area(), &sessions, 0, frame.buffer_mut());
+        })?;
+        crate::assert_tui_snapshot!("session_selector_60x15", terminal.backend());
+        Ok(())
+    }
+
+    #[test]
+    fn session_selector_should_explain_the_minimum_size() -> anyhow::Result<()> {
+        let sessions = session_summaries();
+        let mut terminal = Terminal::new(TestBackend::new(40, 9))?;
+        terminal.draw(|frame| {
+            render_session_selector(frame.area(), &sessions, 0, frame.buffer_mut());
+        })?;
+        crate::assert_tui_snapshot!("session_selector_too_small_40x9", terminal.backend());
+        Ok(())
     }
 
     #[test]
