@@ -22,6 +22,7 @@ use ratatui::{
         ScrollbarState, Widget, Wrap,
     },
 };
+use ratatui_toaster::{ToastBuilder, ToastEngineBuilder, ToastMessage, ToastPosition, ToastType};
 use tokio::sync::mpsc;
 
 use super::content_editor::{
@@ -1914,6 +1915,42 @@ fn drain_backend(rx: &mut mpsc::UnboundedReceiver<BackendEvent>, app: &mut Descr
     novo
 }
 
+fn queue_toast_for_change(
+    app: &DescribeApp,
+    previous_phase: Phase,
+    previous_log_len: usize,
+    tx: &mpsc::Sender<ToastMessage>,
+) {
+    // ratatui-toaster 0.1.4 hard-codes ANSI colors and Unicode borders.
+    if !super::colors_enabled() || super::ascii_only() {
+        return;
+    }
+    let toast = if previous_phase != app.phase {
+        match app.phase {
+            Phase::Review => Some(("descrição pronta — revise ou publique", ToastType::Info)),
+            Phase::Done => Some(("PR publicado com sucesso", ToastType::Success)),
+            _ => None,
+        }
+    } else if app.logs.len() > previous_log_len {
+        match app.logs.back().map(String::as_str) {
+            Some("body copiado ✓") => Some(("body copiado", ToastType::Success)),
+            Some("conteúdo salvo — preview atualizado") => {
+                Some(("conteúdo salvo", ToastType::Success))
+            }
+            _ => None,
+        }
+    } else {
+        None
+    };
+    if let Some((message, toast_type)) = toast {
+        let _ = tx.try_send(ToastMessage::Show {
+            message: message.to_owned(),
+            toast_type,
+            position: ToastPosition::TopRight,
+        });
+    }
+}
+
 fn start_backend(
     pending_prep: &mut Option<DescribePrep>,
     tx: &mpsc::UnboundedSender<BackendEvent>,
@@ -2575,6 +2612,11 @@ fn run_loop(
     initial_session: Option<SessionRuntime>,
 ) -> anyhow::Result<LiveOutcome> {
     let (tx, mut rx) = mpsc::unbounded_channel::<BackendEvent>();
+    let (toast_tx, mut toast_rx) = mpsc::channel::<ToastMessage>(8);
+    let mut toaster = ToastEngineBuilder::<ToastMessage>::new(Rect::default())
+        .default_duration(Duration::from_secs(3))
+        .action_tx(toast_tx.clone())
+        .build();
     let (publish_setup, publish_blocked, publish_base) = make_publish_parts(&prep);
     let functional_context_status = prep.functional_context.clone();
     let launch_prep = prep.clone();
@@ -2630,9 +2672,27 @@ fn run_loop(
     let mut needs_draw = true;
 
     loop {
+        let previous_phase = app.phase;
+        let previous_log_len = app.logs.len();
         // 1. Drena eventos do backend sem bloquear; suja se houve dado.
         let backend_changed = drain_backend(&mut rx, &mut app);
         if backend_changed {
+            needs_draw = true;
+        }
+        queue_toast_for_change(&app, previous_phase, previous_log_len, &toast_tx);
+        while let Ok(message) = toast_rx.try_recv() {
+            match message {
+                ToastMessage::Show {
+                    message,
+                    toast_type,
+                    position,
+                } => toaster.show_toast(
+                    ToastBuilder::new(message.into())
+                        .toast_type(toast_type)
+                        .position(position),
+                ),
+                ToastMessage::Hide => toaster.hide_toast(),
+            }
             needs_draw = true;
         }
         if session.is_none() && app.desc.is_some() {
@@ -2656,7 +2716,14 @@ fn run_loop(
         }
         // 3. Desenha só se sujo.
         if needs_draw {
-            terminal.draw(|f| f.render_widget(&app, f.area()))?;
+            terminal.draw(|f| {
+                let area = f.area();
+                toaster.set_area(area);
+                f.render_widget(&app, area);
+                if toaster.has_toast() && super::colors_enabled() && !super::ascii_only() {
+                    f.render_widget(&toaster, area);
+                }
+            })?;
             needs_draw = false;
         }
 
@@ -2675,6 +2742,8 @@ fn run_loop(
                     }
                 }
                 Event::Key(key) => {
+                    let key_previous_phase = app.phase;
+                    let key_previous_log_len = app.logs.len();
                     // Filtro de kind: Release sempre ignorado; Repeat passa
                     // também para a edição do conteúdo ativo.
                     let eh_scroll = matches!(
@@ -2738,6 +2807,12 @@ fn run_loop(
                         }
                         return Ok(outcome);
                     }
+                    queue_toast_for_change(
+                        &app,
+                        key_previous_phase,
+                        key_previous_log_len,
+                        &toast_tx,
+                    );
                     if app.functional_context_fallback_confirmed && pending_prep.is_some() {
                         start_backend(&mut pending_prep, &tx);
                     }
