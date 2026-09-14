@@ -1165,9 +1165,9 @@ fn render_footer(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
                 }
                 Phase::Done => {
                     if ascii_only() {
-                        "t preparar Test Case - q sair"
+                        "enter/t preparar Test Case - q sair"
                     } else {
-                        "t preparar Test Case · q sair"
+                        "enter/t preparar Test Case · q sair"
                     }
                 }
                 Phase::Error => {
@@ -2429,7 +2429,7 @@ fn handle_key_event_with_session(
         }
     }
     if key.modifiers.is_empty()
-        && matches!(key.code, KeyCode::Char('t' | 'T'))
+        && (matches!(key.code, KeyCode::Char('t' | 'T')) || key.code == KeyCode::Enter)
         && app.phase == Phase::Done
         && app.publish_dialog.is_none()
     {
@@ -3516,7 +3516,7 @@ mod tests {
     }
 
     #[test]
-    fn single_published_pr_should_take_test_case_fast_path() {
+    fn enter_on_done_should_take_test_case_fast_path_for_single_pr() {
         let mut app = review_app();
         app.set_launch_prep(launch_prep());
         app.on_backend(BackendEvent::Published(vec![published(42, "dev")]));
@@ -3525,7 +3525,7 @@ mod tests {
         let mut needs_draw = false;
         let outcome = handle_key_event(
             &mut app,
-            KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE),
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
             &PublishBase {
                 pat: String::new(),
                 remote: None,
