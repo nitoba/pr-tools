@@ -38,6 +38,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 unicode-width = "0.2"
 uuid = { version = "1", features = ["v4"] }
 ratatui = "0.30"
+tui-shimmer = { git = "https://github.com/vinhnx/tui-shimmer", tag = "v0.1.4" }
 aisdk = { version = "0.5", features = ["openai", "openaicompatible"] }
 schemars = "1"
 

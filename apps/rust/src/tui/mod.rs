@@ -29,7 +29,7 @@ use ratatui::{
     },
 };
 
-use self::shimmer::{filled_cells, percent_u16, shimmer_bar};
+use self::shimmer::{filled_cells, percent_u16, shimmer_bar, shimmer_text};
 
 /// Tema global da TUI.
 #[derive(Debug, Clone, Copy)]
@@ -245,7 +245,12 @@ pub fn status_header(area: Rect, buf: &mut Buffer, status: StatusHeader<'_>) {
         .saturating_add(percent_text.chars().count())
         .saturating_add(separator_width.saturating_mul(separator_count));
     let bar_width = available.saturating_sub(fixed_width).max(8);
-    let mut spans = vec![Span::styled(message, theme().muted), Span::raw(separator)];
+    let mut spans = if status.active {
+        shimmer_text(&message, theme().muted, status.tick).spans
+    } else {
+        vec![Span::styled(message, theme().muted)]
+    };
+    spans.push(Span::raw(separator));
     spans.extend(
         status_bar(
             status.progress.unwrap_or(0.0),
