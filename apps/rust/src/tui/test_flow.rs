@@ -139,6 +139,43 @@ impl TestPhase {
     }
 }
 
+/// Política de criação escolhida pela entrada do fluxo.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CreateMode {
+    /// Gera o card e permite criá-lo, com a confirmação inicial definida pela CLI.
+    Create { initial_confirmation: bool },
+    /// Gera e revisa o card sem enviá-lo ao Azure.
+    ReviewOnly,
+}
+
+impl CreateMode {
+    /// Resolve a política a partir das flags do comando.
+    fn from_options(options: &CliOptions) -> Self {
+        if options.no_create {
+            Self::ReviewOnly
+        } else {
+            Self::Create {
+                initial_confirmation: options.create,
+            }
+        }
+    }
+
+    /// O fluxo foi solicitado apenas para revisão?
+    fn is_review_only(self) -> bool {
+        matches!(self, Self::ReviewOnly)
+    }
+
+    /// A confirmação de criação deve começar selecionada?
+    fn initial_confirmation(self) -> bool {
+        matches!(
+            self,
+            Self::Create {
+                initial_confirmation: true
+            }
+        )
+    }
+}
+
 /// Painel focado na revisão.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Panel {
@@ -356,10 +393,8 @@ struct TestApp {
     parent_msg: Option<String>,
     /// Flash de "copiado" até o tick.
     copied_flash_until: u64,
-    /// Valor inicial do "Criar este Test Case?" (vem de `--create`).
-    create_initial: bool,
-    /// `--no-create`: gera e revisa, sem criar.
-    no_create: bool,
+    /// Política de criação/revisão definida pela entrada.
+    create_mode: CreateMode,
     /// Diálogo modal aberto (confirmações / esforços).
     dialog: Option<TestDialog>,
     /// Editor do Effort (Test QA).
@@ -403,8 +438,9 @@ impl TestApp {
             parent_updated: false,
             parent_msg: None,
             copied_flash_until: 0,
-            create_initial: false,
-            no_create: false,
+            create_mode: CreateMode::Create {
+                initial_confirmation: false,
+            },
             dialog: None,
             qa_effort: LineEditor::new(String::new()),
             qa_real: LineEditor::new(String::new()),
@@ -418,12 +454,12 @@ impl TestApp {
         let mut app = Self::new();
         match request {
             TestCardRequest::Cli(options) => {
-                app.create_initial = options.create;
-                app.no_create = options.no_create;
+                app.create_mode = CreateMode::from_options(options);
             }
             TestCardRequest::PublishedPr(_) => {
-                app.create_initial = false;
-                app.no_create = false;
+                app.create_mode = CreateMode::Create {
+                    initial_confirmation: false,
+                };
             }
         }
         app
@@ -1907,6 +1943,11 @@ pub async fn run_test_flow(options: &CliOptions) -> anyhow::Result<TestFlowOutco
 
 /// Roda o fluxo de Test Case para uma entrada standalone ou um handoff
 /// estruturado de PR publicado.
+///
+/// # Errors
+///
+/// Retorna erro se o terminal não puder ser inicializado ou se o backend
+/// falhar (prepare/generate/create).
 pub async fn run_test_flow_request(request: TestCardRequest) -> anyhow::Result<TestFlowOutcome> {
     if !std::io::stdout().is_terminal() {
         anyhow::bail!("tui requer terminal interativo");
@@ -2707,12 +2748,14 @@ fn handle_review_settings_key(app: &mut TestApp, key: event::KeyEvent) -> TestKe
         }
         KeyCode::Enter => {
             if key.kind == KeyEventKind::Press && !ctrl_alt {
-                if app.no_create {
+                if app.create_mode.is_review_only() {
                     app.logs
                         .push_back("somente revisão (--no-create)".to_owned());
                     TestKeyAction::Done(TestFlowOutcome::ReviewedNoCreate)
                 } else {
-                    app.dialog = Some(TestDialog::ConfirmCreate(app.create_initial));
+                    app.dialog = Some(TestDialog::ConfirmCreate(
+                        app.create_mode.initial_confirmation(),
+                    ));
                     TestKeyAction::Continue(true)
                 }
             } else {
@@ -2778,12 +2821,14 @@ fn handle_review_preview_key(app: &mut TestApp, key: event::KeyEvent) -> TestKey
             TestKeyAction::Continue(true)
         }
         (KeyCode::Enter, KeyEventKind::Press) => {
-            if app.no_create {
+            if app.create_mode.is_review_only() {
                 app.logs
                     .push_back("somente revisão (--no-create)".to_owned());
                 TestKeyAction::Done(TestFlowOutcome::ReviewedNoCreate)
             } else {
-                app.dialog = Some(TestDialog::ConfirmCreate(app.create_initial));
+                app.dialog = Some(TestDialog::ConfirmCreate(
+                    app.create_mode.initial_confirmation(),
+                ));
                 TestKeyAction::Continue(true)
             }
         }
@@ -2961,7 +3006,9 @@ mod tests {
         app.title = "Card exemplo".to_owned();
         app.body = "## Objetivo\nX".to_owned();
         app.phase = TestPhase::Revisao;
-        app.create_initial = true;
+        app.create_mode = CreateMode::Create {
+            initial_confirmation: true,
+        };
         app
     }
 
@@ -3432,8 +3479,12 @@ mod tests {
         assert_eq!(context.work_item_id, Some(11763));
         assert_eq!(context.published_pr.id, receipt[1].id);
         let app = TestApp::for_request(&TestCardRequest::PublishedPr(context));
-        assert!(!app.create_initial);
-        assert!(!app.no_create);
+        assert_eq!(
+            app.create_mode,
+            CreateMode::Create {
+                initial_confirmation: false,
+            }
+        );
         assert_eq!(app.phase, TestPhase::Preparando);
         assert!(app.prep.is_none());
         assert!(app.created.is_none());
@@ -3601,8 +3652,7 @@ mod tests {
         server.join().expect("servidor de erro do handoff");
     }
 
-    #[tokio::test]
-    async fn published_flow_should_keep_create_and_test_qa_confirmations_separate() {
+    fn generated_published_app() -> TestApp {
         let mut app = TestApp::for_request(&published_request());
         app.on_event(TestEvent::Generated {
             prep: Box::new(published_prep()),
@@ -3617,24 +3667,29 @@ mod tests {
                 "Agrotrace".to_owned(),
             ],
         });
-        let pr_before_edit = app.prep.as_ref().and_then(|prep| prep.pr_id.clone());
+        app
+    }
+
+    async fn drive_published_create_recovery(app: &mut TestApp) -> String {
+        let pr_before_edit = app
+            .prep
+            .as_ref()
+            .and_then(|prep| prep.pr_id.clone())
+            .expect("PR publicado no prep");
         assert!(app.open_content_edit());
         assert!(matches!(
-            handle_content_edit_key(
-                &mut app,
-                event::KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
-            ),
+            handle_content_edit_key(app, event::KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),),
             TestKeyAction::Continue(true)
         ));
         assert_eq!(
-            app.prep.as_ref().and_then(|prep| prep.pr_id.clone()),
-            pr_before_edit
+            app.prep.as_ref().and_then(|prep| prep.pr_id.as_deref()),
+            Some(pr_before_edit.as_str())
         );
         app.create_recovery = CreateRecoveryState::Available;
         app.dialog = Some(TestDialog::CreateRecovery(0));
         assert!(matches!(
             handle_create_recovery_key(
-                &mut app,
+                app,
                 &mpsc::unbounded_channel().0,
                 0,
                 event::KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
@@ -3642,8 +3697,8 @@ mod tests {
             TestKeyAction::Continue(true)
         ));
         assert_eq!(
-            app.prep.as_ref().and_then(|prep| prep.pr_id.clone()),
-            pr_before_edit
+            app.prep.as_ref().and_then(|prep| prep.pr_id.as_deref()),
+            Some(pr_before_edit.as_str())
         );
         let retry_prep = app.prep.clone().expect("prep para recovery");
         let retry_settings = app.build_settings().expect("settings para recovery");
@@ -3668,15 +3723,19 @@ mod tests {
         assert_eq!(app.phase, TestPhase::Revisao);
         assert_eq!(app.dialog, Some(TestDialog::CreateRecovery(0)));
         assert_eq!(
-            app.prep.as_ref().and_then(|prep| prep.pr_id.clone()),
-            pr_before_edit
+            app.prep.as_ref().and_then(|prep| prep.pr_id.as_deref()),
+            Some(pr_before_edit.as_str())
         );
         assert_eq!(app.create_recovery, CreateRecoveryState::Available);
+        pr_before_edit
+    }
+
+    async fn create_published_test_case(app: &mut TestApp, expected_pr_id: &str) {
         app.create_recovery = CreateRecoveryState::Unavailable;
         app.panel = Panel::Preview;
         assert!(matches!(
             handle_review_preview_key(
-                &mut app,
+                app,
                 event::KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
             ),
             TestKeyAction::Continue(true)
@@ -3711,9 +3770,15 @@ mod tests {
         assert!(!app.parent_updated);
         assert_eq!(
             app.prep.as_ref().and_then(|prep| prep.pr_id.as_deref()),
-            Some("99")
+            Some(expected_pr_id)
         );
+    }
 
+    #[tokio::test]
+    async fn published_flow_should_keep_create_and_test_qa_confirmations_separate() {
+        let mut app = generated_published_app();
+        let pr_before_edit = drive_published_create_recovery(&mut app).await;
+        create_published_test_case(&mut app, &pr_before_edit).await;
         assert!(matches!(
             handle_confirm_qa_key(
                 &mut app,
@@ -3978,7 +4043,9 @@ mod tests {
     fn dialogs_should_open_and_close() {
         let mut app = review_app();
         assert!(app.dialog.is_none());
-        app.dialog = Some(TestDialog::ConfirmCreate(app.create_initial));
+        app.dialog = Some(TestDialog::ConfirmCreate(
+            app.create_mode.initial_confirmation(),
+        ));
         assert_eq!(app.dialog, Some(TestDialog::ConfirmCreate(true)));
         app.dialog = None;
         app.open_qa_efforts();

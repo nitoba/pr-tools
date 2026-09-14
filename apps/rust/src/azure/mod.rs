@@ -350,6 +350,7 @@ pub fn client_for_with_timeout(
 #[derive(Debug, Clone, Deserialize)]
 pub struct WorkItem {
     /// ID.
+    #[serde(deserialize_with = "crate::azure::deserialize_i64_or_string")]
     pub id: i64,
     /// Campos (título, tipo, etc).
     #[serde(default)]
@@ -375,6 +376,27 @@ where
     D: Deserializer<'de>,
 {
     Option::<Vec<WorkItemRelation>>::deserialize(deserializer).map(Option::unwrap_or_default)
+}
+
+/// Desserializa IDs do Azure aceitando tanto número JSON quanto texto numérico.
+///
+/// Embora a API normalmente retorne IDs como números, respostas intermediadas
+/// por alguns proxies/compatibilidade podem serializá-los como strings.
+fn deserialize_i64_or_string<'de, D>(deserializer: D) -> std::result::Result<i64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum IntegerOrString {
+        Integer(i64),
+        String(String),
+    }
+
+    match IntegerOrString::deserialize(deserializer)? {
+        IntegerOrString::Integer(id) => Ok(id),
+        IntegerOrString::String(id) => id.trim().parse::<i64>().map_err(serde::de::Error::custom),
+    }
 }
 
 impl WorkItem {
@@ -461,6 +483,17 @@ mod tests {
         }))
         .unwrap();
         assert!(wi.relations.is_empty());
+    }
+
+    #[test]
+    fn work_item_should_deserialize_string_id_from_azure_payload() {
+        let wi: WorkItem = serde_json::from_value(serde_json::json!({
+            "id": "13397",
+            "fields": {"System.Title": "Card de teste"}
+        }))
+        .expect("work item com ID textual válido");
+
+        assert_eq!(wi.id, 13397);
     }
 
     #[test]
