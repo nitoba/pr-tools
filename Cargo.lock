@@ -2049,7 +2049,7 @@ dependencies = [
 
 [[package]]
 name = "prt"
-version = "6.0.1"
+version = "7.0.0"
 dependencies = [
  "aisdk",
  "anyhow",
@@ -2065,11 +2065,11 @@ dependencies = [
  "insta",
  "libc",
  "pretty_assertions",
-  "pulldown-cmark",
-  "ratatui",
-  "ratatui-textarea",
-  "ratatui-toaster",
-  "regex",
+ "pulldown-cmark",
+ "ratatui",
+ "ratatui-textarea",
+ "ratatui-toaster",
+ "regex",
  "reqwest",
  "schemars",
  "serde",
