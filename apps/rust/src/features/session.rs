@@ -420,22 +420,27 @@ impl SessionStore {
         }
         let mut summaries = Vec::new();
         for id in ids {
-            let Ok((_, snapshot)) = Self::open(paths, id) else {
+            let Ok((store, snapshot)) = Self::open(paths, id) else {
                 continue;
             };
-            if !snapshot.is_complete() {
-                summaries.push(SessionSummary {
-                    session_id: snapshot.session_id,
-                    repository: snapshot.repository,
-                    source_branch: snapshot.source_branch,
-                    updated_at: snapshot.updated_at,
-                    targets: snapshot
-                        .targets
-                        .iter()
-                        .map(|target| (target.target.clone(), target.state.label()))
-                        .collect(),
-                });
+            if snapshot.is_complete() {
+                // Snapshots completos de versões anteriores não podem mais
+                // ser retomados; limpar aqui também remove resíduos deixados
+                // por execuções que terminaram antes da limpeza automática.
+                let _ = store.discard();
+                continue;
             }
+            summaries.push(SessionSummary {
+                session_id: snapshot.session_id,
+                repository: snapshot.repository,
+                source_branch: snapshot.source_branch,
+                updated_at: snapshot.updated_at,
+                targets: snapshot
+                    .targets
+                    .iter()
+                    .map(|target| (target.target.clone(), target.state.label()))
+                    .collect(),
+            });
         }
         summaries.sort_by(|left, right| {
             right
@@ -775,6 +780,23 @@ mod tests {
         if list[0].updated_at == list[1].updated_at {
             assert!(list[0].session_id < list[1].session_id);
         }
+    }
+
+    #[test]
+    fn list_discards_completed_sessions_left_by_previous_runs() {
+        let (_dir, paths) = paths();
+        let initial = snapshot();
+        let id = Uuid::parse_str(&initial.session_id).expect("uuid");
+        let (mut store, mut completed) = SessionStore::create(&paths, initial).expect("create");
+        completed.targets[0].state = TargetState::Confirmed {
+            id: 7,
+            url: "https://example.test/pr/7".to_owned(),
+        };
+        store.save(completed).expect("complete");
+        drop(store);
+
+        assert!(SessionStore::list(&paths).expect("list").is_empty());
+        assert!(SessionStore::open(&paths, id).is_err());
     }
 
     #[test]
