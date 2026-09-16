@@ -36,7 +36,73 @@ use self::shimmer::{filled_cells, percent_u16, shimmer_bar, shimmer_text};
 #[cfg(test)]
 /// Formats a TUI snapshot with the package version redacted.
 pub fn snapshot_value(value: &impl std::fmt::Display) -> String {
-    value.to_string().replace(crate::cli::VERSION, "<version>")
+    redact_snapshot_version(&value.to_string(), crate::cli::VERSION)
+}
+
+#[cfg(test)]
+fn redact_snapshot_version(rendered: &str, version: &str) -> String {
+    use unicode_width::UnicodeWidthStr;
+
+    const PLACEHOLDER: &str = "<version>";
+    // Keep the width used by the checked-in snapshots created at v9.0.0.
+    // Release PRs change `CARGO_PKG_VERSION`, but must not change frame width.
+    const SNAPSHOT_VERSION_WIDTH: usize = "9.0.0".len();
+    let placeholder_width = UnicodeWidthStr::width(PLACEHOLDER);
+
+    rendered
+        .split('\n')
+        .map(|line| {
+            let occurrences = line.match_indices(version).count();
+            let redacted = line.replace(version, PLACEHOLDER);
+            if occurrences == 0 {
+                return redacted;
+            }
+
+            let target_width = UnicodeWidthStr::width(line).saturating_add(
+                occurrences
+                    .saturating_mul(placeholder_width.saturating_sub(SNAPSHOT_VERSION_WIDTH)),
+            );
+            let current_width = UnicodeWidthStr::width(redacted.as_str());
+            let mut normalized = redacted;
+            let closing_quote = normalized.strip_suffix('"').is_some();
+            if closing_quote {
+                normalized.pop();
+            }
+            if current_width < target_width {
+                normalized.push_str(&" ".repeat(target_width.saturating_sub(current_width)));
+            } else {
+                for _ in 0..current_width.saturating_sub(target_width) {
+                    if normalized.ends_with(' ') {
+                        normalized.pop();
+                    }
+                }
+            }
+            if closing_quote {
+                normalized.push('"');
+            }
+            normalized
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[cfg(test)]
+mod snapshot_tests {
+    use super::redact_snapshot_version;
+
+    #[test]
+    fn snapshot_version_redaction_should_keep_release_frame_width() {
+        let old = redact_snapshot_version(
+            "\"◆ prt 9.0.0  ·  test                                                   \"",
+            "9.0.0",
+        );
+        let new = redact_snapshot_version(
+            "\"◆ prt 10.0.0  ·  test                                                  \"",
+            "10.0.0",
+        );
+
+        assert_eq!(old, new);
+    }
 }
 
 #[cfg(test)]
