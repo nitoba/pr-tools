@@ -776,9 +776,9 @@ pub async fn generate(prep: &TestCardPrep) -> Result<PrDescription> {
 /// Configurações de criação do Test Case (espelha `TestCardSettings`).
 #[derive(Debug, Clone)]
 pub struct TestSettings {
-    /// `AreaPath` (`--area-path` ou `testAreaPath`).
+    /// `AreaPath` (`--area-path` ou `ProcessProfile.areaPath`).
     pub area_path: String,
-    /// Responsável (`--assigned-to` ou `testAssignedTo`).
+    /// Responsável (`--assigned-to` ou `ProcessProfile.assignedTo`).
     pub assigned_to: String,
     /// `IterationPath` (`--iteration-path` ou o do pai).
     pub iteration_path: String,
@@ -1380,15 +1380,14 @@ fn parse_priority_with_default(raw: Option<&str>, default: f64) -> Result<f64> {
 }
 
 fn legacy_profile_selection(config: &Config) -> ProfileSelection {
-    ProfileSelection {
-        profile: config::ProcessProfile::from_legacy(config),
-        program_field: config::AGROTRACE_PROGRAM_FIELD.to_owned(),
-        remote: git::RepositoryRemote {
+    process_profiles::legacy_selection(
+        config,
+        git::RepositoryRemote {
             organization: String::new(),
             project: String::new(),
             repository: String::new(),
         },
-    }
+    )
 }
 
 pub(crate) fn validate_profile_settings(
@@ -1800,6 +1799,7 @@ mod tests {
 
     use super::*;
     use crate::cli::Command;
+    use crate::config::ProcessProfile;
     use crate::git::RepositoryRemote;
 
     #[derive(Debug)]
@@ -2230,10 +2230,20 @@ mod tests {
         let parent = test_work_item(11763, "User Story", "Mudança funcional");
         let config = Config {
             azure_pat: "pat".to_owned(),
-            test_area_path: "project\\QA".to_owned(),
-            test_assigned_to: "qa@example.com".to_owned(),
-            test_team: "DevOps".to_owned(),
-            test_program: "Agrotrace".to_owned(),
+            profiles: vec![ProcessProfile {
+                name: "Agrotrace".to_owned(),
+                program_field: crate::config::AGROTRACE_PROGRAM_FIELD.to_owned(),
+                area_path: "project\\QA".to_owned(),
+                assigned_to: "qa@example.com".to_owned(),
+                team: "DevOps".to_owned(),
+                program: "Agrotrace".to_owned(),
+                priority: 2.0,
+                inherit_iteration_path: true,
+                parent_transition: Some("Test QA".to_owned()),
+                reviewer_dev: String::new(),
+                reviewer_sprint: String::new(),
+            }],
+            default_profile: "Agrotrace".to_owned(),
             ..Config::default()
         };
         let profile = legacy_profile_selection(&config);
@@ -2437,12 +2447,15 @@ mod tests {
     }
 
     #[test]
-    fn settings_should_resolve_defaults_from_config() {
+    fn settings_should_resolve_defaults_from_selected_profile() {
+        let mut profile = crate::config::ProcessProfile::named("Agrotrace").unwrap();
+        profile.area_path = "Proj\\Time".to_owned();
+        profile.assigned_to = "qa@x.com".to_owned();
+        profile.team = "DevOps".to_owned();
+        profile.program = "Agrotrace".to_owned();
         let config = Config {
-            test_area_path: "Proj\\Time".to_owned(),
-            test_assigned_to: "qa@x.com".to_owned(),
-            test_team: "DevOps".to_owned(),
-            test_program: "Agrotrace".to_owned(),
+            profiles: vec![profile],
+            default_profile: "Agrotrace".to_owned(),
             ..Config::default()
         };
         let parent: WorkItem = serde_json::from_value(serde_json::json!({
@@ -2460,9 +2473,12 @@ mod tests {
     }
 
     #[test]
-    fn settings_should_prefer_cli_over_config() {
+    fn settings_should_prefer_cli_over_selected_profile() {
+        let mut profile = crate::config::ProcessProfile::named("Agrotrace").unwrap();
+        profile.area_path = "Cfg".to_owned();
         let config = Config {
-            test_area_path: "Cfg".to_owned(),
+            profiles: vec![profile],
+            default_profile: "Agrotrace".to_owned(),
             ..Config::default()
         };
         let mut options = test_options();
@@ -2479,7 +2495,7 @@ mod tests {
     }
 
     #[test]
-    fn profile_settings_are_used_before_cli_overrides() {
+    fn selected_profile_provides_test_settings_and_program_field() {
         let config = Config {
             profiles: vec![crate::config::ProcessProfile {
                 name: "IBS Novo".to_owned(),
@@ -2519,6 +2535,7 @@ mod tests {
         assert!((settings.priority - 3.0).abs() < f64::EPSILON);
         assert_eq!(settings.team, "CLI Team");
         assert_eq!(settings.program, "Perfil");
+        assert_eq!(profile.program_field, "Custom.ProgramasNovo");
     }
 
     #[test]
@@ -2577,13 +2594,21 @@ mod tests {
 
     #[test]
     fn settings_should_require_team_and_program() {
-        let config = Config::default();
+        let config = Config {
+            profiles: vec![ProcessProfile::named("Agrotrace").unwrap()],
+            default_profile: "Agrotrace".to_owned(),
+            ..Config::default()
+        };
         let parent = test_work_item(1, "Task", "T");
         let err = TestSettings::from_cli_or_config(&test_options(), &config, &parent).unwrap_err();
         assert!(err.to_string().contains("Custom.Team"));
 
         let config = Config {
-            test_team: "DevOps".to_owned(),
+            profiles: vec![ProcessProfile {
+                team: "DevOps".to_owned(),
+                ..ProcessProfile::named("Agrotrace").unwrap()
+            }],
+            default_profile: "Agrotrace".to_owned(),
             ..Config::default()
         };
         let err = TestSettings::from_cli_or_config(&test_options(), &config, &parent).unwrap_err();

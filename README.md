@@ -49,10 +49,13 @@ prt init
 O wizard pergunta:
 
 - Azure DevOps PAT;
-- emails de review da sprint, de dev e do Test Case;
 - provider padrão;
-- modelo e thinking level do provider escolhido;
+- executável, modelo e thinking level do provider escolhido;
 - Base URL e API key quando o provider for OpenAI-compatible.
+
+O `prt init` é somente global: configura esses valores globais. Os reviewers e defaults de
+Test Case pertencem a perfis de processo e são cadastrados pelo onboarding do
+remote Azure durante `prt desc` ou `prt test`.
 
 A configuração fica no diretório de configuração do usuário (`%APPDATA%/pr-tools` no Windows, `~/.config/pr-tools` no Linux e `~/Library/Application Support/pr-tools` no macOS; `XDG_CONFIG_HOME/pr-tools` pode substituir no Linux). Os arquivos são criados com permissão restrita.
 
@@ -78,10 +81,10 @@ O diagnóstico verifica Git, remote Azure DevOps, PAT e acesso às APIs, configu
 ### Perfis de processo por repositório
 
 O perfil é associado ao remote Azure exato `(organization, project, repository)`;
-o caminho local nunca participa do binding. Para um clone da organização
-`ibsbiosistemico` sem essa associação, `prt desc` e `prt test` exibem a tela
-**Perfil do repositório IBS**, antes de chamar IA ou escrever no Azure, com as
-ações `Novo perfil`, `Importar perfil` e `Agora não`. Esta detecção ignora
+o caminho local nunca participa do binding. Para qualquer remote Azure parseável
+sem essa associação, `prt`, `prt desc` e `prt test` exibem a tela **Perfil do
+repositório Azure**, antes de chamar IA ou escrever no Azure, com as ações `Novo
+perfil`, `Importar perfil` e `Agora não`. Esta detecção ignora
 maiúsculas/minúsculas somente no nome da organização; projeto e repositório
 continuam exatos.
 
@@ -134,19 +137,21 @@ programa, transição do pai e `reviewerDev`/`reviewerSprint` ficam em
 }
 ```
 
-Configurações antigas sem `profiles` são migradas de forma atômica e
-idempotente para `Agrotrace`, preservando os defaults legados, prioridade `2`,
-herança de iteração e transição `Test QA`. O perfil legado implícito também usa
-`Agrotrace` como fallback. PAT, API key e demais segredos não pertencem aos
-perfis: continuam no `.env`/ambiente atual. O `prt test` consulta os metadados
+Configurações antigas com as seis chaves de processo na raiz são migradas de
+forma atômica e idempotente para `profiles[Agrotrace]`; as chaves legadas são
+removidas, preservando os defaults, prioridade `2`, herança de iteração e
+transição `Test QA`. O perfil legado implícito também usa `Agrotrace` como
+fallback. PAT e API key são globais e não pertencem aos perfis: continuam no
+`.env`/configuração global atual. O `prt test` consulta os metadados
 de `Test Case`, fields e estados antes de qualquer `POST`/`PATCH`; rode
 `prt doctor` para verificar bindings, schema, fields e reviewers antes de criar.
 
 Em `--dry-run`, `--raw` ou sem TTY, o onboarding não pergunta nem modifica
 `config.json`; o comando informa o remote e orienta executar o fluxo
-interativo ou `prt init`. `prt init` preserva perfis genéricos e seus bindings,
-e `prt doctor` exibe `programField` e valida seus valores/reviewers sem mostrar
-PAT ou API key.
+interativo. `prt init` configura somente valores globais (PAT, provider,
+modelos, reasoning e endpoint compatível), preserva perfis genéricos e seus
+bindings, e `prt doctor` exibe `programField` e valida seus valores/reviewers
+sem mostrar PAT ou API key.
 
 ## Gerar e criar PRs
 
@@ -163,7 +168,7 @@ prt desc --target dev --work-item 11763
 prt desc --target dev --target sprint --create
 ```
 
-O comando mostra título, descrição, targets e Work Item, copia o body para o clipboard quando possível e pede confirmação da criação e dos reviewers antes de publicar. O body do PR é mantido abaixo de 4000 caracteres; se a primeira geração exceder o limite, uma segunda chamada de IA o reescreve preservando o sentido. Os reviewers podem ser ajustados no próprio fluxo; os emails definidos no `init` são usados como sugestão. Ao reutilizar uma branch após um PR mesclado, o histórico do último PR concluído é usado como baseline para incluir apenas as novas alterações.
+O comando mostra título, descrição, targets e Work Item, copia o body para o clipboard quando possível e pede confirmação da criação e dos reviewers antes de publicar. O body do PR é mantido abaixo de 4000 caracteres; se a primeira geração exceder o limite, uma segunda chamada de IA o reescreve preservando o sentido. Os reviewers podem ser ajustados no próprio fluxo; os valores do perfil selecionado são usados como sugestão. Ao reutilizar uma branch após um PR mesclado, o histórico do último PR concluído é usado como baseline para incluir apenas as novas alterações.
 
 Opções úteis: `--source <branch>`, `--target <branch>` (repetível), `--provider <nome>`, `--model <nome>`, `--raw` e `--no-copy`.
 

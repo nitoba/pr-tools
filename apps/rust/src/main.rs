@@ -576,35 +576,41 @@ async fn run_test(options: &prt::cli::CliOptions) -> anyhow::Result<()> {
 /// Avalia o perfil antes de qualquer provider ou writer.
 ///
 /// A decisão é feita também nos modos sem TTY, mas nesses casos a ausência de
-/// binding IBS vira somente uma orientação: `config.json` nunca é alterado e
+/// binding vira somente uma orientação: `config.json` nunca é alterado e
 /// nenhuma pergunta bloqueante é tentada.
 fn ensure_profile_onboarding(
     options: &prt::cli::CliOptions,
 ) -> anyhow::Result<Option<prt::features::process_profiles::ProfileSelection>> {
     use prt::features::onboarding::{self, ProfileDecision};
 
-    let decision = onboarding::inspect(options.source.as_deref()).map_err(anyhow::Error::new)?;
+    let interactive = std::io::IsTerminal::is_terminal(&std::io::stdout())
+        && !options.output.dry_run
+        && !options.output.raw;
+    let decision = onboarding::inspect_with_migration(options.source.as_deref(), interactive)
+        .map_err(anyhow::Error::new)?;
     match decision {
         ProfileDecision::NoRemote { .. } => Ok(None),
         ProfileDecision::Selected(selection) => Ok(Some(selection)),
         ProfileDecision::NeedsOnboarding { config, remote } => {
-            let fallback = prt::features::process_profiles::select(&config, &remote)
-                .map_err(anyhow::Error::new)?;
-            let interactive = std::io::IsTerminal::is_terminal(&std::io::stdout())
-                && !options.output.dry_run
-                && !options.output.raw;
             if !interactive {
                 return Err(anyhow::Error::new(prt::error::AppError::cli(
                     onboarding::non_interactive_guidance(&remote),
                 )));
             }
             match prt::tui::profile_onboarding::run_profile_onboarding(
-                ProfileDecision::NeedsOnboarding { config, remote },
+                ProfileDecision::NeedsOnboarding {
+                    config: config.clone(),
+                    remote: remote.clone(),
+                },
             )? {
                 prt::tui::profile_onboarding::OnboardingOutcome::Saved(selection) => {
                     Ok(Some(*selection))
                 }
-                prt::tui::profile_onboarding::OnboardingOutcome::Skipped => Ok(Some(fallback)),
+                prt::tui::profile_onboarding::OnboardingOutcome::Skipped => {
+                    let fallback = prt::features::process_profiles::select(&config, &remote)
+                        .map_err(anyhow::Error::new)?;
+                    Ok(Some(fallback))
+                }
                 prt::tui::profile_onboarding::OnboardingOutcome::Aborted => {
                     Err(anyhow::Error::new(prt::error::AppError::cli(
                         "onboarding cancelado; nenhum perfil foi salvo",
@@ -694,8 +700,12 @@ mod tests {
         .expect("pai");
         let config = prt::config::Config {
             azure_pat: "pat".to_owned(),
-            test_team: "DevOps".to_owned(),
-            test_program: "Agrotrace".to_owned(),
+            profiles: vec![prt::config::ProcessProfile {
+                team: "DevOps".to_owned(),
+                program: "Agrotrace".to_owned(),
+                ..prt::config::ProcessProfile::named("Agrotrace").expect("perfil")
+            }],
+            default_profile: "Agrotrace".to_owned(),
             ..prt::config::Config::default()
         };
         let profile = prt::features::process_profiles::legacy_selection(&config, remote.clone());
@@ -722,6 +732,12 @@ mod tests {
             profile,
             fingerprint: prt::git::GitContextFingerprint::default(),
         }
+    }
+
+    #[test]
+    fn bare_prt_uses_desc_execution_path() {
+        let options = prt::cli::parse_cli(["prt"]).expect("comando padrão");
+        assert_eq!(options.command, prt::cli::Command::Desc);
     }
 
     fn update_prep() -> prt::features::update_pull_request::UpdatePrep {

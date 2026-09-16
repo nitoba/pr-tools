@@ -1,4 +1,4 @@
-//! Onboarding local de perfis para clones IBS.
+//! Onboarding local de perfis para remotes Azure sem associação.
 //!
 //! A decisão é deliberadamente anterior ao provider e aos writers remotos.
 //! Este módulo só lê Git/configuração e, depois de uma confirmação explícita,
@@ -8,9 +8,6 @@ use crate::config::{self, Config, ProcessProfile, RepositoryProfileBinding};
 use crate::error::{AppError, Result};
 use crate::features::process_profiles::{self, ProfileSelection};
 use crate::git::{self, RepositoryRemote};
-
-/// Organização que habilita o onboarding.
-pub const IBS_ORGANIZATION: &str = "ibsbiosistemico";
 
 /// Ações exibidas na tela inicial.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -166,7 +163,7 @@ pub enum ProfileDecision {
     },
     /// Binding ou fallback já resolvido.
     Selected(ProfileSelection),
-    /// Remote IBS sem binding exato; requer escolha do usuário em TTY.
+    /// Remote Azure sem binding exato; requer escolha do usuário em TTY.
     NeedsOnboarding {
         /// Configuração sem alterações.
         config: Config,
@@ -182,7 +179,24 @@ pub enum ProfileDecision {
 /// Retorna primeiro os erros de configuração, antes de permitir provider ou
 /// writer remoto.
 pub fn inspect(source: Option<&str>) -> Result<ProfileDecision> {
-    let config = config::load_config_without_migration()?;
+    inspect_with_migration(source, false)
+}
+
+/// Inspeciona a decisão, habilitando a migração apenas para uma execução que
+/// já confirmou que pode persistir localmente.
+///
+/// # Errors
+///
+/// Retorna erros de configuração ou coleta do contexto Git.
+pub fn inspect_with_migration(
+    source: Option<&str>,
+    migrate_legacy: bool,
+) -> Result<ProfileDecision> {
+    let config = if migrate_legacy {
+        config::load_config()?
+    } else {
+        config::load_config_without_migration()?
+    };
     process_profiles::validate_config(&config)?;
     let change = git::collect(source)?;
     let Some(remote) = change.remote else {
@@ -191,7 +205,7 @@ pub fn inspect(source: Option<&str>) -> Result<ProfileDecision> {
     resolve(config, remote)
 }
 
-/// Resolve um remote e só sinaliza onboarding para IBS sem binding exato.
+/// Resolve um remote Azure e sinaliza onboarding quando não há binding exato.
 ///
 /// # Errors
 ///
@@ -204,17 +218,11 @@ pub fn resolve(config: Config, remote: RepositoryRemote) -> Result<ProfileDecisi
         // `select` mantém a mensagem já usada no restante do produto, com o
         // remote e todos os perfis conflitantes.
         process_profiles::select(&config, &remote).map(ProfileDecision::Selected)
-    } else if bindings.is_empty() && is_ibs_remote(&remote) {
+    } else if bindings.is_empty() {
         Ok(ProfileDecision::NeedsOnboarding { config, remote })
     } else {
         process_profiles::select(&config, &remote).map(ProfileDecision::Selected)
     }
-}
-
-/// Compara a organização do remote sem distinção de maiúsculas/minúsculas.
-#[must_use]
-pub fn is_ibs_remote(remote: &RepositoryRemote) -> bool {
-    remote.organization.eq_ignore_ascii_case(IBS_ORGANIZATION)
 }
 
 /// Valida um draft sem tocar em arquivos ou serviços externos.
@@ -388,16 +396,14 @@ mod tests {
     }
 
     #[test]
-    fn missing_ibs_binding_exposes_remote_and_actions() {
-        let decision = resolve(Config::default(), remote("IBSBioSistemico")).unwrap();
+    fn any_azure_remote_without_binding_requires_onboarding() {
+        let decision = resolve(Config::default(), remote("OutraOrganizacao")).unwrap();
         let ProfileDecision::NeedsOnboarding { remote, .. } = decision else {
-            panic!("remote IBS sem binding deveria pedir onboarding")
+            panic!("remote Azure sem binding deveria pedir onboarding")
         };
-        assert_eq!(remote.organization, "IBSBioSistemico");
+        assert_eq!(remote.organization, "OutraOrganizacao");
         assert_eq!(remote.project, "Projeto IBS");
         assert_eq!(remote.repository, "repo");
-        assert_eq!(IBS_ORGANIZATION, "ibsbiosistemico");
-        assert!(is_ibs_remote(&remote));
         assert_eq!(
             [
                 OnboardingAction::New,
@@ -410,12 +416,18 @@ mod tests {
     }
 
     #[test]
-    fn non_ibs_remote_uses_existing_fallback() {
+    fn exact_binding_selects_profile_without_onboarding() {
         let mut config = Config::default();
         config
             .profiles
             .push(ProcessProfile::named("CheckMilk").unwrap());
         config.default_profile = "CheckMilk".to_owned();
+        config.bindings.push(RepositoryProfileBinding {
+            profile: "CheckMilk".to_owned(),
+            organization: "outra-org".to_owned(),
+            project: "Projeto IBS".to_owned(),
+            repository: "repo".to_owned(),
+        });
         let decision = resolve(config, remote("outra-org")).unwrap();
         assert!(
             matches!(decision, ProfileDecision::Selected(selection) if selection.name() == "CheckMilk")
@@ -505,7 +517,7 @@ mod tests {
     }
 
     #[test]
-    fn saved_binding_is_idempotent() {
+    fn saved_remote_reuses_binding_without_duplicate_onboarding() {
         let config = generic_config();
         let remote = remote("ibsbiosistemico");
         let draft = valid_draft("IBS Novo");
@@ -517,7 +529,7 @@ mod tests {
     }
 
     #[test]
-    fn cancel_or_persist_failure_preserves_previous_config() {
+    fn invalid_cancelled_or_failed_onboarding_preserves_previous_configuration() {
         let config = generic_config();
         let remote = remote("ibsbiosistemico");
         let invalid = OnboardingDraft {
@@ -543,6 +555,15 @@ mod tests {
         assert_eq!(before.profiles.len(), 0);
         assert_eq!(before.bindings.len(), 0);
         assert_eq!(before.default_profile, "Agrotrace");
+    }
+
+    #[test]
+    fn non_interactive_guidance_names_remote_and_preserves_no_write_contract() {
+        let remote = remote("OutraOrganizacao");
+        let guidance = non_interactive_guidance(&remote);
+        assert!(guidance.contains("OutraOrganizacao/Projeto IBS/repo"));
+        assert!(guidance.contains("nenhuma alteração foi feita"));
+        assert!(guidance.contains("terminal interativo"));
     }
 
     #[test]

@@ -24,13 +24,33 @@ pub struct ProfileSelection {
     pub remote: RepositoryRemote,
 }
 
-/// Cria o snapshot compatível para consumidores legados que ainda não têm um
-/// remote disponível (por exemplo, fixtures locais e a camada de settings).
+/// Cria o snapshot compatível para consumidores locais que ainda não têm um
+/// remote disponível (por exemplo, fixtures e a camada de settings).
+///
+/// # Panics
+///
+/// Entra em pânico apenas se os defaults compilados não puderem criar o perfil
+/// Agrotrace canônico, o que indica um erro interno de configuração.
 #[must_use]
 pub fn legacy_selection(config: &Config, remote: RepositoryRemote) -> ProfileSelection {
+    let profile_name = if config.default_profile.trim().is_empty() {
+        AGROTRACE_PROFILE
+    } else {
+        config.default_profile.as_str()
+    };
+    let profile = config
+        .effective_process_profiles()
+        .into_iter()
+        .find(|profile| profile.name == profile_name)
+        .or_else(|| ProcessProfile::named(AGROTRACE_PROFILE))
+        .expect("perfil Agrotrace canônico disponível");
+    let program_field = profile
+        .program_field()
+        .unwrap_or(crate::config::AGROTRACE_PROGRAM_FIELD)
+        .to_owned();
     ProfileSelection {
-        profile: ProcessProfile::from_legacy(config),
-        program_field: crate::config::AGROTRACE_PROGRAM_FIELD.to_owned(),
+        profile,
+        program_field,
         remote,
     }
 }
@@ -361,7 +381,7 @@ pub fn select(config: &Config, remote: &RepositoryRemote) -> Result<ProfileSelec
         .find(|profile| profile.name == profile_name)
         .ok_or_else(|| AppError::Config {
             message: format!(
-                "perfil {profile_name} não encontrado para o remote {}; execute `prt init`",
+                "perfil {profile_name} não encontrado para o remote {}; associe um perfil no onboarding ou em config.json",
                 remote_label(remote)
             ),
         })?;

@@ -1,4 +1,4 @@
-//! TUI compartilhada para criar/importar o perfil de um remote IBS.
+//! TUI compartilhada para criar/importar o perfil de um remote Azure.
 
 use std::io::IsTerminal;
 use std::time::{Duration, Instant};
@@ -121,9 +121,7 @@ impl ProfileOnboarding {
     }
 
     fn profiles(&self) -> Vec<ProcessProfile> {
-        // Perfis persistidos são listados e o Agrotrace implícito mantém a
-        // importação útil para configurações legadas ainda não migradas.
-        self.config.effective_process_profiles()
+        self.config.profiles.clone()
     }
 
     fn current_field(&self) -> Field {
@@ -322,7 +320,7 @@ impl Widget for &ProfileOnboarding {
             buf,
             StatusHeader {
                 command: "desc/test",
-                phase: "Perfil do repositório IBS",
+                phase: "Perfil do repositório Azure",
                 message,
                 progress: None,
                 tick: self.tick,
@@ -696,7 +694,7 @@ mod tests {
     }
 
     #[test]
-    fn action_screen_should_offer_all_three_decisions() {
+    fn action_screen_should_show_remote_and_all_three_decisions() {
         let app = ProfileOnboarding::new(Config::default(), remote());
         let mut buffer = Buffer::empty(Rect::new(0, 0, 100, 30));
         app.render(buffer.area, &mut buffer);
@@ -711,7 +709,7 @@ mod tests {
     }
 
     #[test]
-    fn review_screen_should_show_binding_values_and_explicit_save() {
+    fn review_screen_should_show_all_fields_and_explicit_save() {
         let mut app = ProfileOnboarding::new(Config::default(), remote());
         app.draft = OnboardingDraft {
             name: "IBS Novo".to_owned(),

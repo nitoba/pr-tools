@@ -164,7 +164,9 @@ async fn inspect_process_profiles(
         checks.push(fail_check(
             "Binding de processo",
             format!("{label}: nenhum binding explícito; fallback ativo: {fallback}."),
-            format!("Associe {label} a um perfil em config.json ou execute `prt init`."),
+            format!(
+                "Associe {label} a um perfil em config.json ou execute o onboarding de perfil com `prt desc`/`prt test` em um terminal interativo."
+            ),
         ));
     } else {
         checks.push(ok_check(
@@ -196,7 +198,7 @@ async fn inspect_process_profiles(
             "Campos do perfil",
             format!("{label} / {}: Custom.Team está vazio.", selection.name()),
             format!(
-                "Preencha team no perfil {} em `prt init` ou config.json.",
+                "Preencha team no perfil {} em config.json ou no onboarding interativo.",
                 selection.name()
             ),
         ));
@@ -210,7 +212,7 @@ async fn inspect_process_profiles(
                 selection.program_field
             ),
             format!(
-                "Preencha program no perfil {} em `prt init` ou config.json.",
+                "Preencha program no perfil {} em config.json ou no onboarding interativo.",
                 selection.name()
             ),
         ));
@@ -609,27 +611,7 @@ async fn path_exists(path: &std::path::Path) -> bool {
     tokio::fs::try_exists(path).await.unwrap_or(false)
 }
 
-/// Checa um email opcional de reviewer/responsável.
-fn inspect_email(component: &'static str, value: &str, checks: &mut Vec<Check>) {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        checks.push(warn_check(
-            component,
-            "Email não configurado; a confirmação solicitará o reviewer/responsável.".to_owned(),
-            "Execute `prt init` ou informe o email durante o fluxo interativo.".to_owned(),
-        ));
-    } else if !is_valid_email(trimmed) {
-        checks.push(warn_check(
-            component,
-            "O valor configurado não parece ser um email válido.".to_owned(),
-            "Execute `prt init` e informe um email Azure DevOps válido.".to_owned(),
-        ));
-    } else {
-        checks.push(ok_check(component, "Email configurado.".to_owned()));
-    }
-}
-
-/// Inspeciona a configuração carregada (arquivos, template, providers, emails).
+/// Inspeciona a configuração carregada (arquivos, template e providers).
 async fn inspect_configuration(config: &Config, checks: &mut Vec<Check>) {
     let paths = config_paths();
     let (config_exists, env_exists, template_exists) = tokio::join!(
@@ -651,7 +633,7 @@ async fn inspect_configuration(config: &Config, checks: &mut Vec<Check>) {
         checks.push(warn_check(
             "Configuração local",
             "Nenhum arquivo de configuração foi criado; defaults estão sendo usados.".to_owned(),
-            "Execute `prt init` para salvar PAT, reviewers, provider e modelos.".to_owned(),
+            "Execute `prt init` para salvar PAT, provider e modelos.".to_owned(),
         ));
     }
     if template_exists {
@@ -675,22 +657,6 @@ async fn inspect_configuration(config: &Config, checks: &mut Vec<Check>) {
     } else {
         let names = config.providers.join(", ");
         checks.push(ok_check("Providers configurados", names));
-    }
-    inspect_email("Reviewer de dev", &config.reviewer_dev, checks);
-    inspect_email("Reviewer de sprint", &config.reviewer_sprint, checks);
-    inspect_email("Reviewer do Test Case", &config.test_assigned_to, checks);
-    if config.test_area_path.trim().is_empty() {
-        checks.push(warn_check(
-            "Defaults do Test Case",
-            "AreaPath não configurado.".to_owned(),
-            "Informe o AreaPath durante a criação ou configure-o em `prt init`.".to_owned(),
-        ));
-    } else {
-        let area = config.test_area_path.trim().to_owned();
-        checks.push(ok_check(
-            "Defaults do Test Case",
-            format!("AreaPath: {area}."),
-        ));
     }
 }
 
@@ -1291,12 +1257,12 @@ mod tests {
             .expect("check de binding");
         assert!(!binding.ok);
         assert!(binding.detail.contains("org/CHECKMILK/checkmilk"));
-        assert!(binding.fix.contains("prt init"));
+        assert!(binding.fix.contains("onboarding"));
         assert_eq!(DoctorReport { checks }.exit_code(), 1);
     }
 
     #[tokio::test]
-    async fn doctor_accepts_generic_profile_and_reports_invalid_values() {
+    async fn doctor_reports_selected_profile_without_legacy_root_defaults() {
         let remote = RepositoryRemote {
             organization: "ibsbiosistemico".to_owned(),
             project: "Projeto".to_owned(),

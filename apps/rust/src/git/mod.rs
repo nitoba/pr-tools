@@ -293,11 +293,16 @@ pub fn parse_azure_remote(url: &str) -> Option<RepositoryRemote> {
     // ssh: git@ssh.dev.azure.com:v3/org/project/repo
     if let Some(rest) = url.strip_prefix("git@ssh.dev.azure.com:v3/") {
         let parts: Vec<&str> = rest.split('/').collect();
-        if parts.len() >= 3 {
+        let repository = parts.get(2).copied().unwrap_or("").trim_end_matches(".git");
+        if parts.len() >= 3
+            && !parts[0].is_empty()
+            && !parts[1].is_empty()
+            && !repository.is_empty()
+        {
             return Some(RepositoryRemote {
                 organization: parts[0].to_owned(),
                 project: parts[1].to_owned(),
-                repository: parts[2].trim_end_matches(".git").to_owned(),
+                repository: repository.to_owned(),
             });
         }
     }
@@ -310,32 +315,37 @@ pub fn parse_azure_remote(url: &str) -> Option<RepositoryRemote> {
         if parts.len() == 2 {
             let left: Vec<&str> = parts[0].split('/').collect();
             if left.len() >= 2 {
+                let repository = parts[1].split('/').next_back().unwrap_or("");
+                if left[0].is_empty() || left[1..].iter().any(|part| part.is_empty()) {
+                    return None;
+                }
+                if repository.is_empty() {
+                    return None;
+                }
                 return Some(RepositoryRemote {
                     organization: left[0].to_owned(),
                     project: left[1..].join("/"),
-                    repository: parts[1].split('/').next_back().unwrap_or("").to_owned(),
+                    repository: repository.to_owned(),
                 });
             }
         }
     }
     // legacy: https://[userinfo@]org.visualstudio.com/project/_git/repo
     if let Some((host, path)) = https_remote_parts(url) {
-        if path.is_empty()
-            && let Some(org) = host.strip_suffix(".visualstudio.com")
-        {
-            return Some(RepositoryRemote {
-                organization: org.to_owned(),
-                project: String::new(),
-                repository: String::new(),
-            });
-        }
         if let Some(org) = host.strip_suffix(".visualstudio.com") {
-            let repo = path.split("/_git/").last().unwrap_or("").to_owned();
-            let project = path.split("/_git/").next().unwrap_or("").to_owned();
+            let (project, repository) = path.split_once("/_git/")?;
+            let repository = repository
+                .split('/')
+                .next_back()
+                .unwrap_or("")
+                .trim_end_matches(".git");
+            if project.is_empty() || repository.is_empty() {
+                return None;
+            }
             return Some(RepositoryRemote {
                 organization: org.to_owned(),
-                project,
-                repository: repo,
+                project: project.to_owned(),
+                repository: repository.to_owned(),
             });
         }
     }
@@ -573,6 +583,13 @@ mod tests {
         assert_eq!(legacy.organization, "org");
         assert_eq!(legacy.project, "project");
         assert_eq!(legacy.repository, "repo");
+    }
+
+    #[test]
+    fn non_azure_remote_is_not_parseable_for_onboarding() {
+        assert!(parse_azure_remote("https://github.com/org/project.git").is_none());
+        assert!(parse_azure_remote("not a remote URL").is_none());
+        assert!(parse_azure_remote("https://org.visualstudio.com").is_none());
     }
 
     #[test]

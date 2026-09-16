@@ -501,7 +501,7 @@ mod tests {
     }
 
     #[test]
-    fn profile_reviewers_are_frozen_with_manual_override() {
+    fn selected_profile_provides_reviewers_to_desc() {
         let selection = ProfileSelection {
             profile: crate::config::ProcessProfile {
                 name: "IBS Novo".to_owned(),

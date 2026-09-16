@@ -1,7 +1,9 @@
 //! Configuração — espelha `config_models` + `config_defaults` + `config_service` do Dart.
 //!
-//! Precedência: CLI > env (`PR_AI_*`, `AZURE_PAT`, `PR_REVIEWER_*`, `TEST_CARD_*`)
-//! > dotenv (`.env`) > `config.json` > defaults.
+//! Precedência: CLI > env (`PR_AI_*`, `AZURE_PAT`) > dotenv (`.env`) >
+//! `config.json` > defaults. Processo, reviewers e defaults de Test Case vivem
+//! exclusivamente em [`ProcessProfile`]; as chaves antigas da raiz são lidas
+//! apenas pela migração de JSON legado.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -40,6 +42,15 @@ pub const AGROTRACE_PROGRAM_FIELD: &str = "Custom.ProgramasAgrotrace";
 pub const CHECKMILK_PROGRAM_FIELD: &str = "Custom.ProgramasCheckmilk";
 /// Estado padrão usado pelo perfil legado.
 pub const DEFAULT_PARENT_TRANSITION: &str = "Test QA";
+
+const LEGACY_ROOT_KEYS: [&str; 6] = [
+    "reviewerDev",
+    "reviewerSprint",
+    "testAreaPath",
+    "testAssignedTo",
+    "testProgram",
+    "testTeam",
+];
 
 /// Template padrão (PT-BR) — espelha `defaultTemplate` do Dart.
 pub const DEFAULT_TEMPLATE: &str = r#"Analise o diff e o log do git fornecidos e gere uma descrição de pull request em português brasileiro.
@@ -239,22 +250,28 @@ pub struct Config {
     /// PAT do Azure DevOps (nunca logar — `obs-no-sensitive-data`).
     #[serde(default)]
     pub azure_pat: String,
-    /// Email de review para `dev`.
+    /// Campo transitório usado somente por testes/compatibilidade de migração.
+    #[serde(skip)]
     #[serde(default)]
     pub reviewer_dev: String,
-    /// Email de review para `sprint`.
+    /// Campo transitório usado somente por testes/compatibilidade de migração.
+    #[serde(skip)]
     #[serde(default)]
     pub reviewer_sprint: String,
-    /// `AreaPath` padrão de Test Cases.
+    /// Campo transitório usado somente por testes/compatibilidade de migração.
+    #[serde(skip)]
     #[serde(default)]
     pub test_area_path: String,
-    /// Responsável padrão.
+    /// Campo transitório usado somente por testes/compatibilidade de migração.
+    #[serde(skip)]
     #[serde(default)]
     pub test_assigned_to: String,
-    /// `Custom.Team`.
+    /// Campo transitório usado somente por testes/compatibilidade de migração.
+    #[serde(skip)]
     #[serde(default)]
     pub test_team: String,
-    /// `Custom.ProgramasAgrotrace`.
+    /// Campo transitório usado somente por testes/compatibilidade de migração.
+    #[serde(skip)]
     #[serde(default)]
     pub test_program: String,
     /// API key do endpoint compatible.
@@ -342,16 +359,18 @@ impl Config {
     /// através de [`migrate_legacy_json`] para que a troca seja atômica e não
     /// serialize PAT/API key dentro do perfil.
     pub fn migrate_legacy_profiles(&mut self) -> bool {
-        if !self.profiles.is_empty() {
-            if self.default_profile.trim().is_empty()
-                && self
-                    .profiles
-                    .iter()
-                    .any(|profile| profile.name == AGROTRACE_PROFILE)
-            {
-                AGROTRACE_PROFILE.clone_into(&mut self.default_profile);
-                return true;
-            }
+        if !self.profiles.is_empty()
+            || [
+                &self.reviewer_dev,
+                &self.reviewer_sprint,
+                &self.test_area_path,
+                &self.test_assigned_to,
+                &self.test_program,
+                &self.test_team,
+            ]
+            .iter()
+            .all(|value| value.trim().is_empty())
+        {
             return false;
         }
         let legacy = ProcessProfile::from_legacy(self);
@@ -369,7 +388,9 @@ impl Config {
             .iter()
             .any(|profile| profile.name == AGROTRACE_PROFILE)
         {
-            profiles.push(ProcessProfile::from_legacy(self));
+            if let Some(agrotrace) = ProcessProfile::named(AGROTRACE_PROFILE) {
+                profiles.push(agrotrace);
+            }
         }
         profiles
     }
@@ -440,6 +461,34 @@ fn read_config_source(primary: &Path, legacy: Option<&Path>) -> Option<(PathBuf,
     })
 }
 
+fn legacy_value(object: &serde_json::Map<String, Value>, key: &str) -> String {
+    object
+        .get(key)
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned()
+}
+
+fn legacy_profile_from_object(object: &serde_json::Map<String, Value>) -> ProcessProfile {
+    ProcessProfile {
+        name: AGROTRACE_PROFILE.to_owned(),
+        program_field: AGROTRACE_PROGRAM_FIELD.to_owned(),
+        area_path: legacy_value(object, "testAreaPath"),
+        assigned_to: legacy_value(object, "testAssignedTo"),
+        team: legacy_value(object, "testTeam"),
+        program: legacy_value(object, "testProgram"),
+        priority: 2.0,
+        inherit_iteration_path: true,
+        parent_transition: Some(DEFAULT_PARENT_TRANSITION.to_owned()),
+        reviewer_dev: legacy_value(object, "reviewerDev"),
+        reviewer_sprint: legacy_value(object, "reviewerSprint"),
+    }
+}
+
+fn has_legacy_root_keys(object: &serde_json::Map<String, Value>) -> bool {
+    LEGACY_ROOT_KEYS.iter().any(|key| object.contains_key(*key))
+}
+
 /// Acrescenta a migração legada ao JSON existente sem reserializar segredos.
 fn migrate_legacy_json(raw: &str, config: &Config) -> crate::error::Result<String> {
     let mut value: Value =
@@ -451,22 +500,39 @@ fn migrate_legacy_json(raw: &str, config: &Config) -> crate::error::Result<Strin
         .ok_or_else(|| crate::error::AppError::Config {
             message: "config.json deve conter um objeto JSON".to_owned(),
         })?;
-    let profile = config
-        .profiles
-        .iter()
-        .find(|profile| profile.name == AGROTRACE_PROFILE)
-        .cloned()
-        .unwrap_or_else(|| ProcessProfile::from_legacy(config));
-    object.insert(
-        "profiles".to_owned(),
-        serde_json::to_value([profile]).map_err(|error| crate::error::AppError::Config {
-            message: format!("falha ao serializar perfil legado: {error}"),
-        })?,
-    );
-    object.insert(
-        "defaultProfile".to_owned(),
-        Value::String(AGROTRACE_PROFILE.to_owned()),
-    );
+    let has_profiles = object
+        .get("profiles")
+        .and_then(Value::as_array)
+        .is_some_and(|profiles| !profiles.is_empty());
+    if !has_profiles {
+        let profile = config
+            .profiles
+            .iter()
+            .find(|profile| profile.name == AGROTRACE_PROFILE)
+            .cloned()
+            .unwrap_or_else(|| legacy_profile_from_object(object));
+        object.insert(
+            "profiles".to_owned(),
+            serde_json::to_value([profile]).map_err(|error| crate::error::AppError::Config {
+                message: format!("falha ao serializar perfil legado: {error}"),
+            })?,
+        );
+        object.insert(
+            "defaultProfile".to_owned(),
+            Value::String(AGROTRACE_PROFILE.to_owned()),
+        );
+    }
+    for key in LEGACY_ROOT_KEYS {
+        object.remove(key);
+    }
+    if let Some(profiles) = object.get_mut("profiles").and_then(Value::as_array_mut) {
+        for profile in profiles {
+            if let Some(profile) = profile.as_object_mut() {
+                profile.remove("azurePat");
+                profile.remove("apiKey");
+            }
+        }
+    }
     serde_json::to_string_pretty(&value)
         .map(|json| format!("{json}\n"))
         .map_err(|error| crate::error::AppError::Config {
@@ -512,7 +578,71 @@ pub fn persist_local_config(config: &Config) -> crate::error::Result<()> {
         serde_json::to_string_pretty(&json).map_err(|error| crate::error::AppError::Config {
             message: format!("falha ao formatar config: {error}"),
         })?;
-    write_atomic(&paths.config_file, &format!("{contents}\n"))
+    let original_env = read_optional_file(&paths.env_file)?;
+    if let Err(error) = persist_global_env(&paths.env_file, config.azure_pat.as_str()) {
+        let _ = restore_optional_file(&paths.env_file, original_env.as_deref());
+        return Err(error);
+    }
+    if let Err(error) = write_atomic(&paths.config_file, &format!("{contents}\n")) {
+        let _ = restore_optional_file(&paths.env_file, original_env.as_deref());
+        return Err(error);
+    }
+    Ok(())
+}
+
+fn persist_global_env(path: &Path, azure_pat: &str) -> crate::error::Result<()> {
+    let current = read_optional_file(path)?.unwrap_or_default();
+    let mut lines: Vec<String> = current.lines().map(str::to_owned).collect();
+    lines.retain(|line| {
+        let Some((key, _)) = line.trim_start().split_once('=') else {
+            return true;
+        };
+        !matches!(
+            key.trim(),
+            "PR_REVIEWER_DEV"
+                | "PR_REVIEWER_SPRINT"
+                | "TEST_CARD_ASSIGNED_TO"
+                | "TEST_CARD_AREA_PATH"
+                | "TEST_CARD_TEAM"
+                | "TEST_CARD_PROGRAM"
+        )
+    });
+    if !azure_pat.trim().is_empty() {
+        let escaped = azure_pat.replace('\\', r"\\").replace('"', "\\\"");
+        let line = format!(r#"AZURE_PAT="{escaped}""#);
+        if let Some(existing) = lines.iter_mut().find(|line| {
+            let trimmed = line.trim_start();
+            trimmed.starts_with("AZURE_PAT")
+                && trimmed["AZURE_PAT".len()..].trim_start().starts_with('=')
+        }) {
+            *existing = line;
+        } else {
+            lines.push(line);
+        }
+    }
+    if lines.is_empty() && azure_pat.trim().is_empty() && current.trim().is_empty() {
+        return Ok(());
+    }
+    write_atomic(path, &format!("{}\n", lines.join("\n").trim_end()))
+}
+
+fn read_optional_file(path: &Path) -> crate::error::Result<Option<String>> {
+    match std::fs::read_to_string(path) {
+        Ok(contents) => Ok(Some(contents)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn restore_optional_file(path: &Path, contents: Option<&str>) -> crate::error::Result<()> {
+    match contents {
+        Some(contents) => write_atomic(path, contents),
+        None => match std::fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error.into()),
+        },
+    }
 }
 
 fn config_base_dir(
@@ -592,7 +722,8 @@ fn load_config_internal(migrate_legacy: bool) -> crate::error::Result<Config> {
             })?;
         config = file_cfg;
     }
-    // `.env` opcional (merge simples `KEY=VAL`).
+    // `.env` opcional (merge simples `KEY=VAL`). Apenas credenciais e opções
+    // globais são aplicadas; overrides de processo antigos não são fonte.
     if let Some(raw) = read_config_file(
         &paths.env_file,
         legacy.as_ref().map(|paths| paths.env_file.as_path()),
@@ -626,11 +757,18 @@ fn load_config_internal(migrate_legacy: bool) -> crate::error::Result<Config> {
             serde_json::from_str(&raw).map_err(|error| crate::error::AppError::Config {
                 message: format!("falha ao ler config.json para migração: {error}"),
             })?;
-        let has_profiles = raw_value
-            .get("profiles")
-            .and_then(Value::as_array)
-            .is_some_and(|profiles| !profiles.is_empty());
-        if migrate_legacy && !has_profiles && config.migrate_legacy_profiles() {
+        let has_legacy = raw_value.as_object().is_some_and(has_legacy_root_keys);
+        if migrate_legacy && has_legacy {
+            let has_profiles = raw_value
+                .get("profiles")
+                .and_then(Value::as_array)
+                .is_some_and(|profiles| !profiles.is_empty());
+            if !has_profiles {
+                config.profiles.push(legacy_profile_from_object(
+                    raw_value.as_object().expect("objeto JSON validado"),
+                ));
+                AGROTRACE_PROFILE.clone_into(&mut config.default_profile);
+            }
             let migrated = migrate_legacy_json(&raw, &config)?;
             write_atomic(&source_path, &migrated)?;
         }
@@ -660,12 +798,6 @@ fn parse_dotenv_value(raw: &str) -> String {
 fn apply_env_kv(config: &mut Config, key: &str, value: &str) {
     match key {
         "AZURE_PAT" | "AZURE_DEVOPS_PAT" => value.clone_into(&mut config.azure_pat),
-        "PR_REVIEWER_DEV" => value.clone_into(&mut config.reviewer_dev),
-        "PR_REVIEWER_SPRINT" => value.clone_into(&mut config.reviewer_sprint),
-        "TEST_CARD_ASSIGNED_TO" => value.clone_into(&mut config.test_assigned_to),
-        "TEST_CARD_AREA_PATH" => value.clone_into(&mut config.test_area_path),
-        "TEST_CARD_TEAM" => value.clone_into(&mut config.test_team),
-        "TEST_CARD_PROGRAM" => value.clone_into(&mut config.test_program),
         "PR_AI_BASE_URL" => value.clone_into(&mut config.base_url),
         "PR_AI_API_KEY" => value.clone_into(&mut config.api_key),
         _ => {}
@@ -725,7 +857,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_config_should_materialize_agrotrace_and_default() {
+    fn legacy_json_migration_should_materialize_single_agrotrace_profile() {
         let mut config = Config {
             test_area_path: "AGROTRACE\\QA".to_owned(),
             test_assigned_to: "qa@example.com".to_owned(),
@@ -751,7 +883,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_migration_should_be_atomic_idempotent_and_secret_free() {
+    fn legacy_migration_should_be_idempotent_and_keep_original_on_atomic_failure() {
         let dir = tempfile::tempdir().expect("diretório temporário");
         let path = dir.path().join("config.json");
         let raw = serde_json::json!({
@@ -759,20 +891,24 @@ mod tests {
             "testAssignedTo": "qa@example.com",
             "testTeam": "DevOps",
             "testProgram": "Agrotrace",
+            "reviewerDev": "dev@example.com",
+            "reviewerSprint": "sprint@example.com",
             "azurePat": "pat-secret",
             "apiKey": "api-secret"
         });
         std::fs::write(&path, serde_json::to_string_pretty(&raw).unwrap()).unwrap();
-        let mut config: Config = serde_json::from_value(raw).unwrap();
-        config.azure_pat = "pat-secret".to_owned();
-        config.api_key = "api-secret".to_owned();
-        assert!(config.migrate_legacy_profiles());
+        let config: Config = serde_json::from_value(raw).unwrap();
+        // The loader reads legacy process values from the raw JSON object;
+        // transient compatibility fields are intentionally skipped by serde.
         let migrated = migrate_legacy_json(&std::fs::read_to_string(&path).unwrap(), &config)
             .expect("migração");
         write_atomic(&path, &migrated).expect("substituição atômica");
         let first: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(first["profiles"].as_array().unwrap().len(), 1);
         assert_eq!(first["defaultProfile"], AGROTRACE_PROFILE);
+        for key in LEGACY_ROOT_KEYS {
+            assert!(first.get(key).is_none(), "chave legada persistida: {key}");
+        }
         assert!(!first["profiles"].to_string().contains("pat-secret"));
         assert!(!first["profiles"].to_string().contains("api-secret"));
 
@@ -784,5 +920,104 @@ mod tests {
         let repeated: Value =
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(repeated["profiles"].as_array().unwrap().len(), 1);
+
+        let target = dir.path().join("config-failure");
+        std::fs::create_dir(&target).unwrap();
+        let marker = target.join("original");
+        std::fs::write(&marker, "original").unwrap();
+        assert!(write_atomic(&target, "replacement").is_err());
+        assert_eq!(std::fs::read_to_string(&marker).unwrap(), "original");
+    }
+
+    #[test]
+    fn normalization_should_remove_legacy_keys_and_preserve_existing_profiles() {
+        let raw = serde_json::json!({
+            "providers": ["codex"],
+            "defaultProfile": "Existente",
+            "reviewerDev": "legacy-dev@example.com",
+            "reviewerSprint": "legacy-sprint@example.com",
+            "testAreaPath": "Legacy\\QA",
+            "testAssignedTo": "legacy@example.com",
+            "testProgram": "Legacy",
+            "testTeam": "Legacy Team",
+            "profiles": [{
+                "name": "Existente",
+                "programField": "Custom.ProgramasExistente",
+                "areaPath": "Atual\\QA",
+                "assignedTo": "atual@example.com",
+                "team": "Atual Team",
+                "program": "Atual",
+                "priority": 4,
+                "inheritIterationPath": false,
+                "parentTransition": "Ready",
+                "reviewerDev": "atual-dev@example.com",
+                "reviewerSprint": "atual-sprint@example.com",
+                "azurePat": "profile-pat",
+                "apiKey": "profile-key"
+            }],
+            "bindings": [{
+                "profile": "Existente",
+                "organization": "org",
+                "project": "project",
+                "repository": "repo"
+            }]
+        });
+        let mut config: Config = serde_json::from_value(raw.clone()).unwrap();
+        let migrated = migrate_legacy_json(&raw.to_string(), &config).unwrap();
+        let value: Value = serde_json::from_str(&migrated).unwrap();
+        for key in LEGACY_ROOT_KEYS {
+            assert!(value.get(key).is_none(), "chave legada persistida: {key}");
+        }
+        assert_eq!(value["defaultProfile"], "Existente");
+        assert_eq!(value["profiles"][0]["areaPath"], "Atual\\QA");
+        assert_eq!(value["profiles"][0]["reviewerDev"], "atual-dev@example.com");
+        assert!(value["profiles"][0].get("azurePat").is_none());
+        assert!(value["profiles"][0].get("apiKey").is_none());
+        assert_eq!(value["bindings"][0]["profile"], "Existente");
+        assert_eq!(value["providers"], serde_json::json!(["codex"]));
+        config.profiles = serde_json::from_value(value["profiles"].clone()).unwrap();
+        assert_eq!(config.profiles.len(), 1);
+    }
+
+    #[test]
+    fn canonical_serialization_should_omit_legacy_root_keys_and_profile_secrets() {
+        let config = Config {
+            profiles: vec![ProcessProfile::named(AGROTRACE_PROFILE).unwrap()],
+            ..Config::default()
+        };
+        let value = serde_json::to_value(config).unwrap();
+        for key in LEGACY_ROOT_KEYS {
+            assert!(value.get(key).is_none(), "chave legada serializada: {key}");
+        }
+        let profile = &value["profiles"][0];
+        assert!(profile.get("azurePat").is_none());
+        assert!(profile.get("apiKey").is_none());
+    }
+
+    #[test]
+    fn legacy_process_dotenv_should_be_ignored_while_global_secrets_are_preserved() {
+        let mut config = Config::default();
+        apply_env_kv(&mut config, "PR_REVIEWER_DEV", "legacy@example.com");
+        apply_env_kv(&mut config, "TEST_CARD_PROGRAM", "Legacy");
+        apply_env_kv(&mut config, "AZURE_PAT", "pat-secret");
+        apply_env_kv(&mut config, "PR_AI_API_KEY", "api-secret");
+        assert!(config.reviewer_dev.is_empty());
+        assert!(config.test_program.is_empty());
+        assert_eq!(config.azure_pat, "pat-secret");
+        assert_eq!(config.api_key, "api-secret");
+    }
+
+    #[test]
+    fn persisted_global_env_should_keep_pat_and_remove_process_overrides() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".env");
+        std::fs::write(&path, "OTHER=1\nAZURE_PAT=\"old\"\nTEST_CARD_TEAM=legacy\n").unwrap();
+
+        persist_global_env(&path, "new\\pat").unwrap();
+
+        let contents = std::fs::read_to_string(path).unwrap();
+        assert!(contents.contains("OTHER=1"));
+        assert!(contents.contains(r#"AZURE_PAT="new\\pat""#));
+        assert!(!contents.contains("TEST_CARD_TEAM"));
     }
 }

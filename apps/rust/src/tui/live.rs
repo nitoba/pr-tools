@@ -3201,8 +3201,12 @@ mod tests {
         .expect("snapshot do Work Item");
         let config = crate::config::Config {
             azure_pat: "pat".to_owned(),
-            test_team: "DevOps".to_owned(),
-            test_program: "Agrotrace".to_owned(),
+            profiles: vec![crate::config::ProcessProfile {
+                team: "DevOps".to_owned(),
+                program: "Agrotrace".to_owned(),
+                ..crate::config::ProcessProfile::named("Agrotrace").expect("perfil")
+            }],
+            default_profile: "Agrotrace".to_owned(),
             ..crate::config::Config::default()
         };
         DescribePrep {

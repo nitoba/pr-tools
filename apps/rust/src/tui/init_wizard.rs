@@ -1,12 +1,10 @@
 //! Wizard `prt init` — formulário multi-etapas em Ratatui, tudo reativo.
 //!
-//! Nada aqui é estático: cada frame (~10fps) redesenha a borda do campo focado,
-//! validação de email ao vivo (✓/✘) a cada tecla e o botão salvar pulsante.
-//! Texto via editor próprio de linha única (sem dependência extra); segredos
-//! com máscara `•`; selects com ←/→. A lógica pura (draft/validação/
-//! persistência) vive em [`crate::features::init`].
+//! Nada aqui é estático: cada frame (~10fps) redesenha a borda do campo focado
+//! e o botão salvar pulsante. Texto via editor próprio de linha única (sem
+//! dependência extra); segredos com máscara `•`; selects com ←/→. A lógica
+//! pura (draft/validação/persistência) vive em [`crate::features::init`].
 
-use std::collections::HashSet;
 use std::io::IsTerminal;
 use std::time::Duration;
 
@@ -22,10 +20,7 @@ use ratatui::{
 use unicode_width::UnicodeWidthChar;
 
 use super::{StatusHeader, border_type, status_header, status_layout, theme};
-use crate::features::init::{
-    InitDraft, InitResult, PROVIDERS, REASONING_LEVELS, save_draft_for_profile_with_transition,
-    validate_optional_email,
-};
+use crate::features::init::{InitDraft, InitResult, PROVIDERS, REASONING_LEVELS, save_draft};
 
 /// Resultado do wizard.
 #[derive(Debug)]
@@ -40,35 +35,19 @@ pub enum InitOutcome {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Step {
     Azure,
-    Reviewers,
     Provider,
     Model,
-    TestDefaults,
     Review,
 }
 
-const STEPS: &[Step] = &[
-    Step::Azure,
-    Step::Reviewers,
-    Step::Provider,
-    Step::Model,
-    Step::TestDefaults,
-    Step::Review,
-];
-
-const PROFILE_OPTIONS: &[(&str, &str)] = &[
-    ("Agrotrace", "Agrotrace · Custom.ProgramasAgrotrace"),
-    ("CheckMilk", "CheckMilk · Custom.ProgramasCheckmilk"),
-];
+const STEPS: &[Step] = &[Step::Azure, Step::Provider, Step::Model, Step::Review];
 
 impl Step {
     fn title(self) -> &'static str {
         match self {
             Self::Azure => "Azure DevOps",
-            Self::Reviewers => "Reviewers",
             Self::Provider => "Provider",
             Self::Model => "Modelo",
-            Self::TestDefaults => "Test defaults",
             Self::Review => "Revisão",
         }
     }
@@ -78,9 +57,6 @@ impl Step {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum Field {
     Pat,
-    Sprint,
-    Dev,
-    Assigned,
     Provider,
     CodexPath,
     CodexModel,
@@ -92,11 +68,6 @@ enum Field {
     CompatModel,
     CompatReasoning,
     ApiKey,
-    Profile,
-    Transition,
-    AreaPath,
-    Team,
-    Program,
 }
 
 impl Field {
@@ -104,9 +75,6 @@ impl Field {
     fn label(self) -> &'static str {
         match self {
             Self::Pat => "Azure DevOps PAT",
-            Self::Sprint => "Email de review da sprint",
-            Self::Dev => "Email de review de dev",
-            Self::Assigned => "Responsável do card de teste",
             Self::Provider => "Provider padrão",
             Self::CodexPath => "Caminho do executável do Codex",
             Self::CodexModel => "Modelo do Codex",
@@ -118,11 +86,6 @@ impl Field {
             Self::CompatModel => "Modelo OpenAI-compatible",
             Self::CompatReasoning => "Thinking level",
             Self::ApiKey => "API key",
-            Self::Profile => "Perfil de processo",
-            Self::Transition => "Transição do Work Item pai",
-            Self::AreaPath => "AreaPath padrão",
-            Self::Team => "Team padrão",
-            Self::Program => "Program padrão",
         }
     }
 
@@ -135,9 +98,6 @@ impl Field {
                 } else {
                     "dev.azure.com → User settings → Personal access tokens".to_owned()
                 }
-            }
-            Self::Sprint | Self::Dev | Self::Assigned => {
-                "opcional · validado enquanto digita".to_owned()
             }
             Self::Provider => "codex/opencode rodam na máquina; compatible usa base URL".to_owned(),
             Self::CodexPath | Self::OpencodePath => {
@@ -154,14 +114,9 @@ impl Field {
                     "opcional · só p/ endpoints autenticados".to_owned()
                 }
             }
-            Self::Profile => "Agrotrace ou CheckMilk · schema fixo".to_owned(),
-            Self::Transition => "opcional · vazio não executa PATCH de estado".to_owned(),
             Self::CodexReasoning | Self::OpencodeReasoning | Self::CompatReasoning => {
                 "←/→ para alternar".to_owned()
             }
-            Self::AreaPath => r"opcional · ex.: MeuProjeto\Time".to_owned(),
-            Self::Team => "padrão: DevOps".to_owned(),
-            Self::Program => "padrão: Agrotrace".to_owned(),
         }
     }
 
@@ -169,16 +124,11 @@ impl Field {
     fn placeholder(self) -> &'static str {
         match self {
             Self::Pat => "ya01.…",
-            Self::Sprint | Self::Dev | Self::Assigned => "dev@empresa.com",
             Self::CodexPath | Self::OpencodePath => "C:/.../tool.cmd",
             Self::CodexModel => crate::config::CODEX_MODEL,
             Self::OpencodeModel => crate::config::OPENCODE_MODEL,
             Self::CompatModel => crate::config::DEFAULT_COMPATIBLE_MODEL,
             Self::BaseUrl => crate::config::DEFAULT_BASE_URL,
-            Self::AreaPath => r"MeuProjeto\Time",
-            Self::Profile | Self::Program => "Agrotrace",
-            Self::Transition => "Test QA",
-            Self::Team => "DevOps",
             _ => "",
         }
     }
@@ -192,17 +142,8 @@ impl Field {
     fn is_select(self) -> bool {
         matches!(
             self,
-            Self::Provider
-                | Self::Profile
-                | Self::CodexReasoning
-                | Self::OpencodeReasoning
-                | Self::CompatReasoning
+            Self::Provider | Self::CodexReasoning | Self::OpencodeReasoning | Self::CompatReasoning
         )
-    }
-
-    /// É email com validação ao vivo?
-    fn is_email(self) -> bool {
-        matches!(self, Self::Sprint | Self::Dev | Self::Assigned)
     }
 }
 
@@ -210,7 +151,6 @@ impl Field {
 fn fields_for(step: Step, provider: &str) -> Vec<Field> {
     match step {
         Step::Azure => vec![Field::Pat],
-        Step::Reviewers => vec![Field::Sprint, Field::Dev, Field::Assigned],
         Step::Provider => vec![Field::Provider],
         Step::Model => match provider {
             "opencode" => vec![
@@ -226,13 +166,6 @@ fn fields_for(step: Step, provider: &str) -> Vec<Field> {
             ],
             _ => vec![Field::CodexPath, Field::CodexModel, Field::CodexReasoning],
         },
-        Step::TestDefaults => vec![
-            Field::Profile,
-            Field::AreaPath,
-            Field::Team,
-            Field::Program,
-            Field::Transition,
-        ],
         Step::Review => vec![],
     }
 }
@@ -240,8 +173,6 @@ fn fields_for(step: Step, provider: &str) -> Vec<Field> {
 /// Estado do wizard. O `edit_*` é o editor de linha única do campo focado.
 pub struct InitWizard {
     draft: InitDraft,
-    profile_name: String,
-    parent_transition: String,
     step: usize,
     field: usize,
     edit_value: String,
@@ -251,41 +182,14 @@ pub struct InitWizard {
     error: Option<String>,
     done: Option<InitResult>,
     tick: u64,
-    /// Campos de email que já falharam numa validação de avanço.
-    /// Controla o ✘ tardio do `live_status` (sem ✘ enquanto digita).
-    flagged: HashSet<Field>,
 }
 
 impl InitWizard {
     /// Cria wizard com rascunho pré-preenchido do disco.
     #[must_use]
     pub fn new() -> Self {
-        let existing_profile = crate::config::load_config().ok().map_or_else(
-            || ("Agrotrace".to_owned(), "Test QA".to_owned()),
-            |config| {
-                let name = if !config.default_profile.trim().is_empty()
-                    && config
-                        .effective_process_profiles()
-                        .iter()
-                        .any(|profile| profile.name == config.default_profile)
-                {
-                    config.default_profile.clone()
-                } else {
-                    "Agrotrace".to_owned()
-                };
-                let transition = config
-                    .profiles
-                    .iter()
-                    .find(|profile| profile.name == name)
-                    .and_then(|profile| profile.parent_transition.clone())
-                    .unwrap_or_else(|| "Test QA".to_owned());
-                (name, transition)
-            },
-        );
         let mut w = Self {
             draft: InitDraft::load_existing(),
-            profile_name: existing_profile.0,
-            parent_transition: existing_profile.1,
             step: 0,
             field: 0,
             edit_value: String::new(),
@@ -294,7 +198,6 @@ impl InitWizard {
             error: None,
             done: None,
             tick: 0,
-            flagged: HashSet::new(),
         };
         w.rebind();
         w
@@ -317,9 +220,6 @@ impl InitWizard {
         let d = &self.draft;
         match field {
             Field::Pat => d.pat_input.clone(),
-            Field::Sprint => d.reviewer_sprint.clone(),
-            Field::Dev => d.reviewer_dev.clone(),
-            Field::Assigned => d.test_assigned_to.clone(),
             Field::Provider => d.provider.clone(),
             Field::CodexPath => d.codex_path.clone(),
             Field::CodexModel => d.codex_model.clone(),
@@ -331,44 +231,14 @@ impl InitWizard {
             Field::CompatModel => d.compatible_model.clone(),
             Field::CompatReasoning => d.compatible_reasoning.clone(),
             Field::ApiKey => d.api_key_input.clone(),
-            Field::Profile => self.profile_name.clone(),
-            Field::Transition => self.parent_transition.clone(),
-            Field::AreaPath => d.test_area_path.clone(),
-            Field::Team => d.test_team.clone(),
-            Field::Program => d.test_program.clone(),
         }
     }
 
     /// Grava valor no rascunho.
     fn set(&mut self, field: Field, value: String) {
-        if field == Field::Profile {
-            let previous_default = if self.profile_name == "CheckMilk" {
-                "Checkmilk"
-            } else {
-                "Agrotrace"
-            };
-            if self.draft.test_program.trim().is_empty()
-                || self.draft.test_program.trim() == previous_default
-            {
-                self.draft.test_program = if value == "CheckMilk" {
-                    "Checkmilk".to_owned()
-                } else {
-                    "Agrotrace".to_owned()
-                };
-            }
-            self.profile_name = value;
-            return;
-        }
-        if field == Field::Transition {
-            self.parent_transition = value;
-            return;
-        }
         let d = &mut self.draft;
         match field {
             Field::Pat => d.pat_input = value,
-            Field::Sprint => d.reviewer_sprint = value,
-            Field::Dev => d.reviewer_dev = value,
-            Field::Assigned => d.test_assigned_to = value,
             Field::Provider => d.provider = value,
             Field::CodexPath => d.codex_path = value,
             Field::CodexModel => d.codex_model = value,
@@ -380,11 +250,6 @@ impl InitWizard {
             Field::CompatModel => d.compatible_model = value,
             Field::CompatReasoning => d.compatible_reasoning = value,
             Field::ApiKey => d.api_key_input = value,
-            Field::Profile => unreachable!("perfil tratado antes do draft"),
-            Field::Transition => unreachable!("transição tratada antes do draft"),
-            Field::AreaPath => d.test_area_path = value,
-            Field::Team => d.test_team = value,
-            Field::Program => d.test_program = value,
         }
     }
 
@@ -392,7 +257,6 @@ impl InitWizard {
     fn select_state(&self, field: Field) -> (Vec<(&'static str, &'static str)>, usize) {
         let (options, current) = match field {
             Field::Provider => (PROVIDERS.to_vec(), self.draft.provider.as_str()),
-            Field::Profile => (PROFILE_OPTIONS.to_vec(), self.profile_name.as_str()),
             _ => (
                 REASONING_LEVELS.to_vec(),
                 match field {
@@ -490,28 +354,8 @@ impl InitWizard {
         true
     }
 
-    /// Status ao vivo do campo (✓/✘ tardio ou segredo configurado).
-    ///
-    /// Emails inválidos só ganham ✘ depois de falharem numa validação
-    /// de avanço (`flagged`); antes disso ficam neutros (só a dica).
+    /// Status ao vivo de um segredo configurado.
     fn live_status(&self, field: Field) -> Option<(String, Style)> {
-        if field.is_email() {
-            let value = if self.bound == Some(field) {
-                self.edit_value.clone()
-            } else {
-                self.get(field)
-            };
-            if value.trim().is_empty() {
-                return None;
-            }
-            return Some(if validate_optional_email(&value).is_none() {
-                ("✓ ".to_owned(), theme().success)
-            } else if self.flagged.contains(&field) {
-                ("✘ ".to_owned(), theme().error)
-            } else {
-                return None;
-            });
-        }
         if field.is_secret() {
             let configured = match field {
                 Field::Pat => {
@@ -530,28 +374,10 @@ impl InitWizard {
         None
     }
 
-    /// Valida o campo atual (emails); retorna `true` se ok.
-    ///
-    /// Emails inválidos entram em `flagged` (✘ tardio); ao voltar
-    /// a ficar válido o campo sai de `flagged`.
+    /// Valida o campo atual; retorna `true` se for possível avançar.
     fn validate_current(&mut self) -> bool {
-        let Some(field) = self.current_field() else {
-            return true;
-        };
         self.commit();
-        let err = match field {
-            Field::Sprint | Field::Dev | Field::Assigned => {
-                validate_optional_email(&self.get(field)).map(|e| format!("{}: {e}", field.label()))
-            }
-            _ => None,
-        };
-        self.error = err;
-        if self.error.is_none() {
-            self.flagged.remove(&field);
-        } else {
-            self.flagged.insert(field);
-        }
-        self.error.is_none()
+        true
     }
 
     /// Avança campo/etapa (Enter). Na revisão, salva.
@@ -600,11 +426,7 @@ impl InitWizard {
             self.error = Some(err);
             return;
         }
-        match save_draft_for_profile_with_transition(
-            &self.draft,
-            &self.profile_name,
-            Some(self.parent_transition.as_str()),
-        ) {
+        match save_draft(&self.draft) {
             Ok(res) => {
                 self.done = Some(res);
                 self.error = None;
@@ -793,7 +615,8 @@ fn render_text_field(wiz: &InitWizard, field: Field, focused: bool, area: Rect, 
             },
         ),
     ];
-    // Status ao vivo: ✓/✘ do email reage a cada tecla.
+    // Status ao vivo dos segredos reage à edição e preserva a indicação de
+    // valores já configurados sem revelar o conteúdo.
     if let Some((glyph, style)) = wiz.live_status(field) {
         label.push(Span::styled(format!("  {glyph}"), style));
     }
@@ -1011,34 +834,6 @@ fn render_review(wiz: &InitWizard, area: Rect, buf: &mut Buffer) {
         _ => "—".to_owned(),
     };
     let rows = [
-        (
-            "perfil",
-            format!(
-                "{} / {}",
-                wiz.profile_name,
-                if wiz.profile_name == "CheckMilk" {
-                    "Custom.ProgramasCheckmilk"
-                } else {
-                    "Custom.ProgramasAgrotrace"
-                }
-            ),
-        ),
-        ("transição pai", or_dash(&wiz.parent_transition)),
-        (
-            "binding",
-            crate::git::collect(None)
-                .ok()
-                .and_then(|context| context.remote)
-                .map_or_else(
-                    || "remote Azure não detectado".to_owned(),
-                    |remote| {
-                        format!(
-                            "{}/{}/{}",
-                            remote.organization, remote.project, remote.repository
-                        )
-                    },
-                ),
-        ),
         ("provider", d.provider.clone()),
         ("modelo", model_line),
         ("executável", executable),
@@ -1046,17 +841,9 @@ fn render_review(wiz: &InitWizard, area: Rect, buf: &mut Buffer) {
             "azure pat",
             secret_state(!d.pat_input.trim().is_empty() || d.has_existing_pat),
         ),
-        ("review sprint", or_dash(&d.reviewer_sprint)),
-        ("review dev", or_dash(&d.reviewer_dev)),
-        ("card responsável", or_dash(&d.test_assigned_to)),
-        ("areapath", or_dash(&d.test_area_path)),
         (
-            "team / program",
-            format!(
-                "{} / {}",
-                or_empty(&d.test_team, "DevOps"),
-                or_empty(&d.test_program, "Agrotrace")
-            ),
+            "api key",
+            secret_state(!d.api_key_input.trim().is_empty() || d.has_existing_api_key),
         ),
     ];
     let mut text: Vec<Line> = vec![
@@ -1382,19 +1169,10 @@ mod tests {
         let mut wiz = InitWizard::new();
         assert_eq!(wiz.step(), Step::Azure);
         wiz.advance();
-        assert_eq!(wiz.step(), Step::Reviewers);
+        assert_eq!(wiz.step(), Step::Provider);
         let out = wiz.back();
         assert!(out.is_none());
         assert_eq!(wiz.step(), Step::Azure);
-    }
-
-    #[test]
-    fn wizard_should_block_invalid_email() {
-        let mut wiz = InitWizard::new();
-        wiz.advance(); // → reviewers
-        wiz.edit_value = "email-ruim".to_owned();
-        assert!(!wiz.validate_current());
-        assert!(wiz.error.is_some());
     }
 
     #[test]
@@ -1420,47 +1198,11 @@ mod tests {
         assert_eq!(wiz.edit_value, "aXb");
     }
 
-    #[test]
-    fn live_status_should_mark_valid_email() {
-        let mut wiz = InitWizard::new();
-        // Hermético: limpa valor vindo do disco da máquina.
-        // (Na etapa Azure o Sprint não está bound, então lê do draft.)
-        wiz.draft.reviewer_sprint.clear();
-        assert!(wiz.live_status(Field::Sprint).is_none());
-        wiz.draft.reviewer_sprint = "dev@empresa.com".to_owned();
-        let (glyph, _) = wiz
-            .live_status(Field::Sprint)
-            .expect("email válido marca ✓");
-        assert_eq!(glyph, "✓ ");
-        // Inválido ainda sem falha de avanço: neutro (só a dica, sem ✘).
-        wiz.draft.reviewer_sprint = "ruim".to_owned();
-        assert!(wiz.live_status(Field::Sprint).is_none());
-        // Após falhar validação de avanço, marca ✘.
-        wiz.advance(); // Azure → Reviewers (Sprint focado, carrega "ruim").
-        assert!(!wiz.validate_current());
-        let (glyph, _) = wiz
-            .live_status(Field::Sprint)
-            .expect("email inválido marca ✘ após falha");
-        assert_eq!(glyph, "✘ ");
-        // Ao voltar a ficar válido, limpa o flag e volta a ✓ (sem expect novo).
-        wiz.edit_value = "dev@empresa.com".to_owned();
-        assert!(wiz.validate_current());
-        assert_eq!(
-            wiz.live_status(Field::Sprint).map(|(g, _)| g).as_deref(),
-            Some("✓ ")
-        );
-    }
-
     /// Wizard hermético p/ snapshots: zera tudo que `load_existing()` lê do disco.
     fn hermetic_wizard() -> InitWizard {
         let mut wiz = InitWizard::new();
-        wiz.profile_name = "Agrotrace".to_owned();
-        wiz.parent_transition = "Test QA".to_owned();
         wiz.draft.pat_input.clear();
         wiz.draft.has_existing_pat = false;
-        wiz.draft.reviewer_sprint.clear();
-        wiz.draft.reviewer_dev.clear();
-        wiz.draft.test_assigned_to.clear();
         wiz.draft.provider = "codex".to_owned();
         wiz.draft.codex_path.clear();
         wiz.draft.codex_model.clear();
@@ -1473,9 +1215,6 @@ mod tests {
         wiz.draft.compatible_reasoning = "provider-default".to_owned();
         wiz.draft.api_key_input.clear();
         wiz.draft.has_existing_api_key = false;
-        wiz.draft.test_area_path.clear();
-        wiz.draft.test_team = "DevOps".to_owned();
-        wiz.draft.test_program = "Agrotrace".to_owned();
         wiz.step = 0;
         wiz.field = 0;
         wiz.edit_value.clear();
@@ -1484,17 +1223,53 @@ mod tests {
         wiz.error = None;
         wiz.done = None;
         wiz.tick = 0;
-        wiz.flagged.clear();
         wiz.rebind();
         wiz
     }
 
     #[test]
-    fn wizard_review_should_show_profile_binding_and_reviewers() {
+    fn init_wizard_should_expose_only_global_fields() {
         let mut wiz = hermetic_wizard();
-        wiz.profile_name = "CheckMilk".to_owned();
-        wiz.draft.reviewer_dev = "dev@checkmilk.example".to_owned();
-        wiz.draft.reviewer_sprint = "sprint@checkmilk.example".to_owned();
+        assert_eq!(
+            STEPS
+                .iter()
+                .flat_map(|step| fields_for(*step, "codex"))
+                .collect::<Vec<_>>(),
+            vec![
+                Field::Pat,
+                Field::Provider,
+                Field::CodexPath,
+                Field::CodexModel,
+                Field::CodexReasoning,
+            ]
+        );
+        assert_eq!(
+            STEPS
+                .iter()
+                .flat_map(|step| fields_for(*step, "opencode"))
+                .collect::<Vec<_>>(),
+            vec![
+                Field::Pat,
+                Field::Provider,
+                Field::OpencodePath,
+                Field::OpencodeModel,
+                Field::OpencodeReasoning,
+            ]
+        );
+        assert_eq!(
+            STEPS
+                .iter()
+                .flat_map(|step| fields_for(*step, "openai-compatible"))
+                .collect::<Vec<_>>(),
+            vec![
+                Field::Pat,
+                Field::Provider,
+                Field::BaseUrl,
+                Field::CompatModel,
+                Field::CompatReasoning,
+                Field::ApiKey,
+            ]
+        );
         wiz.step = STEPS.len() - 1;
         let mut buffer = ratatui::buffer::Buffer::empty(ratatui::layout::Rect::new(0, 0, 100, 30));
         render_review(&wiz, buffer.area, &mut buffer);
@@ -1503,9 +1278,24 @@ mod tests {
             .iter()
             .map(|cell| cell.symbol().to_owned())
             .collect::<String>();
-        assert!(text.contains("CheckMilk"));
-        assert!(text.contains("dev@checkmilk.example"));
-        assert!(text.contains("sprint@checkmilk.example"));
+        assert!(text.contains("provider"));
+        assert!(text.contains("azure pat"));
+        assert!(text.contains("api key"));
+        for forbidden in [
+            "reviewerdev",
+            "reviewersprint",
+            "testareapath",
+            "testassignedto",
+            "testprogram",
+            "testteam",
+            "parenttransition",
+            "profile",
+        ] {
+            assert!(
+                !text.to_ascii_lowercase().contains(forbidden),
+                "campo global proibido: {forbidden}"
+            );
+        }
     }
 
     #[test]
