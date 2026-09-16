@@ -4,6 +4,7 @@
 //! em 8000 linhas, log (50 oneline) e remote Azure DevOps.
 
 use regex::Regex;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::process::Command as ProcCommand;
 use std::sync::OnceLock;
@@ -14,7 +15,7 @@ use crate::error::{AppError, Result};
 pub const MAX_DIFF_LINES: usize = 8000;
 
 /// Remote Azure DevOps parseado.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RepositoryRemote {
     /// Organização (`dev.azure.com/{org}`).
     pub organization: String,

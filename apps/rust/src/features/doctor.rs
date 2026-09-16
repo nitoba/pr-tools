@@ -150,7 +150,7 @@ async fn inspect_process_profiles(
         checks.push(fail_check(
             "Perfis de processo",
             format!("{label}: {error}"),
-            "Corrija os perfis/bindings em config.json; use somente Agrotrace ou CheckMilk e uma associação por remote.".to_owned(),
+            "Corrija os perfis/bindings em config.json; informe um programField válido e uma associação por remote.".to_owned(),
         ));
         return;
     }
@@ -215,6 +215,19 @@ async fn inspect_process_profiles(
             ),
         ));
     }
+    if !selection.profile.priority.is_finite() || selection.profile.priority <= 0.0 {
+        checks.push(fail_check(
+            "Campos do perfil",
+            format!(
+                "{label} / {}: priority deve ser um número positivo.",
+                selection.name()
+            ),
+            format!(
+                "Corrija priority no perfil {} em config.json.",
+                selection.name()
+            ),
+        ));
+    }
     for (target, reviewer) in [
         ("dev", selection.profile.reviewer_dev.as_str()),
         ("sprint", selection.profile.reviewer_sprint.as_str()),
@@ -264,7 +277,7 @@ async fn inspect_process_profiles(
                 return;
             }
         },
-        None if selection.profile.parent_transition.is_some() => {
+        None if selection.profile.parent_transition().is_some() => {
             checks.push(warn_check(
                 "Metadata do pai",
                 format!(
@@ -283,7 +296,7 @@ async fn inspect_process_profiles(
         Ok(metadata) => {
             let values_valid = [
                 ("Custom.Team", selection.profile.team.as_str()),
-                (selection.program_field, selection.profile.program.as_str()),
+                (&selection.program_field, selection.profile.program.as_str()),
             ]
             .into_iter()
             .filter_map(|(reference_name, value)| {
@@ -1280,6 +1293,44 @@ mod tests {
         assert!(binding.detail.contains("org/CHECKMILK/checkmilk"));
         assert!(binding.fix.contains("prt init"));
         assert_eq!(DoctorReport { checks }.exit_code(), 1);
+    }
+
+    #[tokio::test]
+    async fn doctor_accepts_generic_profile_and_reports_invalid_values() {
+        let remote = RepositoryRemote {
+            organization: "ibsbiosistemico".to_owned(),
+            project: "Projeto".to_owned(),
+            repository: "repo".to_owned(),
+        };
+        let profile = crate::config::ProcessProfile {
+            name: "IBS Novo".to_owned(),
+            program_field: "Custom.ProgramasNovo".to_owned(),
+            team: "QA".to_owned(),
+            program: "Produto".to_owned(),
+            reviewer_dev: "invalido".to_owned(),
+            ..crate::config::ProcessProfile::named("Agrotrace").unwrap()
+        };
+        let config = Config {
+            profiles: vec![profile],
+            default_profile: "IBS Novo".to_owned(),
+            azure_pat: String::new(),
+            ..Config::default()
+        };
+        let mut checks = Vec::new();
+        inspect_process_profiles(&config, Some(&remote), None, &mut checks).await;
+
+        let profile_check = checks
+            .iter()
+            .find(|check| check.component == "Perfil de processo")
+            .expect("check do perfil");
+        assert!(profile_check.ok);
+        assert!(profile_check.detail.contains("Custom.ProgramasNovo"));
+        let reviewer_check = checks
+            .iter()
+            .find(|check| check.component == "Reviewer do perfil")
+            .expect("check de reviewer");
+        assert!(!reviewer_check.ok);
+        assert!(!reviewer_check.detail.contains("unsupported"));
     }
 
     #[test]

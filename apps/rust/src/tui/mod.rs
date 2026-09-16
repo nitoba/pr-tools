@@ -14,6 +14,7 @@ pub mod init_wizard;
 pub mod live;
 pub mod markdown;
 pub mod notice;
+pub mod profile_onboarding;
 pub mod shimmer;
 pub mod suspend;
 pub mod test_flow;

@@ -233,7 +233,9 @@ async fn run_desc(options: &prt::cli::CliOptions) -> anyhow::Result<()> {
         return run_desc_resume(options).await;
     }
 
-    let prep = describe::prepare(options)
+    let selected_profile = ensure_profile_onboarding(options)?;
+
+    let prep = describe::prepare_with_profile(options, selected_profile)
         .await
         .context("falha ao preparar contexto")?;
     let tty = std::io::IsTerminal::is_terminal(&std::io::stdout());
@@ -497,10 +499,12 @@ async fn run_test(options: &prt::cli::CliOptions) -> anyhow::Result<()> {
     use prt::tui::notice::{NoticeKind, show_notice};
     use prt::tui::test_flow::{TestFlowOutcome, run_test_flow};
     let tty = std::io::IsTerminal::is_terminal(&std::io::stdout());
+    let selected_profile = ensure_profile_onboarding(options)?;
     if options.output.dry_run {
-        let prep = prt::features::test_card::prepare(options)
-            .await
-            .map_err(anyhow::Error::new)?;
+        let prep =
+            prt::features::test_card::prepare_with_profile(options, selected_profile.clone())
+                .await
+                .map_err(anyhow::Error::new)?;
         if !tty {
             println!("Test Case · dry run\n\n--- prompt ---\n{}", prep.prompt);
             return Ok(());
@@ -513,24 +517,29 @@ async fn run_test(options: &prt::cli::CliOptions) -> anyhow::Result<()> {
         .await?;
         return Ok(());
     }
-    // Sem tty: gera e imprime, sem criar (script-friendly).
-    if !tty {
+    // `--raw` e sem tty: gera e imprime, sem criar (script-friendly).
+    if options.output.raw || !tty {
         if options.create {
             return Err(anyhow::Error::new(prt::error::AppError::cli(
                 "criação requer terminal interativo: use sem --create ou em terminal",
             )));
         }
         eprintln!("Gerando card de teste via IA…");
-        let prep = prt::features::test_card::prepare(options)
-            .await
-            .map_err(anyhow::Error::new)?;
+        let prep =
+            prt::features::test_card::prepare_with_profile(options, selected_profile.clone())
+                .await
+                .map_err(anyhow::Error::new)?;
         let desc = prt::features::test_card::generate(&prep)
             .await
             .map_err(anyhow::Error::new)?;
-        println!(
-            "Test Case\n\nTítulo: {}\nPai: #{}\n\n{}\n",
-            desc.title, prep.parent.id, desc.body
-        );
+        if options.output.raw {
+            println!("{}", desc.body);
+        } else {
+            println!(
+                "Test Case\n\nTítulo: {}\nPai: #{}\n\n{}\n",
+                desc.title, prep.parent.id, desc.body
+            );
+        }
         if options.output.copy && prt::features::describe::copy_to_clipboard(&desc.body) {
             eprintln!("Card copiado para o clipboard.");
         }
@@ -538,7 +547,11 @@ async fn run_test(options: &prt::cli::CliOptions) -> anyhow::Result<()> {
         return Ok(());
     }
     // TUI viva: prepara + gera em spawn, revisa settings e cria.
-    match run_test_flow(options).await? {
+    let outcome = match selected_profile {
+        Some(profile) => prt::tui::test_flow::run_test_flow_with_profile(options, profile).await?,
+        None => run_test_flow(options).await?,
+    };
+    match outcome {
         TestFlowOutcome::Created { id, url } => {
             println!("✓ Test Case #{id} criado: {url}");
             Ok(())
@@ -556,6 +569,48 @@ async fn run_test(options: &prt::cli::CliOptions) -> anyhow::Result<()> {
             .await?;
             // `run_test_flow` + `show_notice` já chamaram `ratatui::restore()`.
             std::process::exit(130);
+        }
+    }
+}
+
+/// Avalia o perfil antes de qualquer provider ou writer.
+///
+/// A decisão é feita também nos modos sem TTY, mas nesses casos a ausência de
+/// binding IBS vira somente uma orientação: `config.json` nunca é alterado e
+/// nenhuma pergunta bloqueante é tentada.
+fn ensure_profile_onboarding(
+    options: &prt::cli::CliOptions,
+) -> anyhow::Result<Option<prt::features::process_profiles::ProfileSelection>> {
+    use prt::features::onboarding::{self, ProfileDecision};
+
+    let decision = onboarding::inspect(options.source.as_deref()).map_err(anyhow::Error::new)?;
+    match decision {
+        ProfileDecision::NoRemote { .. } => Ok(None),
+        ProfileDecision::Selected(selection) => Ok(Some(selection)),
+        ProfileDecision::NeedsOnboarding { config, remote } => {
+            let fallback = prt::features::process_profiles::select(&config, &remote)
+                .map_err(anyhow::Error::new)?;
+            let interactive = std::io::IsTerminal::is_terminal(&std::io::stdout())
+                && !options.output.dry_run
+                && !options.output.raw;
+            if !interactive {
+                return Err(anyhow::Error::new(prt::error::AppError::cli(
+                    onboarding::non_interactive_guidance(&remote),
+                )));
+            }
+            match prt::tui::profile_onboarding::run_profile_onboarding(
+                ProfileDecision::NeedsOnboarding { config, remote },
+            )? {
+                prt::tui::profile_onboarding::OnboardingOutcome::Saved(selection) => {
+                    Ok(Some(*selection))
+                }
+                prt::tui::profile_onboarding::OnboardingOutcome::Skipped => Ok(Some(fallback)),
+                prt::tui::profile_onboarding::OnboardingOutcome::Aborted => {
+                    Err(anyhow::Error::new(prt::error::AppError::cli(
+                        "onboarding cancelado; nenhum perfil foi salvo",
+                    )))
+                }
+            }
         }
     }
 }
@@ -784,7 +839,9 @@ mod tests {
                         assert_eq!(actual.target_ref_name, expected_context.target_ref_name);
                         assert!(!actual.settings.team.is_empty());
                     }
-                    TestCardRequest::Cli(_) => panic!("handoff publicado virou request CLI"),
+                    TestCardRequest::Cli(_) | TestCardRequest::CliWithProfile { .. } => {
+                        panic!("handoff publicado virou request CLI")
+                    }
                 }
                 Ok(TestFlowOutcome::ReviewedNoCreate)
             },

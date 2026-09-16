@@ -8,6 +8,7 @@
 
 use serde_json::Value;
 use std::fmt::Write as _;
+use std::io::IsTerminal;
 use std::time::Duration;
 use tracing::info;
 
@@ -31,6 +32,13 @@ const TUI_AZURE_TIMEOUT: Duration = Duration::from_secs(30);
 pub enum TestCardRequest {
     /// Entrada pública do comando `prt test`.
     Cli(CliOptions),
+    /// Entrada pública continuando após uma seleção de perfil já congelada.
+    CliWithProfile {
+        /// Opções originais do comando.
+        options: CliOptions,
+        /// Perfil escolhido antes da preparação remota.
+        profile: ProfileSelection,
+    },
     /// Entrada interna continuando uma publicação completa de `prt desc`.
     PublishedPr(TestCardLaunchContext),
 }
@@ -265,7 +273,27 @@ async fn fetch_examples_text_count(
 /// [`AppError::Cli`] com IDs inválidos, `--examples` fora de 0-5 ou pai
 /// indeterminável; [`AppError::Azure`] em falha de rede.
 pub async fn prepare(options: &CliOptions) -> Result<TestCardPrep> {
-    prepare_request(TestCardRequest::Cli(options.clone())).await
+    prepare_with_profile(options, None).await
+}
+
+/// Prepara o card reutilizando uma seleção de perfil já decidida.
+///
+/// # Errors
+///
+/// Retorna as mesmas falhas de [`prepare`]; também falha se a seleção não
+/// pertencer ao remote coletado.
+pub async fn prepare_with_profile(
+    options: &CliOptions,
+    profile: Option<ProfileSelection>,
+) -> Result<TestCardPrep> {
+    let request = match profile {
+        Some(profile) => TestCardRequest::CliWithProfile {
+            options: options.clone(),
+            profile,
+        },
+        None => TestCardRequest::Cli(options.clone()),
+    };
+    prepare_request(request).await
 }
 
 /// Prepara o card a partir do comando standalone ou de um PR publicado.
@@ -276,7 +304,10 @@ pub async fn prepare(options: &CliOptions) -> Result<TestCardPrep> {
 /// entrada escolhida.
 pub async fn prepare_request(request: TestCardRequest) -> Result<TestCardPrep> {
     match request {
-        TestCardRequest::Cli(options) => prepare_cli(&options).await,
+        TestCardRequest::Cli(options) => prepare_cli(&options, None).await,
+        TestCardRequest::CliWithProfile { options, profile } => {
+            prepare_cli(&options, Some(profile)).await
+        }
         TestCardRequest::PublishedPr(context) => prepare_published_pr(&context).await,
     }
 }
@@ -303,7 +334,15 @@ where
                     message: "request CLI sem contexto Git".to_owned(),
                 });
             };
-            prepare_cli_with(&options, config, change, client).await
+            prepare_cli_with(&options, config, change, client, None).await
+        }
+        TestCardRequest::CliWithProfile { options, profile } => {
+            let Some(change) = change else {
+                return Err(AppError::Git {
+                    message: "request CLI sem contexto Git".to_owned(),
+                });
+            };
+            prepare_cli_with(&options, config, change, client, Some(profile)).await
         }
         TestCardRequest::PublishedPr(context) => {
             prepare_published_pr_with(&context, config, client, collect).await
@@ -311,8 +350,11 @@ where
     }
 }
 
-async fn prepare_cli(options: &CliOptions) -> Result<TestCardPrep> {
-    let mut config = config::load_config()?;
+async fn prepare_cli(
+    options: &CliOptions,
+    selected_profile: Option<ProfileSelection>,
+) -> Result<TestCardPrep> {
+    let mut config = load_config_for_execution(options)?;
     config::apply_cli_overrides(
         &mut config,
         options.provider.as_deref(),
@@ -332,14 +374,15 @@ async fn prepare_cli(options: &CliOptions) -> Result<TestCardPrep> {
         });
     };
     let client = azure::client_for(Some(remote), config.azure_pat.trim())?;
-    prepare_request_with(
-        TestCardRequest::Cli(options.clone()),
-        config,
-        Some(change),
-        &client,
-        |_, _| Err(AppError::cli("coleta usada somente pelo request publicado")),
-    )
-    .await
+    prepare_cli_with(options, config, change, &client, selected_profile).await
+}
+
+fn load_config_for_execution(options: &CliOptions) -> Result<Config> {
+    if options.output.dry_run || options.output.raw || !std::io::stdout().is_terminal() {
+        config::load_config_without_migration()
+    } else {
+        config::load_config()
+    }
 }
 
 async fn prepare_cli_with(
@@ -347,16 +390,29 @@ async fn prepare_cli_with(
     config: Config,
     change: ChangeContext,
     client: &azure::AzureClient,
+    selected_profile: Option<ProfileSelection>,
 ) -> Result<TestCardPrep> {
     let Some(remote) = change.remote.as_ref() else {
         return Err(AppError::Git {
             message: "o comando test requer um remote git do azure devops".to_owned(),
         });
     };
+    // A seleção é congelada antes de qualquer leitura Azure desta preparação;
+    // o onboarding externo já ocorreu na fronteira interativa do comando.
+    let profile = match selected_profile {
+        Some(profile) => {
+            if profile.remote != *remote {
+                return Err(AppError::Git {
+                    message: "a seleção de perfil não corresponde ao remote local".to_owned(),
+                });
+            }
+            profile
+        }
+        None => process_profiles::select(&config, remote)?,
+    };
     let pr = fetch_requested_pr(client, remote, options).await?;
     let parent_id = resolve_parent_id(client, remote, options, &change, pr.as_ref()).await?;
     let parent = azure::get_work_item(client, &parent_id.to_string()).await?;
-    let profile = process_profiles::select(&config, remote)?;
     let metadata =
         process_profiles::load_metadata(client, &remote.project, &profile, parent.work_item_type())
             .await?;
@@ -953,7 +1009,9 @@ impl TestCardLaunchContext {
         let remote = prep.context.remote.clone().ok_or_else(|| AppError::Git {
             message: "remote Azure DevOps não encontrado para continuar ao Test Case".to_owned(),
         })?;
-        let profile = process_profiles::select(&prep.config, &remote)?;
+        let profile = prep.profile.clone().ok_or_else(|| AppError::Config {
+            message: "perfil ativo não está disponível para continuar ao Test Case".to_owned(),
+        })?;
         let work_item_id = if prep.work_item_id.trim().is_empty() {
             None
         } else {
@@ -1105,7 +1163,7 @@ pub async fn find_create_candidates(
                     && relation_id(&relation.url) == Some(prep.parent.id)
             });
             let (matching_fields, comparable_fields) =
-                matching_settings_fields(&item, settings, prep.profile.program_field);
+                matching_settings_fields(&item, settings, &prep.profile.program_field);
             TestCaseCandidate {
                 id: item.id,
                 url: candidate_url(prep, item.id),
@@ -1324,7 +1382,7 @@ fn parse_priority_with_default(raw: Option<&str>, default: f64) -> Result<f64> {
 fn legacy_profile_selection(config: &Config) -> ProfileSelection {
     ProfileSelection {
         profile: config::ProcessProfile::from_legacy(config),
-        program_field: config::AGROTRACE_PROGRAM_FIELD,
+        program_field: config::AGROTRACE_PROGRAM_FIELD.to_owned(),
         remote: git::RepositoryRemote {
             organization: String::new(),
             project: String::new(),
@@ -1340,7 +1398,7 @@ pub(crate) fn validate_profile_settings(
 ) -> Result<()> {
     for (reference_name, value) in [
         ("Custom.Team", settings.team.as_str()),
-        (selection.program_field, settings.program.as_str()),
+        (&selection.program_field, settings.program.as_str()),
     ] {
         let field = metadata
             .test_case_fields
@@ -1501,7 +1559,7 @@ async fn create_with_pat_and_timeout(
     validate_profile_settings(&prep.profile, &prep.metadata, settings)?;
     let input = build_test_case_input_with_program_field(
         settings,
-        prep.profile.program_field,
+        &prep.profile.program_field,
         &remote.organization,
         prep.parent.id,
         title,
@@ -1525,7 +1583,7 @@ pub async fn update_parent(
     work_items::update_parent_with_transition(
         &client,
         prep.parent.id,
-        prep.profile.profile.parent_transition.as_deref(),
+        prep.profile.profile.parent_transition(),
         effort,
         real_effort,
     )
@@ -1546,7 +1604,7 @@ pub async fn update_parent_with_current_config(
     work_items::update_parent_with_transition(
         &client,
         prep.parent.id,
-        prep.profile.profile.parent_transition.as_deref(),
+        prep.profile.profile.parent_transition(),
         effort,
         real_effort,
     )
@@ -1842,7 +1900,7 @@ mod tests {
                     allowed_values: Vec::new(),
                 },
                 crate::azure::work_items::WorkItemFieldMetadata {
-                    reference_name: selection.program_field.to_owned(),
+                    reference_name: selection.program_field.clone(),
                     field_type: "String".to_owned(),
                     required: true,
                     default_value: None,
@@ -1892,7 +1950,7 @@ mod tests {
                 allowed_values: Vec::new(),
             },
             crate::azure::work_items::WorkItemFieldMetadata {
-                reference_name: context.profile.program_field.to_owned(),
+                reference_name: context.profile.program_field.clone(),
                 field_type: "string".to_owned(),
                 required: true,
                 default_value: None,
@@ -1922,7 +1980,7 @@ mod tests {
                     allowed_values: Vec::new(),
                 },
                 crate::azure::work_items::WorkItemFieldMetadata {
-                    reference_name: context.profile.program_field.to_owned(),
+                    reference_name: context.profile.program_field.clone(),
                     field_type: "String".to_owned(),
                     required: true,
                     default_value: None,
@@ -2009,6 +2067,59 @@ mod tests {
             crate::config::AGROTRACE_PROGRAM_FIELD
         );
         assert_eq!(prep.metadata.test_case_fields.len(), 2);
+    }
+
+    #[test]
+    fn published_handoff_preserves_profile_selection() {
+        let context = published_context();
+        let mut change = test_change();
+        change.remote = Some(context.remote.clone());
+        let prep = DescribePrep {
+            config: context.config.clone(),
+            context: change,
+            targets: vec!["dev".to_owned()],
+            work_item_id: context.work_item_id.unwrap().to_string(),
+            functional_context: crate::features::describe::FunctionalContextStatus::NotRequested,
+            work_item: context.work_item.clone(),
+            fingerprint: context.fingerprint.clone(),
+            profile: Some(context.profile.clone()),
+            prompt: "prompt".to_owned(),
+        };
+        let launch = TestCardLaunchContext::from_describe(&prep, &context.published_pr).unwrap();
+
+        assert_eq!(launch.profile, context.profile);
+        assert_eq!(launch.settings.area_path, context.settings.area_path);
+        assert_eq!(launch.settings.program, context.settings.program);
+        assert_eq!(launch.remote, context.remote);
+    }
+
+    #[test]
+    fn post_selection_failure_preserves_profile_for_retry() {
+        let context = published_context();
+        let prep = TestCardPrep {
+            config: context.config.clone(),
+            context: test_change(),
+            parent: context.work_item.clone().unwrap(),
+            pr_id: Some(context.published_pr.id.to_string()),
+            settings: Some(context.settings.clone()),
+            profile: context.profile.clone(),
+            metadata: metadata_fixture_for_profile(&context.profile),
+            pr_changes: String::new(),
+            examples_text: String::new(),
+            prompt: String::new(),
+        };
+        let selected_before_failure = prep.profile.clone();
+        let failure = classify_create_error(&AppError::Azure {
+            status: 500,
+            message: "timeout".to_owned(),
+        });
+
+        assert_eq!(failure.kind, CreateFailureKind::OutcomeUnknown);
+        assert_eq!(prep.profile, selected_before_failure);
+        assert_eq!(
+            prep.profile.program_field,
+            crate::config::AGROTRACE_PROGRAM_FIELD
+        );
     }
 
     #[test]
@@ -2368,6 +2479,103 @@ mod tests {
     }
 
     #[test]
+    fn profile_settings_are_used_before_cli_overrides() {
+        let config = Config {
+            profiles: vec![crate::config::ProcessProfile {
+                name: "IBS Novo".to_owned(),
+                program_field: "Custom.ProgramasNovo".to_owned(),
+                area_path: "Perfil\\QA".to_owned(),
+                assigned_to: "perfil@example.com".to_owned(),
+                team: "Perfil QA".to_owned(),
+                program: "Perfil".to_owned(),
+                priority: 3.0,
+                inherit_iteration_path: true,
+                parent_transition: None,
+                reviewer_dev: String::new(),
+                reviewer_sprint: String::new(),
+            }],
+            default_profile: "IBS Novo".to_owned(),
+            ..Config::default()
+        };
+        let remote = RepositoryRemote {
+            organization: "ibsbiosistemico".to_owned(),
+            project: "Projeto".to_owned(),
+            repository: "repo".to_owned(),
+        };
+        let profile = process_profiles::select(&config, &remote).unwrap();
+        let parent: WorkItem = serde_json::from_value(serde_json::json!({
+            "id": 1,
+            "fields": {"System.IterationPath": "Projeto\\Sprint 12"}
+        }))
+        .unwrap();
+        let mut options = test_options();
+        options.area_path = Some("CLI\\QA".to_owned());
+        options.team = Some("CLI Team".to_owned());
+        let settings = TestSettings::from_cli_or_profile(&options, &profile, &parent).unwrap();
+
+        assert_eq!(settings.area_path, "CLI\\QA");
+        assert_eq!(settings.assigned_to, "perfil@example.com");
+        assert_eq!(settings.iteration_path, "Projeto\\Sprint 12");
+        assert!((settings.priority - 3.0).abs() < f64::EPSILON);
+        assert_eq!(settings.team, "CLI Team");
+        assert_eq!(settings.program, "Perfil");
+    }
+
+    #[test]
+    fn payload_uses_selected_program_field_only() {
+        let settings = TestSettings {
+            area_path: "Projeto\\QA".to_owned(),
+            assigned_to: String::new(),
+            iteration_path: String::new(),
+            priority: 2.0,
+            team: "QA".to_owned(),
+            program: "Produto".to_owned(),
+        };
+        let input = build_test_case_input_with_program_field(
+            &settings,
+            "Custom.ProgramasNovo",
+            "ibsbiosistemico",
+            42,
+            "Card",
+            "Body",
+        );
+        let patch = crate::azure::work_items::build_create_patch(
+            &input,
+            Some("https://dev.azure.com/ibsbiosistemico/_apis/wit/workitems/42"),
+        );
+        let paths = patch
+            .iter()
+            .filter_map(|operation| operation.get("path").and_then(Value::as_str))
+            .collect::<Vec<_>>();
+        assert!(paths.contains(&"/fields/Custom.Team"));
+        assert!(paths.contains(&"/fields/Custom.ProgramasNovo"));
+        assert!(!paths.contains(&"/fields/Custom.ProgramasAgrotrace"));
+    }
+
+    #[test]
+    fn parent_transition_is_optional_and_literal() {
+        let with_transition = crate::azure::work_items::build_parent_patch(
+            Some("Em validação"),
+            Some(1.5),
+            Some(2.0),
+        );
+        assert_eq!(
+            with_transition[0]["value"],
+            serde_json::json!("Em validação")
+        );
+        assert_eq!(with_transition.len(), 3);
+
+        let without_transition =
+            crate::azure::work_items::build_parent_patch(None, Some(1.5), Some(2.0));
+        assert_eq!(without_transition.len(), 2);
+        assert!(
+            without_transition
+                .iter()
+                .all(|operation| operation["path"] != "/fields/System.State")
+        );
+    }
+
+    #[test]
     fn settings_should_require_team_and_program() {
         let config = Config::default();
         let parent = test_work_item(1, "Task", "T");
@@ -2434,6 +2642,9 @@ mod tests {
                 assert_eq!(actual.program.as_deref(), Some("Agrotrace"));
                 assert_eq!(actual.examples.as_deref(), Some("5"));
                 assert_eq!(actual.command, Command::Test);
+            }
+            TestCardRequest::CliWithProfile { .. } => {
+                panic!("request standalone sem perfil foi convertido")
             }
             TestCardRequest::PublishedPr(_) => panic!("request standalone foi convertido"),
         }

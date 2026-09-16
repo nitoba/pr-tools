@@ -6,18 +6,20 @@
 
 use std::collections::{HashMap, HashSet};
 
+use serde::{Deserialize, Serialize};
+
 use crate::azure::{self, work_items};
 use crate::config::{AGROTRACE_PROFILE, Config, ProcessProfile, RepositoryProfileBinding};
 use crate::error::{AppError, Result};
 use crate::git::RepositoryRemote;
 
 /// Resultado congelado da seleção de um perfil para uma execução.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProfileSelection {
     /// Perfil escolhido, incluindo seus defaults não secretos.
     pub profile: ProcessProfile,
-    /// Campo fixo usado para o valor de programa.
-    pub program_field: &'static str,
+    /// Field Azure usado para o valor de programa.
+    pub program_field: String,
     /// Identidade do remote que determinou a seleção.
     pub remote: RepositoryRemote,
 }
@@ -28,7 +30,7 @@ pub struct ProfileSelection {
 pub fn legacy_selection(config: &Config, remote: RepositoryRemote) -> ProfileSelection {
     ProfileSelection {
         profile: ProcessProfile::from_legacy(config),
-        program_field: crate::config::AGROTRACE_PROGRAM_FIELD,
+        program_field: crate::config::AGROTRACE_PROGRAM_FIELD.to_owned(),
         remote,
     }
 }
@@ -76,7 +78,7 @@ pub async fn load_metadata(
     validate_schema_fields(selection, &test_case_fields)?;
 
     let parent_type = parent_type.trim().to_owned();
-    let parent_states = if let Some(transition) = selection.profile.parent_transition.as_deref() {
+    let parent_states = if let Some(transition) = selection.profile.parent_transition() {
         if parent_type.is_empty() {
             return Err(AppError::Config {
                 message: format!(
@@ -90,7 +92,7 @@ pub async fn load_metadata(
     } else {
         Vec::new()
     };
-    if let Some(transition) = selection.profile.parent_transition.as_deref()
+    if let Some(transition) = selection.profile.parent_transition()
         && !parent_states.iter().any(|state| state.name == transition)
     {
         return Err(AppError::Config {
@@ -117,7 +119,7 @@ pub fn validate_schema_fields(
     selection: &ProfileSelection,
     fields: &[work_items::WorkItemFieldMetadata],
 ) -> Result<()> {
-    let required = ["Custom.Team", selection.program_field];
+    let required = ["Custom.Team", selection.program_field.as_str()];
     for reference_name in required {
         let Some(field) = fields
             .iter()
@@ -240,16 +242,21 @@ impl ProfileSelection {
 ///
 /// # Errors
 ///
-/// Retorna erro quando há schema desconhecido, perfil repetido, binding sem
-/// perfil ou mais de um binding para a mesma identidade Azure.
+/// Retorna erro quando há field ausente, perfil repetido, binding sem perfil ou
+/// mais de um binding para a mesma identidade Azure.
 pub fn validate_config(config: &Config) -> Result<()> {
     let profiles = config.effective_process_profiles();
     let mut names = HashSet::with_capacity(profiles.len());
     for profile in &profiles {
+        if profile.name.trim().is_empty() {
+            return Err(AppError::Config {
+                message: "perfil sem nome na configuração".to_owned(),
+            });
+        }
         if profile.program_field().is_none() {
             return Err(AppError::Config {
                 message: format!(
-                    "perfil {} usa schema não suportado; use Agrotrace ou CheckMilk",
+                    "perfil {} não informa programField; preencha programField no perfil",
                     profile.name
                 ),
             });
@@ -260,7 +267,7 @@ pub fn validate_config(config: &Config) -> Result<()> {
             });
         }
     }
-    let mut bindings = HashMap::<(&str, &str, &str), Vec<&str>>::new();
+    let mut bindings = HashMap::<(String, &str, &str), Vec<&str>>::new();
     for binding in &config.bindings {
         if !profiles
             .iter()
@@ -276,7 +283,7 @@ pub fn validate_config(config: &Config) -> Result<()> {
         }
         bindings
             .entry((
-                binding.organization.as_str(),
+                binding.organization.to_ascii_lowercase(),
                 binding.project.as_str(),
                 binding.repository.as_str(),
             ))
@@ -290,7 +297,7 @@ pub fn validate_config(config: &Config) -> Result<()> {
         return Err(AppError::Config {
             message: format!(
                 "remote {} possui bindings conflitantes para os perfis {}",
-                remote_label_parts(remote.0, remote.1, remote.2),
+                remote_label_parts(&remote.0, remote.1, remote.2),
                 profiles.join(", ")
             ),
         });
@@ -318,7 +325,7 @@ pub fn validate_config(config: &Config) -> Result<()> {
 /// # Errors
 ///
 /// Retorna [`AppError::Config`] quando a configuração é inválida, há bindings
-/// conflitantes ou o perfil selecionado não possui schema suportado.
+/// conflitantes ou o perfil selecionado não possui field de programa.
 pub fn select(config: &Config, remote: &RepositoryRemote) -> Result<ProfileSelection> {
     validate_config(config)?;
     let profiles = config.effective_process_profiles();
@@ -354,9 +361,9 @@ pub fn select(config: &Config, remote: &RepositoryRemote) -> Result<ProfileSelec
                 remote_label(remote)
             ),
         })?;
-    let Some(program_field) = profile.program_field() else {
+    let Some(program_field) = profile.program_field().map(str::to_owned) else {
         return Err(AppError::Config {
-            message: format!("perfil {} usa schema não suportado", profile.name),
+            message: format!("perfil {} não informa programField", profile.name),
         });
     };
     Ok(ProfileSelection {
@@ -379,7 +386,9 @@ pub fn binding_for<'a>(
 }
 
 fn binding_matches(binding: &RepositoryProfileBinding, remote: &RepositoryRemote) -> bool {
-    binding.organization == remote.organization
+    binding
+        .organization
+        .eq_ignore_ascii_case(&remote.organization)
         && binding.project == remote.project
         && binding.repository == remote.repository
 }
@@ -417,6 +426,11 @@ mod tests {
         let lower_name = name.to_ascii_lowercase();
         ProcessProfile {
             name: name.to_owned(),
+            program_field: match name {
+                AGROTRACE_PROFILE => crate::config::AGROTRACE_PROGRAM_FIELD.to_owned(),
+                CHECKMILK_PROFILE => crate::config::CHECKMILK_PROGRAM_FIELD.to_owned(),
+                _ => format!("Custom.Programas{name}"),
+            },
             area_path: format!("{name}\\QA"),
             assigned_to: format!("{lower_name}@example.com"),
             team: name.to_owned(),
@@ -459,6 +473,35 @@ mod tests {
         assert_eq!(agrotrace.name(), AGROTRACE_PROFILE);
         assert_eq!(checkmilk.name(), CHECKMILK_PROFILE);
         assert_eq!(checkmilk.program_field, CHECKMILK_PROGRAM_FIELD);
+    }
+
+    #[test]
+    fn bound_ibs_remote_selects_profile_without_onboarding() {
+        let mut config = config_with_bindings();
+        config.bindings[0].organization = "ibsbiosistemico".to_owned();
+        let selected = select(
+            &config,
+            &RepositoryRemote {
+                organization: "IBSBioSistemico".to_owned(),
+                project: "AGROTRACE".to_owned(),
+                repository: "agrotrace".to_owned(),
+            },
+        )
+        .unwrap();
+        assert_eq!(selected.name(), AGROTRACE_PROFILE);
+        assert_eq!(
+            selected.program_field,
+            crate::config::AGROTRACE_PROGRAM_FIELD
+        );
+    }
+
+    #[test]
+    fn selection_is_independent_of_local_checkout_path() {
+        let config = config_with_bindings();
+        let first = select(&config, &remote("CHECKMILK", "checkmilk")).unwrap();
+        let second = select(&config, &remote("CHECKMILK", "checkmilk")).unwrap();
+        assert_eq!(first, second);
+        assert_eq!(first.remote, second.remote);
     }
 
     #[test]

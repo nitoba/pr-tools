@@ -70,16 +70,20 @@ Não invente alterações que não estejam no diff.
 Responda somente com o objeto JSON. Não inclua o prompt, o contexto Git, o log, o diff ou qualquer texto adicional fora desse objeto.
 "#;
 
-/// Perfil local de um processo Azure DevOps suportado pelo `prt`.
+/// Perfil local de um processo Azure DevOps usado pelo `prt`.
 ///
-/// O nome também identifica o schema fechado da V1: somente `Agrotrace` e
-/// `CheckMilk` são aceitos. Credenciais deliberadamente não fazem parte deste
-/// tipo; elas continuam no `.env`/ambiente global existente.
+/// Perfis legados podem omitir `programField`; nesse caso o campo conhecido é
+/// derivado de `name`. Perfis criados pelo onboarding persistem esse valor e
+/// podem usar nomes e fields arbitrários. Credenciais deliberadamente não
+/// fazem parte deste tipo; elas continuam no mecanismo global existente.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProcessProfile {
-    /// Identificador estável do perfil (`Agrotrace` ou `CheckMilk`).
+    /// Identificador estável do perfil.
     pub name: String,
+    /// Field Azure que recebe o programa (`Custom.*`).
+    #[serde(default)]
+    pub program_field: String,
     /// `System.AreaPath` padrão.
     #[serde(default)]
     pub area_path: String,
@@ -123,6 +127,7 @@ impl ProcessProfile {
     pub fn from_legacy(config: &Config) -> Self {
         Self {
             name: AGROTRACE_PROFILE.to_owned(),
+            program_field: AGROTRACE_PROGRAM_FIELD.to_owned(),
             area_path: config.test_area_path.clone(),
             assigned_to: config.test_assigned_to.clone(),
             team: config.test_team.clone(),
@@ -135,11 +140,17 @@ impl ProcessProfile {
         }
     }
 
-    /// Cria um perfil com os valores fixos do schema selecionado.
+    /// Cria um perfil com os valores fixos do schema legado selecionado.
     #[must_use]
     pub fn named(name: &str) -> Option<Self> {
         matches!(name, AGROTRACE_PROFILE | CHECKMILK_PROFILE).then(|| Self {
             name: name.to_owned(),
+            program_field: match name {
+                AGROTRACE_PROFILE => AGROTRACE_PROGRAM_FIELD,
+                CHECKMILK_PROFILE => CHECKMILK_PROGRAM_FIELD,
+                _ => unreachable!("nome filtrado acima"),
+            }
+            .to_owned(),
             area_path: String::new(),
             assigned_to: String::new(),
             team: String::new(),
@@ -152,14 +163,26 @@ impl ProcessProfile {
         })
     }
 
-    /// Retorna o campo de programa permitido pelo schema.
+    /// Retorna o field de programa efetivo, incluindo a compatibilidade legada.
     #[must_use]
-    pub fn program_field(&self) -> Option<&'static str> {
-        match self.name.as_str() {
-            AGROTRACE_PROFILE => Some(AGROTRACE_PROGRAM_FIELD),
-            CHECKMILK_PROFILE => Some(CHECKMILK_PROGRAM_FIELD),
-            _ => None,
+    pub fn program_field(&self) -> Option<&str> {
+        if self.program_field.trim().is_empty() {
+            match self.name.as_str() {
+                AGROTRACE_PROFILE => Some(AGROTRACE_PROGRAM_FIELD),
+                CHECKMILK_PROFILE => Some(CHECKMILK_PROGRAM_FIELD),
+                _ => None,
+            }
+        } else {
+            Some(self.program_field.as_str())
         }
+    }
+
+    /// Retorna a transição aplicável, tratando texto vazio como ausência.
+    #[must_use]
+    pub fn parent_transition(&self) -> Option<&str> {
+        self.parent_transition
+            .as_deref()
+            .filter(|transition| !transition.trim().is_empty())
     }
 }
 
@@ -341,11 +364,14 @@ impl Config {
     /// construídas em memória sem passar pelo loader.
     #[must_use]
     pub fn effective_process_profiles(&self) -> Vec<ProcessProfile> {
-        if self.profiles.is_empty() {
-            vec![ProcessProfile::from_legacy(self)]
-        } else {
-            self.profiles.clone()
+        let mut profiles = self.profiles.clone();
+        if !profiles
+            .iter()
+            .any(|profile| profile.name == AGROTRACE_PROFILE)
+        {
+            profiles.push(ProcessProfile::from_legacy(self));
         }
+        profiles
     }
 }
 
@@ -460,6 +486,35 @@ fn write_atomic(path: &Path, contents: &str) -> crate::error::Result<()> {
     Ok(())
 }
 
+/// Persiste a configuração local sem copiar o PAT para `config.json`.
+///
+/// O helper é usado pelo onboarding, que altera somente `profiles` e
+/// `bindings`; todas as demais opções permanecem no snapshot fornecido pelo
+/// chamador. O template continua no arquivo dedicado e o PAT continua no
+/// `.env`/ambiente global.
+///
+/// # Errors
+///
+/// Retorna [`crate::error::AppError`] quando a configuração não puder ser
+/// serializada ou o arquivo não puder ser substituído atomicamente.
+pub fn persist_local_config(config: &Config) -> crate::error::Result<()> {
+    let paths = config_paths();
+    std::fs::create_dir_all(&paths.directory)?;
+    let mut json =
+        serde_json::to_value(config).map_err(|error| crate::error::AppError::Config {
+            message: format!("falha ao serializar config: {error}"),
+        })?;
+    if let Some(object) = json.as_object_mut() {
+        object.remove("azurePat");
+        object.remove("template");
+    }
+    let contents =
+        serde_json::to_string_pretty(&json).map_err(|error| crate::error::AppError::Config {
+            message: format!("falha ao formatar config: {error}"),
+        })?;
+    write_atomic(&paths.config_file, &format!("{contents}\n"))
+}
+
 fn config_base_dir(
     xdg_config_home: Option<PathBuf>,
     platform_config_dir: Option<PathBuf>,
@@ -504,6 +559,24 @@ pub fn apply_cli_overrides(
 ///
 /// Retorna [`crate::error::AppError::Config`] se o JSON for inválido.
 pub fn load_config() -> crate::error::Result<Config> {
+    load_config_internal(true)
+}
+
+/// Carrega a configuração sem executar a migração legada automática.
+///
+/// É usado antes de uma decisão interativa para que `--dry-run`, `--raw` e
+/// execuções sem TTY nunca alterem `config.json` apenas por avaliar o
+/// onboarding.
+///
+/// # Errors
+///
+/// Retorna [`crate::error::AppError::Config`] quando o JSON configurado for
+/// inválido.
+pub fn load_config_without_migration() -> crate::error::Result<Config> {
+    load_config_internal(false)
+}
+
+fn load_config_internal(migrate_legacy: bool) -> crate::error::Result<Config> {
     let paths = config_paths();
     let legacy = legacy_config_paths();
     let mut config = Config::default();
@@ -557,7 +630,7 @@ pub fn load_config() -> crate::error::Result<Config> {
             .get("profiles")
             .and_then(Value::as_array)
             .is_some_and(|profiles| !profiles.is_empty());
-        if !has_profiles && config.migrate_legacy_profiles() {
+        if migrate_legacy && !has_profiles && config.migrate_legacy_profiles() {
             let migrated = migrate_legacy_json(&raw, &config)?;
             write_atomic(&source_path, &migrated)?;
         }

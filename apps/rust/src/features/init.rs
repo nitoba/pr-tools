@@ -216,6 +216,12 @@ fn or_default(value: &str, default: &str) -> String {
     }
 }
 
+fn preserve_process_profiles(config: &mut Config, previous: &Config) {
+    config.profiles.clone_from(&previous.profiles);
+    config.bindings.clone_from(&previous.bindings);
+    config.default_profile.clone_from(&previous.default_profile);
+}
+
 /// Template atual do disco (ou o padrão).
 fn current_template() -> String {
     let paths = config_paths();
@@ -296,53 +302,60 @@ pub fn save_draft_for_profile_with_transition(
     // O wizard antigo edita somente defaults globais; nunca pode apagar
     // perfis/bindings já configurados. Configurações sem a seção nova recebem
     // a migração legada no mesmo salvamento.
-    cfg.profiles = previous.profiles;
-    cfg.bindings = previous.bindings;
-    cfg.default_profile = previous.default_profile;
+    preserve_process_profiles(&mut cfg, &previous);
     cfg.migrate_legacy_profiles();
-    if let Some(message) = validate_process_profile_name(profile_name) {
-        return Err(AppError::Config { message });
-    }
-    let mut profile = ProcessProfile::named(profile_name).ok_or_else(|| AppError::Config {
-        message: "schema de perfil inválido; use Agrotrace ou CheckMilk".to_owned(),
-    })?;
-    profile.area_path.clone_from(&cfg.test_area_path);
-    profile.assigned_to.clone_from(&cfg.test_assigned_to);
-    profile.team.clone_from(&cfg.test_team);
-    profile.program.clone_from(&cfg.test_program);
-    profile.reviewer_dev.clone_from(&cfg.reviewer_dev);
-    profile.reviewer_sprint.clone_from(&cfg.reviewer_sprint);
-    profile.parent_transition = parent_transition
-        .map(str::trim)
-        .filter(|transition| !transition.is_empty())
-        .map(str::to_owned);
-    if let Some(existing) = cfg
-        .profiles
-        .iter_mut()
-        .find(|existing| existing.name == profile.name)
+    let mut profile = ProcessProfile::named(profile_name);
+    if profile.is_none()
+        && !cfg
+            .profiles
+            .iter()
+            .any(|candidate| candidate.name == profile_name)
     {
-        *existing = profile;
-    } else {
-        cfg.profiles.push(profile);
+        if let Some(message) = validate_process_profile_name(profile_name) {
+            return Err(AppError::Config { message });
+        }
     }
-    profile_name.clone_into(&mut cfg.default_profile);
-    if let Some(remote) = crate::git::collect(None)
-        .ok()
-        .and_then(|context| context.remote)
-    {
-        if let Some(binding) = cfg.bindings.iter_mut().find(|binding| {
-            binding.organization == remote.organization
-                && binding.project == remote.project
-                && binding.repository == remote.repository
-        }) {
-            profile_name.clone_into(&mut binding.profile);
+    if let Some(profile) = profile.as_mut() {
+        profile.area_path.clone_from(&cfg.test_area_path);
+        profile.assigned_to.clone_from(&cfg.test_assigned_to);
+        profile.team.clone_from(&cfg.test_team);
+        profile.program.clone_from(&cfg.test_program);
+        profile.reviewer_dev.clone_from(&cfg.reviewer_dev);
+        profile.reviewer_sprint.clone_from(&cfg.reviewer_sprint);
+        profile.parent_transition = parent_transition
+            .map(str::trim)
+            .filter(|transition| !transition.is_empty())
+            .map(str::to_owned);
+        if let Some(existing) = cfg
+            .profiles
+            .iter_mut()
+            .find(|existing| existing.name == profile.name)
+        {
+            *existing = profile.clone();
         } else {
-            cfg.bindings.push(RepositoryProfileBinding {
-                profile: profile_name.to_owned(),
-                organization: remote.organization,
-                project: remote.project,
-                repository: remote.repository,
-            });
+            cfg.profiles.push(profile.clone());
+        }
+        profile_name.clone_into(&mut cfg.default_profile);
+        if let Some(remote) = crate::git::collect(None)
+            .ok()
+            .and_then(|context| context.remote)
+        {
+            if let Some(binding) = cfg.bindings.iter_mut().find(|binding| {
+                binding
+                    .organization
+                    .eq_ignore_ascii_case(&remote.organization)
+                    && binding.project == remote.project
+                    && binding.repository == remote.repository
+            }) {
+                profile_name.clone_into(&mut binding.profile);
+            } else {
+                cfg.bindings.push(RepositoryProfileBinding {
+                    profile: profile_name.to_owned(),
+                    organization: remote.organization,
+                    project: remote.project,
+                    repository: remote.repository,
+                });
+            }
         }
     }
     crate::features::process_profiles::validate_config(&cfg)?;
@@ -493,6 +506,63 @@ mod tests {
             .expect("schema fora do conjunto deveria falhar");
         assert!(error.contains("Agrotrace"));
         assert!(error.contains("CheckMilk"));
+    }
+
+    #[test]
+    fn init_preserves_generic_profiles() {
+        let generic = ProcessProfile {
+            name: "IBS Novo".to_owned(),
+            program_field: "Custom.ProgramasNovo".to_owned(),
+            area_path: "Projeto\\QA".to_owned(),
+            assigned_to: "qa@example.com".to_owned(),
+            team: "QA".to_owned(),
+            program: "Produto".to_owned(),
+            priority: 2.0,
+            inherit_iteration_path: true,
+            parent_transition: None,
+            reviewer_dev: "dev@example.com".to_owned(),
+            reviewer_sprint: "sprint@example.com".to_owned(),
+        };
+        let previous = Config {
+            profiles: vec![generic],
+            bindings: vec![RepositoryProfileBinding {
+                profile: "IBS Novo".to_owned(),
+                organization: "ibsbiosistemico".to_owned(),
+                project: "Projeto".to_owned(),
+                repository: "repo".to_owned(),
+            }],
+            default_profile: "IBS Novo".to_owned(),
+            ..Config::default()
+        };
+        let draft = InitDraft {
+            pat_input: String::new(),
+            has_existing_pat: false,
+            reviewer_sprint: String::new(),
+            reviewer_dev: String::new(),
+            test_assigned_to: String::new(),
+            provider: "codex".to_owned(),
+            codex_model: String::new(),
+            codex_path: String::new(),
+            codex_reasoning: String::new(),
+            opencode_model: String::new(),
+            opencode_path: String::new(),
+            opencode_reasoning: String::new(),
+            base_url: String::new(),
+            compatible_model: String::new(),
+            compatible_reasoning: String::new(),
+            api_key_input: String::new(),
+            has_existing_api_key: false,
+            test_area_path: String::new(),
+            test_team: String::new(),
+            test_program: String::new(),
+        };
+        let mut next = draft.to_config("", "");
+        preserve_process_profiles(&mut next, &previous);
+
+        assert_eq!(next.profiles, previous.profiles);
+        assert_eq!(next.bindings, previous.bindings);
+        assert_eq!(next.default_profile, "IBS Novo");
+        assert_eq!(next.profiles[0].program_field, "Custom.ProgramasNovo");
     }
 
     #[test]

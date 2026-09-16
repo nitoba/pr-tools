@@ -453,7 +453,7 @@ impl TestApp {
     fn for_request(request: &TestCardRequest) -> Self {
         let mut app = Self::new();
         match request {
-            TestCardRequest::Cli(options) => {
+            TestCardRequest::Cli(options) | TestCardRequest::CliWithProfile { options, .. } => {
                 app.create_mode = CreateMode::from_options(options);
             }
             TestCardRequest::PublishedPr(_) => {
@@ -618,7 +618,7 @@ impl TestApp {
         self.dialog = if self
             .prep
             .as_ref()
-            .is_none_or(|prep| prep.profile.profile.parent_transition.is_some())
+            .is_none_or(|prep| prep.profile.profile.parent_transition().is_some())
         {
             Some(TestDialog::ConfirmTestQa(false))
         } else {
@@ -700,7 +700,7 @@ impl TestApp {
         self.dialog = if self
             .prep
             .as_ref()
-            .is_none_or(|prep| prep.profile.profile.parent_transition.is_some())
+            .is_none_or(|prep| prep.profile.profile.parent_transition().is_some())
         {
             Some(TestDialog::ConfirmTestQa(false))
         } else {
@@ -898,7 +898,9 @@ async fn backend_prepare_generate_with<P, PFut, G, GFut>(
         "lendo config, git e work item pai…".to_owned(),
     ));
     let options = match &request {
-        TestCardRequest::Cli(options) => Some(options.clone()),
+        TestCardRequest::Cli(options) | TestCardRequest::CliWithProfile { options, .. } => {
+            Some(options.clone())
+        }
         TestCardRequest::PublishedPr(_) => None,
     };
     let prep = match prepare(request).await {
@@ -1998,6 +2000,23 @@ pub async fn run_test_flow(options: &CliOptions) -> anyhow::Result<TestFlowOutco
     run_test_flow_request(TestCardRequest::Cli(options.clone())).await
 }
 
+/// Roda o fluxo de Test Case com uma seleção decidida antes da preparação.
+///
+/// # Errors
+///
+/// Retorna erro se o terminal não puder ser inicializado ou se o backend
+/// falhar.
+pub async fn run_test_flow_with_profile(
+    options: &CliOptions,
+    profile: crate::features::process_profiles::ProfileSelection,
+) -> anyhow::Result<TestFlowOutcome> {
+    run_test_flow_request(TestCardRequest::CliWithProfile {
+        options: options.clone(),
+        profile,
+    })
+    .await
+}
+
 /// Roda o fluxo de Test Case para uma entrada standalone ou um handoff
 /// estruturado de PR publicado.
 ///
@@ -3068,7 +3087,7 @@ fn fixture_metadata(
                 allowed_values: Vec::new(),
             },
             WorkItemFieldMetadata {
-                reference_name: profile.program_field.to_owned(),
+                reference_name: profile.program_field.clone(),
                 field_type: "String".to_owned(),
                 required: true,
                 default_value: None,
@@ -3368,7 +3387,9 @@ mod tests {
                 spawn_http_error_server(status, r#"{"message":"access denied"}"#);
             let context = match published_request() {
                 TestCardRequest::PublishedPr(context) => context,
-                TestCardRequest::Cli(_) => unreachable!(),
+                TestCardRequest::Cli(_) | TestCardRequest::CliWithProfile { .. } => {
+                    unreachable!()
+                }
             };
             let client = crate::azure::AzureClient::new_for_test(&base_url, "pat");
             let request = TestCardRequest::PublishedPr(context.clone());
@@ -3779,7 +3800,7 @@ mod tests {
             spawn_http_error_server(403, r#"{"message":"access denied"}"#);
         let context = match published_request() {
             TestCardRequest::PublishedPr(context) => context,
-            TestCardRequest::Cli(_) => unreachable!(),
+            TestCardRequest::Cli(_) | TestCardRequest::CliWithProfile { .. } => unreachable!(),
         };
         let client = crate::azure::AzureClient::new_for_test(&base_url, "pat");
         let request = TestCardRequest::PublishedPr(context.clone());

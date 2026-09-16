@@ -77,10 +77,26 @@ O diagnóstico verifica Git, remote Azure DevOps, PAT e acesso às APIs, configu
 
 ### Perfis de processo por repositório
 
-O `prt init` também oferece o perfil de processo e associa o clone ao remote
-Azure exato `(organization, project, repository)`, nunca ao caminho local. Os
-únicos schemas suportados são os dois abaixo. Esse **repository binding** é
-persistido na seção `bindings` de `config.json`:
+O perfil é associado ao remote Azure exato `(organization, project, repository)`;
+o caminho local nunca participa do binding. Para um clone da organização
+`ibsbiosistemico` sem essa associação, `prt desc` e `prt test` exibem a tela
+**Perfil do repositório IBS**, antes de chamar IA ou escrever no Azure, com as
+ações `Novo perfil`, `Importar perfil` e `Agora não`. Esta detecção ignora
+maiúsculas/minúsculas somente no nome da organização; projeto e repositório
+continuam exatos.
+
+`Novo perfil` e `Importar perfil` abrem a edição dos campos `name`,
+`programField`, `areaPath`, `assignedTo`, `inheritIterationPath`,
+`parentTransition`, `priority`, `program`, `reviewerDev`, `reviewerSprint` e
+`team`. O novo draft começa com `priority: 2` e
+`inheritIterationPath: true`; a importação copia os valores sem alterar a
+origem e o nome do novo perfil continua editável. A revisão mostra o remote,
+a origem e todos os valores, e exige confirmação explícita. `Agora não` não
+altera a configuração e continua uma vez usando o fallback atual.
+
+Os perfis legados abaixo continuam válidos. Perfis novos podem ter nome e
+field Azure arbitrários, desde que `programField` seja informado. Esse
+**repository binding** é persistido na seção `bindings` de `config.json`:
 
 - `Agrotrace`: `Custom.Team` + `Custom.ProgramasAgrotrace`;
 - `CheckMilk`: `Custom.Team` + `Custom.ProgramasCheckmilk`.
@@ -95,6 +111,7 @@ programa, transição do pai e `reviewerDev`/`reviewerSprint` ficam em
   "profiles": [
     {
       "name": "CheckMilk",
+      "programField": "Custom.ProgramasCheckmilk",
       "areaPath": "CHECKMILK\\QA",
       "assignedTo": "qa@example.com",
       "team": "DevOps",
@@ -124,6 +141,12 @@ herança de iteração e transição `Test QA`. O perfil legado implícito tamb�
 perfis: continuam no `.env`/ambiente atual. O `prt test` consulta os metadados
 de `Test Case`, fields e estados antes de qualquer `POST`/`PATCH`; rode
 `prt doctor` para verificar bindings, schema, fields e reviewers antes de criar.
+
+Em `--dry-run`, `--raw` ou sem TTY, o onboarding não pergunta nem modifica
+`config.json`; o comando informa o remote e orienta executar o fluxo
+interativo ou `prt init`. `prt init` preserva perfis genéricos e seus bindings,
+e `prt doctor` exibe `programField` e valida seus valores/reviewers sem mostrar
+PAT ou API key.
 
 ## Gerar e criar PRs
 

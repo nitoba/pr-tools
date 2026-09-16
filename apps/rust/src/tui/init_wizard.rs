@@ -263,17 +263,23 @@ impl InitWizard {
         let existing_profile = crate::config::load_config().ok().map_or_else(
             || ("Agrotrace".to_owned(), "Test QA".to_owned()),
             |config| {
-                let name = PROFILE_OPTIONS
-                    .iter()
-                    .find(|(name, _)| *name == config.default_profile)
-                    .map_or("Agrotrace", |(name, _)| *name);
+                let name = if !config.default_profile.trim().is_empty()
+                    && config
+                        .effective_process_profiles()
+                        .iter()
+                        .any(|profile| profile.name == config.default_profile)
+                {
+                    config.default_profile.clone()
+                } else {
+                    "Agrotrace".to_owned()
+                };
                 let transition = config
                     .profiles
                     .iter()
                     .find(|profile| profile.name == name)
                     .and_then(|profile| profile.parent_transition.clone())
                     .unwrap_or_else(|| "Test QA".to_owned());
-                (name.to_owned(), transition)
+                (name, transition)
             },
         );
         let mut w = Self {
