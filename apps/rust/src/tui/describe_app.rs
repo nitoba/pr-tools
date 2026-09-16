@@ -254,6 +254,7 @@ impl DescribeApp {
             .map(|target| target.target.clone())
             .collect();
         self.reviewers.clone_from(&snapshot.reviewers);
+        self.apply_reviewer_defaults();
         self.published = snapshot
             .targets
             .iter()
@@ -621,16 +622,36 @@ impl DescribeApp {
 
     /// Abre a edição de reviewers (valores = defaults por target).
     pub fn open_reviewers(&mut self) {
-        if self.reviewers.len() != self.targets.len() {
-            let setup = self.publish_setup.clone().unwrap_or(PublishSetup {
-                reviewer_sprint: String::new(),
-                reviewer_dev: String::new(),
-            });
-            self.reviewers = self.targets.iter().map(|t| setup.default_for(t)).collect();
-        }
+        self.apply_reviewer_defaults();
         self.reviewer_idx = 0;
         self.publish_dialog = Some(PublishDialog::Reviewers);
         self.rebind_reviewer();
+    }
+
+    /// Preenche slots vazios com os defaults atuais da configuração.
+    ///
+    /// Sessões criadas antes da confirmação de publicação podem ter um vetor
+    /// de reviewers com a cardinalidade correta, mas ainda sem valores. Ao
+    /// retomar, esses slots devem refletir a configuração atual sem substituir
+    /// uma escolha explícita já salva no snapshot.
+    pub fn apply_reviewer_defaults(&mut self) {
+        let setup = self.publish_setup.clone().unwrap_or(PublishSetup {
+            reviewer_sprint: String::new(),
+            reviewer_dev: String::new(),
+        });
+        if self.reviewers.len() != self.targets.len() {
+            self.reviewers = self
+                .targets
+                .iter()
+                .map(|target| setup.default_for(target))
+                .collect();
+            return;
+        }
+        for (reviewer, target) in self.reviewers.iter_mut().zip(&self.targets) {
+            if reviewer.trim().is_empty() {
+                *reviewer = setup.default_for(target);
+            }
+        }
     }
 
     /// Resumo `target: reviewer` (vazio vira `nenhum`), como no Dart.
@@ -998,6 +1019,17 @@ mod tests {
         };
         assert_eq!(setup.default_for("dev"), "profile-dev@example.com");
         assert_eq!(setup.default_for("sprint/12"), "profile-sprint@example.com");
+    }
+
+    #[test]
+    fn resumed_empty_reviewers_should_use_current_setup_defaults() {
+        let mut snapshot = session_snapshot(&[TargetState::Pending, TargetState::Pending]);
+        snapshot.reviewers = vec![String::new(), "  ".to_owned()];
+        let mut a = app();
+
+        a.restore_session(&snapshot);
+
+        assert_eq!(a.reviewers, vec!["dev@x.com", "sprint@x.com"]);
     }
 
     #[test]

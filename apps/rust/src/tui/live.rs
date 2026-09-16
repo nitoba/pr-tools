@@ -290,6 +290,9 @@ impl SessionRuntime {
     }
 
     fn persist_app(&mut self, app: &DescribeApp) -> crate::error::Result<()> {
+        if self.snapshot.is_complete() {
+            return Ok(());
+        }
         let Some(content) = app.frozen_publish_content.as_ref().or(app.desc.as_ref()) else {
             return Ok(());
         };
@@ -326,6 +329,13 @@ impl SessionRuntime {
             };
         }
         self.snapshot = self.save(next)?;
+        if self.snapshot.is_complete() {
+            self.store
+                .discard_files()
+                .map_err(|error| crate::error::AppError::Session {
+                    message: error.to_string(),
+                })?;
+        }
         Ok(())
     }
 
@@ -4303,6 +4313,21 @@ mod tests {
         let (_store, loaded) = SessionStore::open(&paths, id).expect("load");
         assert_eq!(loaded.title, "Título editado");
         assert_eq!(loaded.reviewers[0], "novo-dev@example.test");
+    }
+
+    #[test]
+    fn completed_publication_removes_session_before_test_case_handoff() {
+        let (_directory, paths, mut runtime, saved) = persisted_test_runtime();
+        let mut app = review_app();
+        app.targets = vec!["dev".to_owned(), "sprint/12".to_owned()];
+        app.on_backend(BackendEvent::PublishedOne(published(77, "dev")));
+        app.on_backend(BackendEvent::PublishedOne(published(78, "sprint/12")));
+
+        runtime.persist_app(&app).expect("persist complete");
+        drop(runtime);
+
+        let id = uuid::Uuid::parse_str(&saved.session_id).expect("uuid");
+        assert!(SessionStore::open(&paths, id).is_err());
     }
 
     #[test]
