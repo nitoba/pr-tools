@@ -75,6 +75,56 @@ prt doctor
 
 O diagnóstico verifica Git, remote Azure DevOps, PAT e acesso às APIs, configuração, autenticação dos providers e endpoint OpenAI-compatible. Cada componente informa o problema e como corrigi-lo; falhas críticas fazem o comando retornar código diferente de zero.
 
+### Perfis de processo por repositório
+
+O `prt init` também oferece o perfil de processo e associa o clone ao remote
+Azure exato `(organization, project, repository)`, nunca ao caminho local. Os
+únicos schemas suportados são os dois abaixo. Esse **repository binding** é
+persistido na seção `bindings` de `config.json`:
+
+- `Agrotrace`: `Custom.Team` + `Custom.ProgramasAgrotrace`;
+- `CheckMilk`: `Custom.Team` + `Custom.ProgramasCheckmilk`.
+
+Os defaults de `AreaPath`, `AssignedTo`, `IterationPath`, prioridade, valor de
+programa, transição do pai e `reviewerDev`/`reviewerSprint` ficam em
+`config.json`. Um formato reduzido é:
+
+```json
+{
+  "defaultProfile": "CheckMilk",
+  "profiles": [
+    {
+      "name": "CheckMilk",
+      "areaPath": "CHECKMILK\\QA",
+      "assignedTo": "qa@example.com",
+      "team": "DevOps",
+      "program": "Checkmilk",
+      "priority": 2,
+      "inheritIterationPath": true,
+      "parentTransition": "Test QA",
+      "reviewerDev": "dev@example.com",
+      "reviewerSprint": "sprint@example.com"
+    }
+  ],
+  "bindings": [
+    {
+      "profile": "CheckMilk",
+      "organization": "org",
+      "project": "CHECKMILK",
+      "repository": "checkmilk"
+    }
+  ]
+}
+```
+
+Configurações antigas sem `profiles` são migradas de forma atômica e
+idempotente para `Agrotrace`, preservando os defaults legados, prioridade `2`,
+herança de iteração e transição `Test QA`. O perfil legado implícito também usa
+`Agrotrace` como fallback. PAT, API key e demais segredos não pertencem aos
+perfis: continuam no `.env`/ambiente atual. O `prt test` consulta os metadados
+de `Test Case`, fields e estados antes de qualquer `POST`/`PATCH`; rode
+`prt doctor` para verificar bindings, schema, fields e reviewers antes de criar.
+
 ## Gerar e criar PRs
 
 Execute os comandos dentro do clone do projeto que possui o remote Azure DevOps. Sem `--target`, o comando gera/publica PRs para a sprint mais recente e `dev`. Ao informar um ou mais `--target`, somente os destinos informados são usados.

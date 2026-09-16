@@ -3,9 +3,12 @@
 //! Precedência: CLI > env (`PR_AI_*`, `AZURE_PAT`, `PR_REVIEWER_*`, `TEST_CARD_*`)
 //! > dotenv (`.env`) > `config.json` > defaults.
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use tempfile::NamedTempFile;
 
 /// Nome do provider (`codex`, `opencode`, `openai-compatible`).
 pub type ProviderName = String;
@@ -26,6 +29,17 @@ pub const DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
 pub const DEFAULT_COMPATIBLE_MODEL: &str = "gpt-4o-mini";
 /// Thinking padrão do endpoint OpenAI-compatible.
 pub const COMPATIBLE_REASONING: &str = "provider-default";
+
+/// Nome do perfil de processo legado.
+pub const AGROTRACE_PROFILE: &str = "Agrotrace";
+/// Nome do perfil de processo `CheckMilk`.
+pub const CHECKMILK_PROFILE: &str = "CheckMilk";
+/// Campo fixo de programa do perfil Agrotrace.
+pub const AGROTRACE_PROGRAM_FIELD: &str = "Custom.ProgramasAgrotrace";
+/// Campo fixo de programa do perfil `CheckMilk`.
+pub const CHECKMILK_PROGRAM_FIELD: &str = "Custom.ProgramasCheckmilk";
+/// Estado padrão usado pelo perfil legado.
+pub const DEFAULT_PARENT_TRANSITION: &str = "Test QA";
 
 /// Template padrão (PT-BR) — espelha `defaultTemplate` do Dart.
 pub const DEFAULT_TEMPLATE: &str = r#"Analise o diff e o log do git fornecidos e gere uma descrição de pull request em português brasileiro.
@@ -55,6 +69,113 @@ Não invente alterações que não estejam no diff.
 
 Responda somente com o objeto JSON. Não inclua o prompt, o contexto Git, o log, o diff ou qualquer texto adicional fora desse objeto.
 "#;
+
+/// Perfil local de um processo Azure DevOps suportado pelo `prt`.
+///
+/// O nome também identifica o schema fechado da V1: somente `Agrotrace` e
+/// `CheckMilk` são aceitos. Credenciais deliberadamente não fazem parte deste
+/// tipo; elas continuam no `.env`/ambiente global existente.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProcessProfile {
+    /// Identificador estável do perfil (`Agrotrace` ou `CheckMilk`).
+    pub name: String,
+    /// `System.AreaPath` padrão.
+    #[serde(default)]
+    pub area_path: String,
+    /// `System.AssignedTo` padrão.
+    #[serde(default)]
+    pub assigned_to: String,
+    /// `Custom.Team` padrão.
+    #[serde(default)]
+    pub team: String,
+    /// Valor do campo de programa fixo do schema.
+    #[serde(default)]
+    pub program: String,
+    /// `Microsoft.VSTS.Common.Priority` padrão.
+    #[serde(default = "default_profile_priority")]
+    pub priority: f64,
+    /// Se a `IterationPath` do Work Item pai deve ser herdada.
+    #[serde(default = "default_inherit_iteration_path")]
+    pub inherit_iteration_path: bool,
+    /// Estado opcional aplicado ao Work Item pai após a criação.
+    #[serde(default)]
+    pub parent_transition: Option<String>,
+    /// Reviewer padrão para targets `dev`.
+    #[serde(default)]
+    pub reviewer_dev: String,
+    /// Reviewer padrão para targets `sprint`.
+    #[serde(default)]
+    pub reviewer_sprint: String,
+}
+
+fn default_profile_priority() -> f64 {
+    2.0
+}
+
+fn default_inherit_iteration_path() -> bool {
+    true
+}
+
+impl ProcessProfile {
+    /// Cria o perfil Agrotrace a partir das chaves legadas não secretas.
+    #[must_use]
+    pub fn from_legacy(config: &Config) -> Self {
+        Self {
+            name: AGROTRACE_PROFILE.to_owned(),
+            area_path: config.test_area_path.clone(),
+            assigned_to: config.test_assigned_to.clone(),
+            team: config.test_team.clone(),
+            program: config.test_program.clone(),
+            priority: 2.0,
+            inherit_iteration_path: true,
+            parent_transition: Some(DEFAULT_PARENT_TRANSITION.to_owned()),
+            reviewer_dev: config.reviewer_dev.clone(),
+            reviewer_sprint: config.reviewer_sprint.clone(),
+        }
+    }
+
+    /// Cria um perfil com os valores fixos do schema selecionado.
+    #[must_use]
+    pub fn named(name: &str) -> Option<Self> {
+        matches!(name, AGROTRACE_PROFILE | CHECKMILK_PROFILE).then(|| Self {
+            name: name.to_owned(),
+            area_path: String::new(),
+            assigned_to: String::new(),
+            team: String::new(),
+            program: String::new(),
+            priority: 2.0,
+            inherit_iteration_path: true,
+            parent_transition: Some(DEFAULT_PARENT_TRANSITION.to_owned()),
+            reviewer_dev: String::new(),
+            reviewer_sprint: String::new(),
+        })
+    }
+
+    /// Retorna o campo de programa permitido pelo schema.
+    #[must_use]
+    pub fn program_field(&self) -> Option<&'static str> {
+        match self.name.as_str() {
+            AGROTRACE_PROFILE => Some(AGROTRACE_PROGRAM_FIELD),
+            CHECKMILK_PROFILE => Some(CHECKMILK_PROGRAM_FIELD),
+            _ => None,
+        }
+    }
+}
+
+/// Associação de um perfil à identidade Azure exata do remote Git.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepositoryProfileBinding {
+    /// Nome do perfil associado.
+    pub profile: String,
+    /// Organização Azure (`dev.azure.com/{organization}`).
+    pub organization: String,
+    /// Projeto Azure.
+    pub project: String,
+    /// Repositório Azure.
+    pub repository: String,
+}
 
 /// Configuração resolvida.
 ///
@@ -119,6 +240,15 @@ pub struct Config {
     /// Template do prompt de sistema.
     #[serde(default = "default_template")]
     pub template: String,
+    /// Perfis de processo persistidos no `config.json`.
+    #[serde(default)]
+    pub profiles: Vec<ProcessProfile>,
+    /// Bindings por `(organization, project, repository)`.
+    #[serde(default)]
+    pub bindings: Vec<RepositoryProfileBinding>,
+    /// Perfil usado quando não existe binding explícito.
+    #[serde(default)]
+    pub default_profile: String,
 }
 
 fn default_providers() -> Vec<String> {
@@ -175,6 +305,46 @@ impl Default for Config {
             test_program: String::new(),
             api_key: String::new(),
             template: default_template(),
+            profiles: Vec::new(),
+            bindings: Vec::new(),
+            default_profile: String::new(),
+        }
+    }
+}
+
+impl Config {
+    /// Materializa a configuração legada em um perfil Agrotrace.
+    ///
+    /// A operação é somente em memória. O loader persiste o JSON original
+    /// através de [`migrate_legacy_json`] para que a troca seja atômica e não
+    /// serialize PAT/API key dentro do perfil.
+    pub fn migrate_legacy_profiles(&mut self) -> bool {
+        if !self.profiles.is_empty() {
+            if self.default_profile.trim().is_empty()
+                && self
+                    .profiles
+                    .iter()
+                    .any(|profile| profile.name == AGROTRACE_PROFILE)
+            {
+                AGROTRACE_PROFILE.clone_into(&mut self.default_profile);
+                return true;
+            }
+            return false;
+        }
+        let legacy = ProcessProfile::from_legacy(self);
+        self.profiles.push(legacy);
+        AGROTRACE_PROFILE.clone_into(&mut self.default_profile);
+        true
+    }
+
+    /// Perfis efetivos, incluindo o fallback legado para configurações
+    /// construídas em memória sem passar pelo loader.
+    #[must_use]
+    pub fn effective_process_profiles(&self) -> Vec<ProcessProfile> {
+        if self.profiles.is_empty() {
+            vec![ProcessProfile::from_legacy(self)]
+        } else {
+            self.profiles.clone()
         }
     }
 }
@@ -233,6 +403,63 @@ fn read_config_file(primary: &Path, legacy: Option<&Path>) -> Option<String> {
         .or_else(|| legacy.and_then(|path| std::fs::read_to_string(path).ok()))
 }
 
+fn read_config_source(primary: &Path, legacy: Option<&Path>) -> Option<(PathBuf, String)> {
+    if let Ok(raw) = std::fs::read_to_string(primary) {
+        return Some((primary.to_path_buf(), raw));
+    }
+    legacy.and_then(|path| {
+        std::fs::read_to_string(path)
+            .ok()
+            .map(|raw| (path.to_path_buf(), raw))
+    })
+}
+
+/// Acrescenta a migração legada ao JSON existente sem reserializar segredos.
+fn migrate_legacy_json(raw: &str, config: &Config) -> crate::error::Result<String> {
+    let mut value: Value =
+        serde_json::from_str(raw).map_err(|error| crate::error::AppError::Config {
+            message: format!("falha ao migrar config.json: {error}"),
+        })?;
+    let object = value
+        .as_object_mut()
+        .ok_or_else(|| crate::error::AppError::Config {
+            message: "config.json deve conter um objeto JSON".to_owned(),
+        })?;
+    let profile = config
+        .profiles
+        .iter()
+        .find(|profile| profile.name == AGROTRACE_PROFILE)
+        .cloned()
+        .unwrap_or_else(|| ProcessProfile::from_legacy(config));
+    object.insert(
+        "profiles".to_owned(),
+        serde_json::to_value([profile]).map_err(|error| crate::error::AppError::Config {
+            message: format!("falha ao serializar perfil legado: {error}"),
+        })?,
+    );
+    object.insert(
+        "defaultProfile".to_owned(),
+        Value::String(AGROTRACE_PROFILE.to_owned()),
+    );
+    serde_json::to_string_pretty(&value)
+        .map(|json| format!("{json}\n"))
+        .map_err(|error| crate::error::AppError::Config {
+            message: format!("falha ao serializar migração: {error}"),
+        })
+}
+
+/// Persiste a migração em uma substituição atômica do arquivo original.
+fn write_atomic(path: &Path, contents: &str) -> crate::error::Result<()> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(parent)?;
+    let mut temp = NamedTempFile::new_in(parent)?;
+    temp.as_file_mut().write_all(contents.as_bytes())?;
+    temp.as_file().sync_all()?;
+    temp.persist(path)
+        .map_err(|error| crate::error::AppError::Io(error.error))?;
+    Ok(())
+}
+
 fn config_base_dir(
     xdg_config_home: Option<PathBuf>,
     platform_config_dir: Option<PathBuf>,
@@ -281,12 +508,13 @@ pub fn load_config() -> crate::error::Result<Config> {
     let legacy = legacy_config_paths();
     let mut config = Config::default();
 
-    if let Some(raw) = read_config_file(
+    let config_source = read_config_source(
         &paths.config_file,
         legacy.as_ref().map(|paths| paths.config_file.as_path()),
-    ) {
+    );
+    if let Some((_, raw)) = &config_source {
         let file_cfg: Config =
-            serde_json::from_str(&raw).map_err(|e| crate::error::AppError::Config {
+            serde_json::from_str(raw).map_err(|e| crate::error::AppError::Config {
                 message: format!("{}: {e}", paths.config_file.display()),
             })?;
         config = file_cfg;
@@ -318,6 +546,20 @@ pub fn load_config() -> crate::error::Result<Config> {
     ) {
         if !t.trim().is_empty() {
             config.template = t;
+        }
+    }
+    if let Some((source_path, raw)) = config_source {
+        let raw_value: Value =
+            serde_json::from_str(&raw).map_err(|error| crate::error::AppError::Config {
+                message: format!("falha ao ler config.json para migração: {error}"),
+            })?;
+        let has_profiles = raw_value
+            .get("profiles")
+            .and_then(Value::as_array)
+            .is_some_and(|profiles| !profiles.is_empty());
+        if !has_profiles && config.migrate_legacy_profiles() {
+            let migrated = migrate_legacy_json(&raw, &config)?;
+            write_atomic(&source_path, &migrated)?;
         }
     }
     Ok(config)
@@ -407,5 +649,67 @@ mod tests {
             .config_dir()
             .join("pr-tools");
         assert_eq!(config_paths().directory, expected);
+    }
+
+    #[test]
+    fn legacy_config_should_materialize_agrotrace_and_default() {
+        let mut config = Config {
+            test_area_path: "AGROTRACE\\QA".to_owned(),
+            test_assigned_to: "qa@example.com".to_owned(),
+            test_team: "DevOps".to_owned(),
+            test_program: "Agrotrace".to_owned(),
+            reviewer_dev: "dev@example.com".to_owned(),
+            reviewer_sprint: "sprint@example.com".to_owned(),
+            ..Config::default()
+        };
+        assert!(config.migrate_legacy_profiles());
+        assert_eq!(config.default_profile, AGROTRACE_PROFILE);
+        assert_eq!(config.profiles.len(), 1);
+        let profile = &config.profiles[0];
+        assert_eq!(profile.name, AGROTRACE_PROFILE);
+        assert_eq!(profile.priority, 2.0);
+        assert!(profile.inherit_iteration_path);
+        assert_eq!(
+            profile.parent_transition.as_deref(),
+            Some(DEFAULT_PARENT_TRANSITION)
+        );
+        assert_eq!(profile.reviewer_dev, "dev@example.com");
+        assert_eq!(profile.reviewer_sprint, "sprint@example.com");
+    }
+
+    #[test]
+    fn legacy_migration_should_be_atomic_idempotent_and_secret_free() {
+        let dir = tempfile::tempdir().expect("diretório temporário");
+        let path = dir.path().join("config.json");
+        let raw = serde_json::json!({
+            "testAreaPath": "AGROTRACE\\QA",
+            "testAssignedTo": "qa@example.com",
+            "testTeam": "DevOps",
+            "testProgram": "Agrotrace",
+            "azurePat": "pat-secret",
+            "apiKey": "api-secret"
+        });
+        std::fs::write(&path, serde_json::to_string_pretty(&raw).unwrap()).unwrap();
+        let mut config: Config = serde_json::from_value(raw).unwrap();
+        config.azure_pat = "pat-secret".to_owned();
+        config.api_key = "api-secret".to_owned();
+        assert!(config.migrate_legacy_profiles());
+        let migrated = migrate_legacy_json(&std::fs::read_to_string(&path).unwrap(), &config)
+            .expect("migração");
+        write_atomic(&path, &migrated).expect("substituição atômica");
+        let first: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(first["profiles"].as_array().unwrap().len(), 1);
+        assert_eq!(first["defaultProfile"], AGROTRACE_PROFILE);
+        assert!(!first["profiles"].to_string().contains("pat-secret"));
+        assert!(!first["profiles"].to_string().contains("api-secret"));
+
+        let mut loaded: Config = serde_json::from_value(first).unwrap();
+        assert!(!loaded.migrate_legacy_profiles());
+        let second = migrate_legacy_json(&std::fs::read_to_string(&path).unwrap(), &loaded)
+            .expect("migração repetida");
+        write_atomic(&path, &second).expect("substituição repetida");
+        let repeated: Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(repeated["profiles"].as_array().unwrap().len(), 1);
     }
 }

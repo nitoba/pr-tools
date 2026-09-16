@@ -960,6 +960,47 @@ mod tests {
     }
 
     #[test]
+    fn profile_reviewers_should_override_legacy_defaults() {
+        let mut config = crate::config::Config::default();
+        let mut profile = crate::config::ProcessProfile::named("CheckMilk").unwrap();
+        profile.reviewer_dev = "profile-dev@example.com".to_owned();
+        profile.reviewer_sprint = "profile-sprint@example.com".to_owned();
+        config.profiles = vec![profile];
+        config.default_profile = "CheckMilk".to_owned();
+        config.reviewer_dev = "legacy@example.com".to_owned();
+        let remote = crate::git::RepositoryRemote {
+            organization: "org".to_owned(),
+            project: "CHECKMILK".to_owned(),
+            repository: "repo".to_owned(),
+        };
+        let selection = crate::features::process_profiles::select(&config, &remote).unwrap();
+        let mut app = DescribeApp::new(
+            "feature/x",
+            &["dev".to_owned()],
+            "1",
+            false,
+            Some(PublishSetup {
+                reviewer_dev: selection.profile.reviewer_dev,
+                reviewer_sprint: selection.profile.reviewer_sprint,
+            }),
+            None,
+        );
+        app.open_reviewers();
+        assert_eq!(app.reviewers, vec!["profile-dev@example.com"]);
+        assert!(!app.reviewers.contains(&"legacy@example.com".to_owned()));
+    }
+
+    #[test]
+    fn profile_reviewers_should_follow_target() {
+        let setup = PublishSetup {
+            reviewer_dev: "profile-dev@example.com".to_owned(),
+            reviewer_sprint: "profile-sprint@example.com".to_owned(),
+        };
+        assert_eq!(setup.default_for("dev"), "profile-dev@example.com");
+        assert_eq!(setup.default_for("sprint/12"), "profile-sprint@example.com");
+    }
+
+    #[test]
     fn reviewer_summary_should_show_nenhum_when_empty() {
         let mut a = app();
         a.open_reviewers();
