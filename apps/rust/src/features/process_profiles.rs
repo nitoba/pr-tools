@@ -207,6 +207,10 @@ fn value_text(value: &serde_json::Value) -> Option<String> {
 
 fn metadata_error(stage: &str, error: AppError) -> AppError {
     match error {
+        AppError::Azure { status, message } if status < 300 => AppError::Azure {
+            status,
+            message: format!("validação de metadata falhou ao {stage}: {message}"),
+        },
         AppError::Azure { status, .. } => AppError::Azure {
             status,
             message: format!("validação de metadata falhou ao {stage}"),
