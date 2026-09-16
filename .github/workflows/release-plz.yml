@@ -16,6 +16,8 @@ jobs:
     permissions:
       contents: write
       pull-requests: read
+    outputs:
+      releases_created: ${{ steps.release-plz.outputs.releases_created }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -28,6 +30,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Run release-plz release
+        id: release-plz
         uses: release-plz/action@a80d79efe0a195618acb02a4089d55fe74d2505f # v0.5.136
         with:
           command: release
@@ -39,6 +42,13 @@ jobs:
 
   release-plz-pr:
     name: Prepare release PR
+    needs: release-plz-release
+    # The release job pushes the new tag on merge of a release PR. Running
+    # release-pr afterwards (instead of in parallel) guarantees it sees the
+    # new tag; otherwise it recomputes the same bump from the previous tag
+    # and opens a duplicate release PR in an infinite loop.
+    # Fail open (!= 'true') so a missing output still creates the PR.
+    if: ${{ needs.release-plz-release.outputs.releases_created != 'true' }}
     runs-on: ubuntu-24.04
     permissions:
       contents: write
