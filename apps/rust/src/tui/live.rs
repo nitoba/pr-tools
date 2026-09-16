@@ -273,6 +273,8 @@ impl SessionRuntime {
             reviewers,
             app.targets.clone(),
         );
+        let mut snapshot = snapshot;
+        snapshot.profile.clone_from(&prep.profile);
         let (store, snapshot) = SessionStore::create(&config::config_paths(), snapshot)?;
         Ok(Self { store, snapshot })
     }
@@ -564,21 +566,6 @@ fn start_publish(
         return;
     }
     app.commit_reviewer();
-    if recovery {
-        // A recuperação deve refletir alterações feitas no `prt init` desde a
-        // tentativa anterior, sem trocar o perfil selecionado para este
-        // remote. Se a configuração atual estiver inválida, preserva os
-        // defaults da tentativa anterior e deixa a publicação explicitar o
-        // erro na próxima validação.
-        if let (Ok(config), Some(remote)) = (config::load_config(), base.remote.as_ref()) {
-            if let Ok(profile) = crate::features::process_profiles::select(&config, remote) {
-                app.publish_setup = Some(PublishSetup {
-                    reviewer_sprint: profile.profile.reviewer_sprint,
-                    reviewer_dev: profile.profile.reviewer_dev,
-                });
-            }
-        }
-    }
     // Vazio volta ao default (como no Dart: vazio = padrão).
     if let Some(setup) = app.publish_setup.clone() {
         for (i, target) in app.targets.iter().enumerate() {
@@ -758,7 +745,12 @@ fn render_body(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
     let show_context = app.phase == Phase::Review;
     let context_height = if show_context {
         let session_lines = u16::from(app.session_id.is_some()) * 2;
-        4 + session_lines + u16::from(app.publish_context_warning.is_some())
+        let profile_lines = u16::from(
+            app.launch_prep
+                .as_ref()
+                .is_some_and(|prep| prep.profile.is_some()),
+        );
+        4 + profile_lines + session_lines + u16::from(app.publish_context_warning.is_some())
     } else {
         0
     };
@@ -1025,6 +1017,20 @@ fn render_context(app: &DescribeApp, area: Rect, buf: &mut Buffer) {
         Line::from(context),
         Line::from(Span::styled(functional, theme().muted)),
     ];
+    if let Some(profile) = app
+        .launch_prep
+        .as_ref()
+        .and_then(|prep| prep.profile.as_ref())
+    {
+        lines.push(Line::from(Span::styled(
+            format!(
+                "Perfil ativo: {} · {}",
+                profile.name(),
+                profile.program_field
+            ),
+            theme().accent,
+        )));
+    }
     if let Some(session_id) = &app.session_id {
         lines.push(Line::from(Span::styled(
             format!("Sessão: {session_id}"),
@@ -2136,6 +2142,11 @@ pub async fn run_resumed_tui(
         .iter()
         .map(|target| target.target.clone())
         .collect::<Vec<_>>();
+    let profile = snapshot.profile.clone().or_else(|| {
+        remote
+            .as_ref()
+            .and_then(|remote| crate::features::process_profiles::select(&config, remote).ok())
+    });
     let prep = DescribePrep {
         config,
         context: crate::git::ChangeContext {
@@ -2147,13 +2158,14 @@ pub async fn run_resumed_tui(
             diff_original_lines: 0,
             log: String::new(),
             work_item_id: snapshot.work_item_id.clone(),
-            remote,
+            remote: remote.clone(),
         },
         targets,
         work_item_id: snapshot.work_item_id.clone(),
         functional_context: crate::features::describe::FunctionalContextStatus::NotRequested,
         work_item: None,
         fingerprint,
+        profile,
         prompt: String::new(),
     };
     let runtime = SessionRuntime::from_existing(store, snapshot);
@@ -2173,15 +2185,18 @@ fn make_publish_parts(prep: &DescribePrep) -> (Option<PublishSetup>, Option<Stri
             None,
             Some("PAT não configurado — rode `prt init`.".to_owned()),
         ),
-        Some(remote) => match crate::features::process_profiles::select(&prep.config, remote) {
-            Ok(profile) => (
+        Some(_) => match prep.profile.as_ref() {
+            Some(profile) => (
                 Some(PublishSetup {
-                    reviewer_sprint: profile.profile.reviewer_sprint,
-                    reviewer_dev: profile.profile.reviewer_dev,
+                    reviewer_sprint: profile.profile.reviewer_sprint.clone(),
+                    reviewer_dev: profile.profile.reviewer_dev.clone(),
                 }),
                 None,
             ),
-            Err(error) => (None, Some(error.to_string())),
+            None => (
+                None,
+                Some("perfil ativo não está disponível para publicar".to_owned()),
+            ),
         },
     };
     // Base própria para a task de publicação (o `prep` move para o backend).
@@ -3184,13 +3199,18 @@ mod tests {
             }
         }))
         .expect("snapshot do Work Item");
+        let config = crate::config::Config {
+            azure_pat: "pat".to_owned(),
+            profiles: vec![crate::config::ProcessProfile {
+                team: "DevOps".to_owned(),
+                program: "Agrotrace".to_owned(),
+                ..crate::config::ProcessProfile::named("Agrotrace").expect("perfil")
+            }],
+            default_profile: "Agrotrace".to_owned(),
+            ..crate::config::Config::default()
+        };
         DescribePrep {
-            config: crate::config::Config {
-                azure_pat: "pat".to_owned(),
-                test_team: "DevOps".to_owned(),
-                test_program: "Agrotrace".to_owned(),
-                ..crate::config::Config::default()
-            },
+            config: config.clone(),
             context: crate::git::ChangeContext {
                 branch: "feature/11763-exemplo".to_owned(),
                 source_ref: "refs/heads/feature/11763-exemplo".to_owned(),
@@ -3200,7 +3220,7 @@ mod tests {
                 diff_original_lines: 1,
                 log: "log".to_owned(),
                 work_item_id: "11763".to_owned(),
-                remote: Some(remote),
+                remote: Some(remote.clone()),
             },
             targets: vec!["dev".to_owned()],
             work_item_id: "11763".to_owned(),
@@ -3214,6 +3234,9 @@ mod tests {
             }),
             work_item: Some(work_item),
             fingerprint: crate::git::GitContextFingerprint::default(),
+            profile: Some(crate::features::process_profiles::legacy_selection(
+                &config, remote,
+            )),
             prompt: "prompt".to_owned(),
         }
     }

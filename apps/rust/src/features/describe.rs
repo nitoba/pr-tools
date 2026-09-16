@@ -4,6 +4,7 @@
 //! prepare → dry-run? → generate (+rewrite se > 4000) → mostra + copia →
 //! confirma criação + reviewers → publica.
 
+use std::io::IsTerminal;
 use std::time::Duration;
 
 use tracing::info;
@@ -14,6 +15,7 @@ use crate::azure::{self, work_items::FunctionalWorkItemContext};
 use crate::cli::CliOptions;
 use crate::config::{self, Config};
 use crate::error::{AppError, Result};
+use crate::features::process_profiles::{self, ProfileSelection};
 use crate::git::{self, ChangeContext, GitContextFingerprint};
 
 /// Limite das operações Azure acionadas pela recuperação da TUI.
@@ -76,6 +78,8 @@ pub struct DescribePrep {
     pub work_item: Option<azure::WorkItem>,
     /// Fingerprint do checkout capturado antes da publicação.
     pub fingerprint: GitContextFingerprint,
+    /// Perfil selecionado antes da geração; permanece congelado no handoff.
+    pub profile: Option<ProfileSelection>,
     /// Prompt de usuário.
     pub prompt: String,
 }
@@ -86,7 +90,24 @@ pub struct DescribePrep {
 ///
 /// Retorna erro de Git/config se coleta falhar.
 pub async fn prepare(options: &CliOptions) -> Result<DescribePrep> {
-    let mut config = config::load_config()?;
+    prepare_with_profile(options, None).await
+}
+
+/// Prepara `desc` reutilizando uma seleção já decidida pela fronteira de
+/// onboarding.
+///
+/// Quando `profile` é `Some`, a preparação não reconsulta o binding: a mesma
+/// seleção permanece válida até a revisão, publicação e eventual handoff.
+///
+/// # Errors
+///
+/// Retorna erro de Git/config se coleta falhar ou se a seleção não pertencer ao
+/// remote coletado.
+pub async fn prepare_with_profile(
+    options: &CliOptions,
+    selected_profile: Option<ProfileSelection>,
+) -> Result<DescribePrep> {
+    let mut config = load_config_for_execution(options)?;
     config::apply_cli_overrides(
         &mut config,
         options.provider.as_deref(),
@@ -95,6 +116,21 @@ pub async fn prepare(options: &CliOptions) -> Result<DescribePrep> {
         options.api_key.as_deref(),
     );
     let context = git::collect(options.source.as_deref())?;
+    let profile = match selected_profile {
+        Some(profile) => {
+            if context.remote.as_ref() != Some(&profile.remote) {
+                return Err(AppError::Git {
+                    message: "a seleção de perfil não corresponde ao remote local".to_owned(),
+                });
+            }
+            Some(profile)
+        }
+        None => context
+            .remote
+            .as_ref()
+            .map(|remote| process_profiles::select(&config, remote))
+            .transpose()?,
+    };
     let targets = git::resolve_targets(&context, &options.targets);
     let uses_default_targets = options.targets.is_empty();
     if (uses_default_targets || options.targets.iter().any(|t| t == "sprint"))
@@ -132,8 +168,17 @@ pub async fn prepare(options: &CliOptions) -> Result<DescribePrep> {
         functional_context,
         work_item,
         fingerprint,
+        profile,
         prompt,
     })
+}
+
+fn load_config_for_execution(options: &CliOptions) -> Result<Config> {
+    if options.output.dry_run || options.output.raw || !std::io::stdout().is_terminal() {
+        config::load_config_without_migration()
+    } else {
+        config::load_config()
+    }
 }
 
 #[cfg(test)]
@@ -453,6 +498,50 @@ mod tests {
     fn copy_should_not_panic_on_empty() {
         // Apenas garante que a função existe e retorna bool (pode falhar sem display).
         let _ = copy_to_clipboard("teste");
+    }
+
+    #[test]
+    fn selected_profile_provides_reviewers_to_desc() {
+        let selection = ProfileSelection {
+            profile: crate::config::ProcessProfile {
+                name: "IBS Novo".to_owned(),
+                program_field: "Custom.ProgramasNovo".to_owned(),
+                reviewer_dev: "profile-dev@example.com".to_owned(),
+                reviewer_sprint: "profile-sprint@example.com".to_owned(),
+                ..crate::config::ProcessProfile::named("Agrotrace").unwrap()
+            },
+            program_field: "Custom.ProgramasNovo".to_owned(),
+            remote: crate::git::RepositoryRemote {
+                organization: "ibsbiosistemico".to_owned(),
+                project: "Projeto".to_owned(),
+                repository: "repo".to_owned(),
+            },
+        };
+        assert_eq!(selection.reviewer_for("dev"), "profile-dev@example.com");
+        assert_eq!(
+            selection.reviewer_for("sprint/12"),
+            "profile-sprint@example.com"
+        );
+
+        let mut app = crate::tui::describe_app::DescribeApp::new(
+            "feature/x",
+            &["dev".to_owned(), "sprint/12".to_owned()],
+            "1",
+            false,
+            Some(crate::tui::describe_app::PublishSetup {
+                reviewer_dev: selection.profile.reviewer_dev,
+                reviewer_sprint: selection.profile.reviewer_sprint,
+            }),
+            None,
+        );
+        app.open_reviewers();
+        assert_eq!(
+            app.reviewers,
+            vec!["profile-dev@example.com", "profile-sprint@example.com"]
+        );
+        app.reviewers[0] = "manual@example.com".to_owned();
+        app.open_reviewers();
+        assert_eq!(app.reviewers[0], "manual@example.com");
     }
 
     #[test]

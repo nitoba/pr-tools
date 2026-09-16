@@ -42,8 +42,19 @@ pub struct WorkItemFieldMetadata {
     #[serde(default, rename = "defaultValue")]
     pub default_value: Option<Value>,
     /// Valores permitidos declarados pelo processo.
-    #[serde(default, rename = "allowedValues")]
+    #[serde(
+        default,
+        rename = "allowedValues",
+        deserialize_with = "deserialize_nullable_values"
+    )]
     pub allowed_values: Vec<Value>,
+}
+
+fn deserialize_nullable_values<'de, D>(deserializer: D) -> std::result::Result<Vec<Value>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<Vec<Value>>::deserialize(deserializer).map(Option::unwrap_or_default)
 }
 
 #[derive(Debug, Deserialize)]
@@ -751,6 +762,24 @@ pub async fn delete_work_item(client: &AzureClient, project: &str, id: i64) -> R
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn field_metadata_should_accept_null_allowed_values() {
+        let response: WorkItemFieldListResponse = serde_json::from_value(serde_json::json!({
+            "value": [{
+                "referenceName": "Custom.Team",
+                "type": "String",
+                "required": true,
+                "defaultValue": null,
+                "allowedValues": null,
+                "pickList": null
+            }]
+        }))
+        .expect("metadata de fields válida");
+
+        assert_eq!(response.items.len(), 1);
+        assert!(response.items[0].allowed_values.is_empty());
+    }
 
     #[test]
     fn functional_context_should_omit_absent_or_non_text_optional_fields() {

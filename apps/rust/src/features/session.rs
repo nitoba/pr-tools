@@ -17,6 +17,7 @@ use uuid::Uuid;
 
 use crate::config::ConfigPaths;
 use crate::error::{AppError, Result};
+use crate::features::process_profiles::ProfileSelection;
 use crate::git::{GitContextFingerprint, RepositoryRemote};
 
 /// Versão do formato persistido.
@@ -103,7 +104,7 @@ pub struct TargetSnapshot {
 }
 
 /// Snapshot seguro de uma sessão `prt desc`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SessionSnapshot {
     /// Versão do schema.
@@ -132,6 +133,9 @@ pub struct SessionSnapshot {
     pub work_item_id: String,
     /// Reviewer por target, na mesma ordem de `targets`.
     pub reviewers: Vec<String>,
+    /// Perfil congelado no início da publicação, quando disponível.
+    #[serde(default)]
+    pub profile: Option<ProfileSelection>,
     /// Targets e estados duráveis.
     pub targets: Vec<TargetSnapshot>,
     /// Data de criação em UTC RFC3339.
@@ -171,6 +175,7 @@ impl SessionSnapshot {
             body,
             work_item_id,
             reviewers,
+            profile: None,
             targets: targets
                 .into_iter()
                 .map(|target| TargetSnapshot {

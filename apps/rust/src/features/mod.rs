@@ -6,6 +6,7 @@
 pub mod describe;
 pub mod doctor;
 pub mod init;
+pub mod onboarding;
 pub mod process_profiles;
 pub mod session;
 pub mod test_card;
