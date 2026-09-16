@@ -778,7 +778,7 @@ pub async fn generate(prep: &TestCardPrep) -> Result<PrDescription> {
 pub struct TestSettings {
     /// `AreaPath` (`--area-path` ou `ProcessProfile.areaPath`).
     pub area_path: String,
-    /// Responsável (`--assigned-to` ou `ProcessProfile.assignedTo`).
+    /// Responsável (`--assigned-to` ou `ProcessProfile.testCard.assignedTo`).
     pub assigned_to: String,
     /// `IterationPath` (`--iteration-path` ou o do pai).
     pub iteration_path: String,
@@ -1894,14 +1894,14 @@ mod tests {
             test_case_fields: vec![
                 crate::azure::work_items::WorkItemFieldMetadata {
                     reference_name: "Custom.Team".to_owned(),
-                    field_type: "String".to_owned(),
+                    field_type: Some("String".to_owned()),
                     required: true,
                     default_value: None,
                     allowed_values: Vec::new(),
                 },
                 crate::azure::work_items::WorkItemFieldMetadata {
                     reference_name: selection.program_field.clone(),
-                    field_type: "String".to_owned(),
+                    field_type: Some("String".to_owned()),
                     required: true,
                     default_value: None,
                     allowed_values: Vec::new(),
@@ -1944,14 +1944,14 @@ mod tests {
         let fields = vec![
             crate::azure::work_items::WorkItemFieldMetadata {
                 reference_name: "Custom.Team".to_owned(),
-                field_type: "string".to_owned(),
+                field_type: Some("string".to_owned()),
                 required: true,
                 default_value: None,
                 allowed_values: Vec::new(),
             },
             crate::azure::work_items::WorkItemFieldMetadata {
                 reference_name: context.profile.program_field.clone(),
-                field_type: "string".to_owned(),
+                field_type: Some("string".to_owned()),
                 required: true,
                 default_value: None,
                 allowed_values: vec![serde_json::json!("Agrotrace")],
@@ -1959,7 +1959,7 @@ mod tests {
         ];
         assert!(process_profiles::validate_schema_fields(&context.profile, &fields).is_ok());
         let mut incompatible = fields;
-        incompatible[1].field_type = "integer".to_owned();
+        incompatible[1].field_type = Some("integer".to_owned());
         assert!(process_profiles::validate_schema_fields(&context.profile, &incompatible).is_err());
     }
 
@@ -1974,14 +1974,14 @@ mod tests {
             test_case_fields: vec![
                 crate::azure::work_items::WorkItemFieldMetadata {
                     reference_name: "Custom.Team".to_owned(),
-                    field_type: "String".to_owned(),
+                    field_type: Some("String".to_owned()),
                     required: true,
                     default_value: None,
                     allowed_values: Vec::new(),
                 },
                 crate::azure::work_items::WorkItemFieldMetadata {
                     reference_name: context.profile.program_field.clone(),
-                    field_type: "String".to_owned(),
+                    field_type: Some("String".to_owned()),
                     required: true,
                     default_value: None,
                     allowed_values: Vec::new(),

@@ -1,6 +1,6 @@
 ---
 source: apps/rust/src/tui/test_flow.rs
-assertion_line: 4386
+assertion_line: 4507
 expression: "$crate :: tui :: snapshot_value(terminal.backend())"
 ---
 "◆ prt <version>  ·  test  ·  gerando                                                                    "
@@ -23,8 +23,8 @@ expression: "$crate :: tui :: snapshot_value(terminal.backend())"
 "│                                                     █ │ │   Team *  ·  Custom.Team (obrigatório) │"
 "│                                                     █ │ │ —                                      │"
 "│                                                     █ │ │                                        │"
-"│                                                     █ │ │   Programa *  ·  campo de programa do  │"
-"│                                                     █ │ │ perfil (obrigatório)                   │"
+"│                                                     █ │ │   Programa *  ·  referenceName Azure   │"
+"│                                                     █ │ │ (ex.: Custom.ProgramasAgrotrace)       │"
 "│                                                     █ │ │ —                                      │"
 "│                                                     █ │ │                                        │"
 "│                                                     █ │ │                                        │"

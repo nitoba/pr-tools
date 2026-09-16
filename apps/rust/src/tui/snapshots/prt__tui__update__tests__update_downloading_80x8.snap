@@ -1,0 +1,12 @@
+---
+source: apps/rust/src/tui/update.rs
+expression: "$crate :: tui :: snapshot_value(terminal.backend())"
+---
+"◆ prt <version>  ·  update  ·  Download                                             "
+"baixando prt-linux-x64 · 2.2 MiB / 8.0 MiB  ·  ███████░░░░░░░░░░░░░░░░░░  ·  28%"
+"✓ verificar disponibilidade                                                     "
+"● baixar novo binário  2.2 MiB / 8.0 MiB                                        "
+"○ validar binário                                                               "
+"○ instalar atualização                                                          "
+"destino: /home/dev/.local/bin/prt                                               "
+"Ctrl+C cancelar · trabalhando em segundo plano                                  "

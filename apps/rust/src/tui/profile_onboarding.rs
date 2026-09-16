@@ -93,16 +93,16 @@ impl Field {
     fn label(self) -> &'static str {
         match self {
             Self::Name => "name",
-            Self::ProgramReference => "programField",
+            Self::ProgramReference => "campo Azure do programa",
             Self::AreaPath => "areaPath",
-            Self::AssignedTo => "assignedTo",
+            Self::AssignedTo => "testCard.assignedTo",
             Self::InheritIterationPath => "inheritIterationPath",
             Self::ParentTransition => "parentTransition",
             Self::Priority => "priority",
             Self::Program => "program",
-            Self::ReviewerDev => "reviewerDev",
-            Self::ReviewerSprint => "reviewerSprint",
-            Self::Team => "team",
+            Self::ReviewerDev => "reviewers.development",
+            Self::ReviewerSprint => "reviewers.sprint",
+            Self::Team => "testCard.team",
         }
     }
 
@@ -1193,6 +1193,17 @@ mod tests {
         let text = rendered_text(&app, 60, 20);
 
         assert!(text.contains("(space)"));
+    }
+
+    #[test]
+    fn edit_screen_should_identify_test_case_profile_fields() {
+        let mut app = ProfileOnboarding::new(Config::default(), remote());
+        app.screen = Screen::Edit;
+        let text = rendered_text(&app, 100, 30);
+
+        assert!(text.contains("campo Azure do programa"));
+        assert!(text.contains("testCard.assignedTo"));
+        assert!(text.contains("testCard.team"));
     }
 
     #[test]

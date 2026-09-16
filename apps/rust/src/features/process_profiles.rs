@@ -151,11 +151,13 @@ pub fn validate_schema_fields(
                 ),
             });
         };
-        if !is_string_field(&field.field_type) {
+        if let Some(field_type) = field.field_type.as_deref()
+            && !is_string_field(field_type)
+        {
             return Err(AppError::Config {
                 message: format!(
                     "validação de metadata: o field {reference_name} tem tipo incompatível {}",
-                    field.field_type
+                    field_type
                 ),
             });
         }
@@ -280,7 +282,17 @@ pub fn validate_config(config: &Config) -> Result<()> {
         if profile.program_field().is_none() {
             return Err(AppError::Config {
                 message: format!(
-                    "perfil {} não informa programField; preencha programField no perfil",
+                    "perfil {} não informa testCard.programField; preencha testCard.programField no perfil",
+                    profile.name
+                ),
+            });
+        }
+        if let Some(program_field) = profile.program_field()
+            && !is_valid_field_reference_name(program_field)
+        {
+            return Err(AppError::Config {
+                message: format!(
+                    "perfil {} informa testCard.programField inválido `{program_field}`; use o referenceName do campo Azure (ex.: Custom.ProgramasAgrotrace), não o valor do programa em `program`",
                     profile.name
                 ),
             });
@@ -387,7 +399,7 @@ pub fn select(config: &Config, remote: &RepositoryRemote) -> Result<ProfileSelec
         })?;
     let Some(program_field) = profile.program_field().map(str::to_owned) else {
         return Err(AppError::Config {
-            message: format!("perfil {} não informa programField", profile.name),
+            message: format!("perfil {} não informa testCard.programField", profile.name),
         });
     };
     Ok(ProfileSelection {
@@ -395,6 +407,23 @@ pub fn select(config: &Config, remote: &RepositoryRemote) -> Result<ProfileSelec
         program_field,
         remote: remote.clone(),
     })
+}
+
+/// Verifica a forma mínima de um `referenceName` de field Azure.
+///
+/// Os endpoints de Work Item usam namespaces como `System`, `Custom` ou
+/// `Microsoft`; um valor sem namespace normalmente é o valor do campo, não
+/// sua referência. A existência real do field continua sendo validada contra
+/// os metadados do projeto.
+#[must_use]
+pub fn is_valid_field_reference_name(value: &str) -> bool {
+    let value = value.trim();
+    let Some((namespace, name)) = value.split_once('.') else {
+        return false;
+    };
+    !namespace.trim().is_empty()
+        && !name.trim().is_empty()
+        && !value.chars().any(char::is_whitespace)
 }
 
 /// Retorna um binding para um remote, sem aplicar fallback.
@@ -542,6 +571,17 @@ mod tests {
         assert!(message.contains("org/AGROTRACE/agrotrace"), "{message}");
         assert!(message.contains(AGROTRACE_PROFILE), "{message}");
         assert!(message.contains(CHECKMILK_PROFILE), "{message}");
+    }
+
+    #[test]
+    fn invalid_program_field_should_explain_reference_name_and_program_value() {
+        let mut config = config_with_bindings();
+        config.profiles[0].program_field = "Agrotrace".to_owned();
+
+        let error = validate_config(&config).expect_err("field sem namespace deveria falhar");
+        let message = error.to_string();
+        assert!(message.contains("referenceName"), "{message}");
+        assert!(message.contains("`program`"), "{message}");
     }
 
     #[test]

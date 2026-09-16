@@ -9,10 +9,46 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
+use futures::StreamExt as _;
+use tokio::io::AsyncWriteExt as _;
+
 use crate::cli::VERSION;
 use crate::error::{AppError, Result};
 
 const DEFAULT_REPOSITORY: &str = "nitoba/pr-tools";
+
+/// Eventos publicados durante o download e instalação do binário.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UpdateProgress {
+    /// Localiza o binário atual e o asset da plataforma.
+    Checking {
+        /// Caminho do binário que será substituído.
+        target: String,
+        /// Nome do asset da release.
+        asset: String,
+    },
+    /// Recebe um novo trecho do binário.
+    Downloading {
+        /// Quantidade já recebida em bytes.
+        downloaded: u64,
+        /// Tamanho total informado pelo servidor, quando disponível.
+        total: Option<u64>,
+    },
+    /// Confere se o arquivo baixado responde como um `prt` válido.
+    Validating,
+    /// O arquivo foi validado e a versão foi identificada.
+    Validated {
+        /// Texto da versão retornado por `prt --version`.
+        version: String,
+    },
+    /// Substitui o binário instalado pelo arquivo validado.
+    Installing,
+    /// A instalação terminou.
+    Completed {
+        /// Texto da versão instalada.
+        version: String,
+    },
+}
 
 /// Baixa e instala a versão mais recente do `prt`.
 ///
@@ -22,6 +58,49 @@ const DEFAULT_REPOSITORY: &str = "nitoba/pr-tools";
 /// baixado ou a substituição local forem inválidos. Erros de rede e escrita
 /// também são propagados.
 pub async fn run() -> Result<()> {
+    let mut download_started = false;
+    let version = run_with_progress(move |event| match event {
+        UpdateProgress::Checking { target, asset } => {
+            println!("→ verificando atualização do prt");
+            println!("  destino: {target}");
+            println!("  asset:   {asset}");
+        }
+        UpdateProgress::Downloading { .. } if !download_started => {
+            download_started = true;
+            println!("→ baixando a versão mais recente do GitHub");
+        }
+        UpdateProgress::Validating => println!("→ validando o binário baixado"),
+        UpdateProgress::Validated { version } => println!("✓ versão baixada: {version}"),
+        UpdateProgress::Installing => println!("→ instalando a atualização"),
+        UpdateProgress::Downloading { .. } | UpdateProgress::Completed { .. } => {}
+    })
+    .await?;
+
+    #[cfg(windows)]
+    {
+        let _ = version;
+        println!("✓ atualização agendada; o novo binário será aplicado ao sair");
+    }
+    #[cfg(not(windows))]
+    println!("✓ prt atualizado com sucesso: {version}");
+    Ok(())
+}
+
+/// Baixa e instala a versão mais recente, emitindo o estado da operação.
+///
+/// O callback é síncrono de propósito: ele só deve atualizar um modelo local
+/// ou enviar um evento para a UI. Nenhuma operação de rede ou disco deve ser
+/// feita pelo callback.
+///
+/// # Errors
+///
+/// Retorna [`AppError::Update`] se o repositório, a plataforma, o binário
+/// baixado ou a substituição local forem inválidos. Erros de rede e escrita
+/// também são propagados.
+pub async fn run_with_progress<F>(mut emit: F) -> Result<String>
+where
+    F: FnMut(UpdateProgress) + Send + 'static,
+{
     let target = std::env::current_exe().map_err(|error| {
         update_error(format!(
             "não foi possível localizar o binário atual: {error}"
@@ -32,16 +111,21 @@ pub async fn run() -> Result<()> {
     let url = format!("https://github.com/{repository}/releases/latest/download/{asset}");
     let temporary = temporary_path(&target)?;
 
-    println!("→ verificando atualização do prt");
-    println!("  destino: {}", target.display());
-    println!("  asset:   {asset}");
-    println!("→ baixando a versão mais recente do GitHub");
+    emit(UpdateProgress::Checking {
+        target: target.display().to_string(),
+        asset: asset.clone(),
+    });
 
-    if let Err(error) = download(&url, &temporary).await {
+    if let Err(error) = download(&url, &temporary, |downloaded, total| {
+        emit(UpdateProgress::Downloading { downloaded, total });
+    })
+    .await
+    {
         remove_quietly(&temporary);
         return Err(error);
     }
 
+    emit(UpdateProgress::Validating);
     let downloaded_version = match validate_binary(&temporary) {
         Ok(version) => version,
         Err(error) => {
@@ -49,18 +133,20 @@ pub async fn run() -> Result<()> {
             return Err(error);
         }
     };
-    println!("✓ versão baixada: {downloaded_version}");
+    emit(UpdateProgress::Validated {
+        version: downloaded_version.clone(),
+    });
 
+    emit(UpdateProgress::Installing);
     if let Err(error) = replace_binary(&temporary, &target) {
         remove_quietly(&temporary);
         return Err(error);
     }
 
-    #[cfg(windows)]
-    println!("✓ atualização agendada; o novo binário será aplicado ao sair");
-    #[cfg(not(windows))]
-    println!("✓ prt atualizado com sucesso: {downloaded_version}");
-    Ok(())
+    emit(UpdateProgress::Completed {
+        version: downloaded_version.clone(),
+    });
+    Ok(downloaded_version)
 }
 
 fn update_error(message: impl Into<String>) -> AppError {
@@ -147,7 +233,10 @@ fn temporary_path(target: &Path) -> Result<PathBuf> {
     Ok(parent.join(format!(".{name}.update-{}{extension}", std::process::id())))
 }
 
-async fn download(url: &str, destination: &Path) -> Result<()> {
+async fn download<F>(url: &str, destination: &Path, mut emit: F) -> Result<()>
+where
+    F: FnMut(u64, Option<u64>),
+{
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(120))
         .user_agent(format!("prt/{VERSION}"))
@@ -162,11 +251,21 @@ async fn download(url: &str, destination: &Path) -> Result<()> {
             truncate(&body, 180)
         )));
     }
-    let bytes = response.bytes().await?;
-    if bytes.is_empty() {
+    let total = response.content_length();
+    let mut stream = response.bytes_stream();
+    let mut file = tokio::fs::File::create(destination).await?;
+    let mut downloaded = 0_u64;
+    emit(downloaded, total);
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk?;
+        file.write_all(&chunk).await?;
+        downloaded = downloaded.saturating_add(u64::try_from(chunk.len()).unwrap_or(u64::MAX));
+        emit(downloaded, total);
+    }
+    file.flush().await?;
+    if downloaded == 0 {
         return Err(update_error("o GitHub retornou um arquivo vazio"));
     }
-    tokio::fs::write(destination, &bytes).await?;
     set_executable(destination)?;
     Ok(())
 }

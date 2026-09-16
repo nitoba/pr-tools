@@ -45,11 +45,11 @@ impl DraftOrigin {
 pub struct OnboardingDraft {
     /// Nome do novo perfil.
     pub name: String,
-    /// Field Azure que recebe `program`.
+    /// Field Azure que recebe `program` (`testCard.programField`).
     pub program_field: String,
     /// `System.AreaPath` padrão.
     pub area_path: String,
-    /// `System.AssignedTo` padrão.
+    /// `testCard.assignedTo`: `System.AssignedTo` padrão.
     pub assigned_to: String,
     /// Herdar `System.IterationPath` do pai.
     pub inherit_iteration_path: bool,
@@ -63,7 +63,7 @@ pub struct OnboardingDraft {
     pub reviewer_dev: String,
     /// Reviewer de targets sprint.
     pub reviewer_sprint: String,
-    /// `Custom.Team` padrão.
+    /// `testCard.team`: `Custom.Team` padrão.
     pub team: String,
     /// Origem do draft.
     pub origin: DraftOrigin,
@@ -136,9 +136,9 @@ impl OnboardingDraft {
     pub fn review_rows(&self) -> Vec<(&'static str, String)> {
         vec![
             ("name", self.name.clone()),
-            ("programField", self.program_field.clone()),
+            ("testCard.programField", self.program_field.clone()),
             ("areaPath", self.area_path.clone()),
-            ("assignedTo", self.assigned_to.clone()),
+            ("testCard.assignedTo", self.assigned_to.clone()),
             (
                 "inheritIterationPath",
                 self.inherit_iteration_path.to_string(),
@@ -146,9 +146,9 @@ impl OnboardingDraft {
             ("parentTransition", self.parent_transition.clone()),
             ("priority", self.priority.to_string()),
             ("program", self.program.clone()),
-            ("reviewerDev", self.reviewer_dev.clone()),
-            ("reviewerSprint", self.reviewer_sprint.clone()),
-            ("team", self.team.clone()),
+            ("reviewers.development", self.reviewer_dev.clone()),
+            ("reviewers.sprint", self.reviewer_sprint.clone()),
+            ("testCard.team", self.team.clone()),
         ]
     }
 }
@@ -238,7 +238,14 @@ pub fn validate_draft(config: &Config, draft: &OnboardingDraft) -> Result<()> {
     }
     if draft.program_field.trim().is_empty() {
         return Err(AppError::Config {
-            message: "programField: informe o field Azure do programa".to_owned(),
+            message:
+                "testCard.programField: informe o campo Azure que armazena o programa do Test Case"
+                    .to_owned(),
+        });
+    }
+    if !process_profiles::is_valid_field_reference_name(&draft.program_field) {
+        return Err(AppError::Config {
+            message: "testCard.programField: informe o referenceName do campo Azure (ex.: Custom.ProgramasAgrotrace), não o valor do programa em `program`".to_owned(),
         });
     }
     if !draft.priority.is_finite() || draft.priority <= 0.0 {
@@ -247,9 +254,9 @@ pub fn validate_draft(config: &Config, draft: &OnboardingDraft) -> Result<()> {
         });
     }
     for (field, value) in [
-        ("assignedTo", draft.assigned_to.as_str()),
-        ("reviewerDev", draft.reviewer_dev.as_str()),
-        ("reviewerSprint", draft.reviewer_sprint.as_str()),
+        ("testCard.assignedTo", draft.assigned_to.as_str()),
+        ("reviewers.development", draft.reviewer_dev.as_str()),
+        ("reviewers.sprint", draft.reviewer_sprint.as_str()),
     ] {
         if !value.trim().is_empty() && !valid_email(value) {
             return Err(AppError::Config {
@@ -460,7 +467,7 @@ mod tests {
             ..OnboardingDraft::default()
         };
         let error = validate_draft(&Config::default(), &draft).unwrap_err();
-        assert!(error.to_string().contains("programField"));
+        assert!(error.to_string().contains("testCard.programField"));
     }
 
     #[test]
@@ -470,7 +477,7 @@ mod tests {
         invalid.program_field.clear();
         config.profiles.push(invalid);
         let error = resolve(config, remote("ibsbiosistemico")).unwrap_err();
-        assert!(error.to_string().contains("programField"));
+        assert!(error.to_string().contains("testCard.programField"));
     }
 
     #[test]
@@ -511,7 +518,9 @@ mod tests {
         assert_eq!(next.bindings[0].organization, "ibsbiosistemico");
         assert_eq!(profile.program_field, "Custom.ProgramasNovo");
         let json = serde_json::to_value(profile).unwrap();
-        assert!(json.get("programField").is_some());
+        assert!(json["testCard"].get("programField").is_some());
+        assert!(json["testCard"].get("assignedTo").is_some());
+        assert!(json["testCard"].get("team").is_some());
         assert!(json.get("azurePat").is_none());
         assert!(json.get("apiKey").is_none());
     }

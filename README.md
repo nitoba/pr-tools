@@ -89,41 +89,65 @@ maiúsculas/minúsculas somente no nome da organização; projeto e repositório
 continuam exatos.
 
 `Novo perfil` e `Importar perfil` abrem a edição dos campos `name`,
-`programField`, `areaPath`, `assignedTo`, `inheritIterationPath`,
-`parentTransition`, `priority`, `program`, `reviewerDev`, `reviewerSprint` e
-`team`. O novo draft começa com `priority: 2` e
+`testCard.programField`, `areaPath`, `testCard.assignedTo`,
+`inheritIterationPath`, `parentTransition`, `priority`, `program`,
+`reviewers.development`, `reviewers.sprint` e `testCard.team`. O novo draft começa com `priority: 2` e
 `inheritIterationPath: true`; a importação copia os valores sem alterar a
 origem e o nome do novo perfil continua editável. A revisão mostra o remote,
 a origem e todos os valores, e exige confirmação explícita. `Agora não` não
 altera a configuração e continua uma vez usando o fallback atual.
 
 Os perfis legados abaixo continuam válidos. Perfis novos podem ter nome e
-field Azure arbitrários, desde que `programField` seja informado. Esse
+field Azure arbitrários, desde que `testCard.programField` seja informado. Esse
 **repository binding** é persistido na seção `bindings` de `config.json`:
 
 - `Agrotrace`: `Custom.Team` + `Custom.ProgramasAgrotrace`;
 - `CheckMilk`: `Custom.Team` + `Custom.ProgramasCheckmilk`.
 
-Os defaults de `AreaPath`, `AssignedTo`, `IterationPath`, prioridade, valor de
-programa, transição do pai e `reviewerDev`/`reviewerSprint` ficam em
-`config.json`. Um formato reduzido é:
+Os defaults de `areaPath`, `testCard.assignedTo`, `IterationPath`, prioridade,
+valor de `program`, transição do pai e `reviewers` ficam em `config.json`. O
+formato canônico, incluindo os providers, é:
 
 ```json
 {
   "defaultProfile": "CheckMilk",
+  "defaultProvider": "codex",
+  "providers": [
+    {
+      "id": "codex",
+      "type": "codex",
+      "model": "gpt-5.6-luna",
+      "reasoning": "high"
+    },
+    {
+      "id": "opencode",
+      "type": "opencode",
+      "model": "openai/gpt-5.5"
+    },
+    {
+      "id": "openai",
+      "type": "openai-compatible",
+      "baseUrl": "https://api.openai.com/v1",
+      "model": "gpt-4o-mini"
+    }
+  ],
   "profiles": [
     {
       "name": "CheckMilk",
-      "programField": "Custom.ProgramasCheckmilk",
-      "areaPath": "CHECKMILK\\QA",
-      "assignedTo": "qa@example.com",
-      "team": "DevOps",
       "program": "Checkmilk",
+      "areaPath": "CHECKMILK\\QA",
       "priority": 2,
       "inheritIterationPath": true,
       "parentTransition": "Test QA",
-      "reviewerDev": "dev@example.com",
-      "reviewerSprint": "sprint@example.com"
+      "reviewers": {
+        "development": "dev@example.com",
+        "sprint": "sprint@example.com"
+      },
+      "testCard": {
+        "assignedTo": "qa@example.com",
+        "programField": "Custom.ProgramasCheckmilk",
+        "team": "DevOps"
+      }
     }
   ],
   "bindings": [
@@ -137,11 +161,20 @@ programa, transição do pai e `reviewerDev`/`reviewerSprint` ficam em
 }
 ```
 
+Ao carregar uma configuração, os formatos antigos — campos planos de perfil,
+campos globais de provider (`codexModel`, `baseUrl` etc.) e `providers` como
+lista de strings — continuam aceitos. O `load_config()` migra tudo para
+`reviewers`/`testCard` e providers-objeto, removendo as chaves antigas; se
+formatos antigo e novo coexistirem, o formato novo prevalece. Os modos sem
+migração continuam sem escrever no arquivo.
+
 Configurações antigas com as seis chaves de processo na raiz são migradas de
 forma atômica e idempotente para `profiles[Agrotrace]`; as chaves legadas são
 removidas, preservando os defaults, prioridade `2`, herança de iteração e
 transição `Test QA`. O perfil legado implícito também usa `Agrotrace` como
-fallback. PAT e API key são globais e não pertencem aos perfis: continuam no
+fallback. O campo `testCard.programField` é o `referenceName` Azure do campo que
+armazena o programa no Work Item `Test Case` (por exemplo,
+`Custom.ProgramasCheckmilk`). PAT e API key são globais e não pertencem aos perfis: continuam no
 `.env`/configuração global atual. O `prt test` consulta os metadados
 de `Test Case`, fields e estados antes de qualquer `POST`/`PATCH`; rode
 `prt doctor` para verificar bindings, schema, fields e reviewers antes de criar.
@@ -150,7 +183,7 @@ Em `--dry-run`, `--raw` ou sem TTY, o onboarding não pergunta nem modifica
 `config.json`; o comando informa o remote e orienta executar o fluxo
 interativo. `prt init` configura somente valores globais (PAT, provider,
 modelos, reasoning e endpoint compatível), preserva perfis genéricos e seus
-bindings, e `prt doctor` exibe `programField` e valida seus valores/reviewers
+bindings, e `prt doctor` exibe `testCard.programField` e valida seus valores/reviewers
 sem mostrar PAT ou API key.
 
 ## Gerar e criar PRs

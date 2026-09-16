@@ -150,7 +150,7 @@ async fn inspect_process_profiles(
         checks.push(fail_check(
             "Perfis de processo",
             format!("{label}: {error}"),
-            "Corrija os perfis/bindings em config.json; informe um programField válido e uma associação por remote.".to_owned(),
+            "Corrija os perfis/bindings em config.json; informe um testCard.programField válido e uma associação por remote.".to_owned(),
         ));
         return;
     }
@@ -198,7 +198,7 @@ async fn inspect_process_profiles(
             "Campos do perfil",
             format!("{label} / {}: Custom.Team está vazio.", selection.name()),
             format!(
-                "Preencha team no perfil {} em config.json ou no onboarding interativo.",
+                "Preencha testCard.team no perfil {} em config.json ou no onboarding interativo.",
                 selection.name()
             ),
         ));

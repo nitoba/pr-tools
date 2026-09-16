@@ -18,6 +18,7 @@ pub mod profile_onboarding;
 pub mod shimmer;
 pub mod suspend;
 pub mod test_flow;
+pub mod update;
 pub mod update_flow;
 
 use ratatui::{

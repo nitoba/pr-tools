@@ -1,0 +1,12 @@
+---
+source: apps/rust/src/tui/update.rs
+expression: "$crate :: tui :: snapshot_value(terminal.backend())"
+---
+"◆ prt <version>  ·  update  ·  Concluído                                            "
+"prt pronto · prt v9.1.0  ·  ███████████████████████████████████████████  ·  100%"
+"✓ verificar disponibilidade                                                     "
+"✓ baixar novo binário                                                           "
+"✓ validar binário                                                               "
+"✓ instalar atualização                                                          "
+"destino: /home/dev/.local/bin/prt                                               "
+"instalação concluída · retornando ao shell                                      "

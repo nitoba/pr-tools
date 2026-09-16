@@ -32,9 +32,12 @@ pub struct WorkItemFieldMetadata {
     /// Nome interno (`System.Title`, `Custom.Team`, etc.).
     #[serde(rename = "referenceName")]
     pub reference_name: String,
-    /// Tipo Azure (`String`, `Integer`, `Identity`, ...).
-    #[serde(rename = "type")]
-    pub field_type: String,
+    /// Tipo Azure (`String`, `Integer`, `Identity`, ...), quando retornado.
+    ///
+    /// O endpoint project-scoped de fields do Azure DevOps omite esse valor
+    /// em respostas válidas, inclusive com `$expand=all`.
+    #[serde(default, rename = "type")]
+    pub field_type: Option<String>,
     /// Se o campo precisa de valor no Work Item.
     #[serde(default, alias = "alwaysRequired")]
     pub required: bool,
@@ -768,7 +771,6 @@ mod tests {
         let response: WorkItemFieldListResponse = serde_json::from_value(serde_json::json!({
             "value": [{
                 "referenceName": "Custom.Team",
-                "type": "String",
                 "required": true,
                 "defaultValue": null,
                 "allowedValues": null,
@@ -779,6 +781,7 @@ mod tests {
 
         assert_eq!(response.items.len(), 1);
         assert!(response.items[0].allowed_values.is_empty());
+        assert!(response.items[0].field_type.is_none());
     }
 
     #[test]

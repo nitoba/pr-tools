@@ -8,7 +8,7 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 use tempfile::NamedTempFile;
 
@@ -52,6 +52,18 @@ const LEGACY_ROOT_KEYS: [&str; 6] = [
     "testTeam",
 ];
 
+const LEGACY_PROVIDER_ROOT_KEYS: [&str; 9] = [
+    "baseUrl",
+    "compatibleModel",
+    "compatibleReasoning",
+    "codexModel",
+    "codexPath",
+    "codexReasoning",
+    "opencodeModel",
+    "opencodePath",
+    "opencodeReasoning",
+];
+
 /// Template padrão (PT-BR) — espelha `defaultTemplate` do Dart.
 pub const DEFAULT_TEMPLATE: &str = r#"Analise o diff e o log do git fornecidos e gere uma descrição de pull request em português brasileiro.
 
@@ -83,45 +95,189 @@ Responda somente com o objeto JSON. Não inclua o prompt, o contexto Git, o log,
 
 /// Perfil local de um processo Azure DevOps usado pelo `prt`.
 ///
-/// Perfis legados podem omitir `programField`; nesse caso o campo conhecido é
-/// derivado de `name`. Perfis criados pelo onboarding persistem esse valor e
-/// podem usar nomes e fields arbitrários. Credenciais deliberadamente não
-/// fazem parte deste tipo; elas continuam no mecanismo global existente.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+/// O formato persistido agrupa reviewers em `reviewers` e defaults do Test
+/// Case em `testCard`. A implementação mantém os campos planos internamente
+/// para não espalhar detalhes de serialização pelo domínio; o desserializador
+/// também aceita os formatos anteriores.
+#[derive(Debug, Clone, PartialEq)]
 pub struct ProcessProfile {
     /// Identificador estável do perfil.
     pub name: String,
-    /// Field Azure que recebe o programa (`Custom.*`).
-    #[serde(default)]
+    /// Field Azure que recebe o programa (`testCard.programField`, `Custom.*`).
     pub program_field: String,
     /// `System.AreaPath` padrão.
-    #[serde(default)]
     pub area_path: String,
-    /// `System.AssignedTo` padrão.
-    #[serde(default)]
+    /// `testCard.assignedTo`: `System.AssignedTo` padrão.
     pub assigned_to: String,
-    /// `Custom.Team` padrão.
-    #[serde(default)]
+    /// `testCard.team`: `Custom.Team` padrão.
     pub team: String,
     /// Valor do campo de programa fixo do schema.
-    #[serde(default)]
     pub program: String,
     /// `Microsoft.VSTS.Common.Priority` padrão.
-    #[serde(default = "default_profile_priority")]
     pub priority: f64,
     /// Se a `IterationPath` do Work Item pai deve ser herdada.
-    #[serde(default = "default_inherit_iteration_path")]
     pub inherit_iteration_path: bool,
     /// Estado opcional aplicado ao Work Item pai após a criação.
-    #[serde(default)]
     pub parent_transition: Option<String>,
     /// Reviewer padrão para targets `dev`.
-    #[serde(default)]
     pub reviewer_dev: String,
     /// Reviewer padrão para targets `sprint`.
-    #[serde(default)]
     pub reviewer_sprint: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProfileReviewersInput {
+    #[serde(default)]
+    development: Option<String>,
+    #[serde(default)]
+    sprint: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProfileTestCardInput {
+    #[serde(default)]
+    assigned_to: Option<String>,
+    #[serde(default)]
+    program_field: Option<String>,
+    #[serde(default)]
+    team: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProcessProfileInput {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    program: String,
+    #[serde(default)]
+    area_path: String,
+    #[serde(default = "default_profile_priority")]
+    priority: f64,
+    #[serde(default = "default_inherit_iteration_path")]
+    inherit_iteration_path: bool,
+    #[serde(default)]
+    parent_transition: Option<String>,
+    #[serde(default)]
+    reviewers: Option<ProfileReviewersInput>,
+    #[serde(default)]
+    test_card: Option<ProfileTestCardInput>,
+    // Flat names from the two previous profile schemas.
+    #[serde(default)]
+    reviewer_dev: Option<String>,
+    #[serde(default)]
+    reviewer_sprint: Option<String>,
+    #[serde(default, rename = "testCardProgramField")]
+    test_card_program_field: Option<String>,
+    #[serde(default, rename = "programField")]
+    program_field: Option<String>,
+    #[serde(default, rename = "testCardAssignedTo")]
+    test_card_assigned_to: Option<String>,
+    #[serde(default, rename = "assignedTo")]
+    assigned_to: Option<String>,
+    #[serde(default, rename = "testCardTeam")]
+    test_card_team: Option<String>,
+    #[serde(default)]
+    team: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProfileReviewersOutput<'a> {
+    development: &'a str,
+    sprint: &'a str,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProfileTestCardOutput<'a> {
+    assigned_to: &'a str,
+    program_field: &'a str,
+    team: &'a str,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProcessProfileOutput<'a> {
+    name: &'a str,
+    program: &'a str,
+    area_path: &'a str,
+    inherit_iteration_path: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    parent_transition: Option<&'a str>,
+    priority: f64,
+    reviewers: ProfileReviewersOutput<'a>,
+    test_card: ProfileTestCardOutput<'a>,
+}
+
+impl Serialize for ProcessProfile {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        ProcessProfileOutput {
+            name: &self.name,
+            program: &self.program,
+            area_path: &self.area_path,
+            inherit_iteration_path: self.inherit_iteration_path,
+            parent_transition: self.parent_transition.as_deref(),
+            priority: self.priority,
+            reviewers: ProfileReviewersOutput {
+                development: &self.reviewer_dev,
+                sprint: &self.reviewer_sprint,
+            },
+            test_card: ProfileTestCardOutput {
+                assigned_to: &self.assigned_to,
+                program_field: self.program_field().unwrap_or_default(),
+                team: &self.team,
+            },
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for ProcessProfile {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let input = ProcessProfileInput::deserialize(deserializer)?;
+        let reviewers = input.reviewers.unwrap_or_default();
+        let test_card = input.test_card.unwrap_or_default();
+        Ok(Self {
+            name: input.name,
+            program_field: test_card
+                .program_field
+                .or(input.test_card_program_field)
+                .or(input.program_field)
+                .unwrap_or_default(),
+            area_path: input.area_path,
+            assigned_to: test_card
+                .assigned_to
+                .or(input.test_card_assigned_to)
+                .or(input.assigned_to)
+                .unwrap_or_default(),
+            team: test_card
+                .team
+                .or(input.test_card_team)
+                .or(input.team)
+                .unwrap_or_default(),
+            program: input.program,
+            priority: input.priority,
+            inherit_iteration_path: input.inherit_iteration_path,
+            parent_transition: input.parent_transition,
+            reviewer_dev: reviewers
+                .development
+                .or(input.reviewer_dev)
+                .unwrap_or_default(),
+            reviewer_sprint: reviewers
+                .sprint
+                .or(input.reviewer_sprint)
+                .unwrap_or_default(),
+        })
+    }
 }
 
 fn default_profile_priority() -> f64 {
@@ -213,82 +369,440 @@ pub struct RepositoryProfileBinding {
 
 /// Configuração resolvida.
 ///
-/// Serializada em `camelCase` para compat com o `config.json` da versão Dart.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+/// O formato persistido agrupa cada provider em um objeto com `id`, `type`,
+/// `model` e `reasoning`. Os campos planos abaixo são uma representação
+/// interna compatível com o restante do runtime e não fazem parte do JSON
+/// canônico.
+#[derive(Debug, Clone)]
 pub struct Config {
     /// Providers em ordem de tentativa.
-    #[serde(default = "default_providers")]
     pub providers: Vec<ProviderName>,
     /// Base URL do endpoint OpenAI-compatible.
-    #[serde(default = "default_base_url")]
     pub base_url: String,
     /// Modelo do endpoint compatible.
-    #[serde(default = "default_compatible_model")]
     pub compatible_model: String,
     /// Reasoning do endpoint compatible.
-    #[serde(default = "default_reasoning")]
     pub compatible_reasoning: ReasoningLevel,
     /// Modelo do Codex.
-    #[serde(default = "default_codex_model")]
     pub codex_model: String,
     /// Caminho opcional do executável do Codex (vazio = PATH).
-    #[serde(default)]
     pub codex_path: String,
     /// Thinking do Codex.
-    #[serde(default = "default_codex_reasoning")]
     pub codex_reasoning: ReasoningLevel,
     /// Modelo do `OpenCode` (`provider/modelo`).
-    #[serde(default = "default_opencode_model")]
     pub opencode_model: String,
     /// Caminho opcional do executável do `OpenCode` (vazio = PATH).
-    #[serde(default)]
     pub opencode_path: String,
     /// Thinking do `OpenCode`.
-    #[serde(default = "default_opencode_reasoning")]
     pub opencode_reasoning: ReasoningLevel,
     /// PAT do Azure DevOps (nunca logar — `obs-no-sensitive-data`).
-    #[serde(default)]
     pub azure_pat: String,
     /// Campo transitório usado somente por testes/compatibilidade de migração.
-    #[serde(skip)]
-    #[serde(default)]
     pub reviewer_dev: String,
     /// Campo transitório usado somente por testes/compatibilidade de migração.
-    #[serde(skip)]
-    #[serde(default)]
     pub reviewer_sprint: String,
     /// Campo transitório usado somente por testes/compatibilidade de migração.
-    #[serde(skip)]
-    #[serde(default)]
     pub test_area_path: String,
     /// Campo transitório usado somente por testes/compatibilidade de migração.
-    #[serde(skip)]
-    #[serde(default)]
     pub test_assigned_to: String,
     /// Campo transitório usado somente por testes/compatibilidade de migração.
-    #[serde(skip)]
-    #[serde(default)]
     pub test_team: String,
     /// Campo transitório usado somente por testes/compatibilidade de migração.
-    #[serde(skip)]
-    #[serde(default)]
     pub test_program: String,
     /// API key do endpoint compatible.
-    #[serde(default)]
     pub api_key: String,
     /// Template do prompt de sistema.
-    #[serde(default = "default_template")]
     pub template: String,
     /// Perfis de processo persistidos no `config.json`.
-    #[serde(default)]
     pub profiles: Vec<ProcessProfile>,
     /// Bindings por `(organization, project, repository)`.
-    #[serde(default)]
     pub bindings: Vec<RepositoryProfileBinding>,
     /// Perfil usado quando não existe binding explícito.
-    #[serde(default)]
     pub default_profile: String,
+    /// Provider escolhido como padrão pelo wizard e pelo `defaultProvider`.
+    pub default_provider: String,
+    /// ID persistido para o provider OpenAI-compatible (por exemplo `openai`).
+    /// O runtime usa o `type` canônico `openai-compatible`.
+    pub compatible_provider_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProviderObjectInput {
+    #[serde(default)]
+    id: String,
+    #[serde(default, rename = "type")]
+    provider_type: String,
+    #[serde(default)]
+    model: String,
+    #[serde(default)]
+    reasoning: String,
+    #[serde(default)]
+    base_url: Option<String>,
+    #[serde(default)]
+    path: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+enum ProviderInput {
+    Name(String),
+    Object(ProviderObjectInput),
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ConfigInput {
+    #[serde(default)]
+    default_profile: String,
+    #[serde(default)]
+    default_provider: Option<String>,
+    #[serde(default)]
+    providers: Option<Vec<ProviderInput>>,
+    // Global names from the previous flat provider schema.
+    #[serde(default)]
+    base_url: Option<String>,
+    #[serde(default)]
+    compatible_model: Option<String>,
+    #[serde(default)]
+    compatible_reasoning: Option<String>,
+    #[serde(default)]
+    codex_model: Option<String>,
+    #[serde(default)]
+    codex_path: Option<String>,
+    #[serde(default)]
+    codex_reasoning: Option<String>,
+    #[serde(default)]
+    opencode_model: Option<String>,
+    #[serde(default)]
+    opencode_path: Option<String>,
+    #[serde(default)]
+    opencode_reasoning: Option<String>,
+    #[serde(default)]
+    azure_pat: String,
+    #[serde(default)]
+    api_key: String,
+    #[serde(default = "default_template")]
+    template: String,
+    #[serde(default)]
+    profiles: Vec<ProcessProfile>,
+    #[serde(default)]
+    bindings: Vec<RepositoryProfileBinding>,
+    // Root process names are read only to preserve the legacy in-memory
+    // migration path; they are never emitted by the canonical serializer.
+    #[serde(default)]
+    reviewer_dev: String,
+    #[serde(default)]
+    reviewer_sprint: String,
+    #[serde(default)]
+    test_area_path: String,
+    #[serde(default)]
+    test_assigned_to: String,
+    #[serde(default)]
+    test_team: String,
+    #[serde(default)]
+    test_program: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProviderObjectOutput {
+    id: String,
+    #[serde(rename = "type")]
+    provider_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    base_url: Option<String>,
+    model: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    path: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ConfigOutput<'a> {
+    default_profile: &'a str,
+    default_provider: &'a str,
+    providers: Vec<ProviderObjectOutput>,
+    profiles: &'a [ProcessProfile],
+    bindings: &'a [RepositoryProfileBinding],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    api_key: Option<&'a str>,
+}
+
+impl Serialize for Config {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let providers = self
+            .providers
+            .iter()
+            .map(|provider| {
+                let (id, provider_type, model, reasoning, base_url, path) =
+                    self.provider_output_values(provider);
+                ProviderObjectOutput {
+                    id,
+                    provider_type,
+                    model,
+                    reasoning,
+                    base_url,
+                    path,
+                }
+            })
+            .collect();
+        ConfigOutput {
+            default_profile: &self.default_profile,
+            default_provider: self.default_provider_id(),
+            providers,
+            profiles: &self.profiles,
+            bindings: &self.bindings,
+            api_key: (!self.api_key.trim().is_empty()).then_some(self.api_key.as_str()),
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Config {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let ConfigInput {
+            default_profile,
+            default_provider,
+            providers,
+            base_url,
+            compatible_model,
+            compatible_reasoning,
+            codex_model,
+            codex_path,
+            codex_reasoning,
+            opencode_model,
+            opencode_path,
+            opencode_reasoning,
+            azure_pat,
+            api_key,
+            template,
+            profiles,
+            bindings,
+            reviewer_dev,
+            reviewer_sprint,
+            test_area_path,
+            test_assigned_to,
+            test_team,
+            test_program,
+        } = ConfigInput::deserialize(deserializer)?;
+        let mut config = Self {
+            azure_pat,
+            reviewer_dev,
+            reviewer_sprint,
+            test_area_path,
+            test_assigned_to,
+            test_team,
+            test_program,
+            api_key,
+            template,
+            profiles,
+            bindings,
+            default_profile,
+            ..Self::default()
+        };
+        apply_optional_setting(&mut config.base_url, base_url);
+        apply_optional_setting(&mut config.compatible_model, compatible_model);
+        apply_optional_setting(&mut config.compatible_reasoning, compatible_reasoning);
+        apply_optional_setting(&mut config.codex_model, codex_model);
+        apply_optional_setting(&mut config.codex_path, codex_path);
+        apply_optional_setting(&mut config.codex_reasoning, codex_reasoning);
+        apply_optional_setting(&mut config.opencode_model, opencode_model);
+        apply_optional_setting(&mut config.opencode_path, opencode_path);
+        apply_optional_setting(&mut config.opencode_reasoning, opencode_reasoning);
+        if let Some(providers) = providers {
+            apply_provider_inputs(&mut config, providers, default_provider.as_deref());
+        } else if let Some(default_provider) = default_provider {
+            config.default_provider = default_provider;
+        }
+        Ok(config)
+    }
+}
+
+fn apply_optional_setting(target: &mut String, value: Option<String>) {
+    if let Some(value) = value {
+        *target = value;
+    }
+}
+
+fn apply_provider_inputs(
+    config: &mut Config,
+    providers: Vec<ProviderInput>,
+    requested_default: Option<&str>,
+) {
+    config.providers.clear();
+    let mut provider_ids = Vec::with_capacity(providers.len());
+    for provider in providers {
+        let (id, provider_type, model, reasoning, base_url, path) = match provider {
+            ProviderInput::Name(name) => (name.clone(), name, None, None, None, None),
+            ProviderInput::Object(object) => {
+                let provider_type = if object.provider_type.trim().is_empty() {
+                    object.id.clone()
+                } else {
+                    object.provider_type.clone()
+                };
+                (
+                    object.id,
+                    provider_type,
+                    Some(object.model),
+                    Some(object.reasoning),
+                    object.base_url,
+                    object.path,
+                )
+            }
+        };
+        let provider_type = provider_type.trim().to_owned();
+        if provider_type.is_empty() {
+            continue;
+        }
+        let provider_name = provider_type.clone();
+        provider_ids.push((id, provider_name.clone()));
+        config.providers.push(provider_name);
+        match provider_type.as_str() {
+            "codex" => {
+                if let Some(model) = model.filter(|value| !value.is_empty()) {
+                    config.codex_model = model;
+                }
+                if let Some(reasoning) = reasoning.filter(|value| !value.is_empty()) {
+                    config.codex_reasoning = reasoning;
+                }
+                if let Some(path) = path {
+                    config.codex_path = path;
+                }
+            }
+            "opencode" => {
+                if let Some(model) = model.filter(|value| !value.is_empty()) {
+                    config.opencode_model = model;
+                }
+                if let Some(reasoning) = reasoning.filter(|value| !value.is_empty()) {
+                    config.opencode_reasoning = reasoning;
+                }
+                if let Some(path) = path {
+                    config.opencode_path = path;
+                }
+            }
+            "openai-compatible" => {
+                if let Some(model) = model.filter(|value| !value.is_empty()) {
+                    config.compatible_model = model;
+                }
+                if let Some(reasoning) = reasoning.filter(|value| !value.is_empty()) {
+                    config.compatible_reasoning = reasoning;
+                }
+                if let Some(base_url) = base_url {
+                    config.base_url = base_url;
+                }
+                if let Some(id) = provider_ids.last().map(|(id, _)| id)
+                    && !id.trim().is_empty()
+                {
+                    config.compatible_provider_id.clone_from(id);
+                }
+            }
+            _ => {}
+        }
+    }
+    config.default_provider = resolve_provider_name(
+        requested_default,
+        &provider_ids,
+        config.providers.first().map(String::as_str),
+    );
+}
+
+impl Config {
+    fn default_provider_id(&self) -> &str {
+        if self.default_provider == "openai-compatible" {
+            if self.compatible_provider_id.trim().is_empty() {
+                "openai"
+            } else {
+                self.compatible_provider_id.as_str()
+            }
+        } else {
+            self.default_provider.as_str()
+        }
+    }
+
+    fn provider_output_values(
+        &self,
+        provider: &str,
+    ) -> (
+        String,
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    ) {
+        match provider {
+            "codex" => (
+                "codex".to_owned(),
+                "codex".to_owned(),
+                self.codex_model.clone(),
+                owned_non_default_reasoning(&self.codex_reasoning),
+                None,
+                owned_non_empty(&self.codex_path),
+            ),
+            "opencode" => (
+                "opencode".to_owned(),
+                "opencode".to_owned(),
+                self.opencode_model.clone(),
+                owned_non_default_reasoning(&self.opencode_reasoning),
+                None,
+                owned_non_empty(&self.opencode_path),
+            ),
+            "openai-compatible" => (
+                if self.compatible_provider_id.trim().is_empty() {
+                    "openai".to_owned()
+                } else {
+                    self.compatible_provider_id.clone()
+                },
+                "openai-compatible".to_owned(),
+                self.compatible_model.clone(),
+                owned_non_default_reasoning(&self.compatible_reasoning),
+                owned_non_empty(&self.base_url),
+                None,
+            ),
+            other => (
+                other.to_owned(),
+                other.to_owned(),
+                self.compatible_model.clone(),
+                owned_non_default_reasoning(&self.compatible_reasoning),
+                None,
+                None,
+            ),
+        }
+    }
+}
+
+fn owned_non_empty(value: &str) -> Option<String> {
+    (!value.trim().is_empty()).then(|| value.to_owned())
+}
+
+fn owned_non_default_reasoning(value: &str) -> Option<String> {
+    (!value.trim().is_empty() && value != "provider-default").then(|| value.to_owned())
+}
+
+fn resolve_provider_name(
+    requested: Option<&str>,
+    provider_ids: &[(String, String)],
+    first: Option<&str>,
+) -> String {
+    if let Some(requested) = requested.map(str::trim).filter(|value| !value.is_empty()) {
+        if let Some((_, provider_type)) = provider_ids
+            .iter()
+            .find(|(id, provider_type)| id == requested || provider_type == requested)
+        {
+            return provider_type.clone();
+        }
+        return requested.to_owned();
+    }
+    first.unwrap_or("codex").to_owned()
 }
 
 fn default_providers() -> Vec<String> {
@@ -348,6 +862,8 @@ impl Default for Config {
             profiles: Vec::new(),
             bindings: Vec::new(),
             default_profile: String::new(),
+            default_provider: "codex".to_owned(),
+            compatible_provider_id: "openai".to_owned(),
         }
     }
 }
@@ -489,43 +1005,195 @@ fn has_legacy_root_keys(object: &serde_json::Map<String, Value>) -> bool {
     LEGACY_ROOT_KEYS.iter().any(|key| object.contains_key(*key))
 }
 
-/// Acrescenta a migração legada ao JSON existente sem reserializar segredos.
+fn move_profile_key_to_nested(
+    profile: &mut serde_json::Map<String, Value>,
+    nested: &mut serde_json::Map<String, Value>,
+    old_names: &[&str],
+    new_name: &str,
+) -> bool {
+    let mut changed = false;
+    let mut value = None;
+    for old_name in old_names {
+        if let Some(candidate) = profile.remove(*old_name) {
+            changed = true;
+            if value.is_none() {
+                value = Some(candidate);
+            }
+        }
+    }
+    if let Some(value) = value {
+        // The nested schema is canonical and wins if both formats coexist.
+        nested.entry(new_name.to_owned()).or_insert(value);
+    }
+    changed
+}
+
+fn canonicalize_profile_keys(value: &mut Value) -> bool {
+    let Some(profiles) = value.get_mut("profiles").and_then(Value::as_array_mut) else {
+        return false;
+    };
+    let mut changed = false;
+    for profile in profiles {
+        if let Some(profile) = profile.as_object_mut() {
+            let mut test_card = profile
+                .remove("testCard")
+                .and_then(|value| value.as_object().cloned())
+                .unwrap_or_default();
+            changed |= move_profile_key_to_nested(
+                profile,
+                &mut test_card,
+                &["testCardProgramField", "programField"],
+                "programField",
+            );
+            changed |= move_profile_key_to_nested(
+                profile,
+                &mut test_card,
+                &["testCardAssignedTo", "assignedTo"],
+                "assignedTo",
+            );
+            changed |= move_profile_key_to_nested(
+                profile,
+                &mut test_card,
+                &["testCardTeam", "team"],
+                "team",
+            );
+
+            let mut reviewers = profile
+                .remove("reviewers")
+                .and_then(|value| value.as_object().cloned())
+                .unwrap_or_default();
+            changed |= move_profile_key_to_nested(
+                profile,
+                &mut reviewers,
+                &["reviewerDev"],
+                "development",
+            );
+            changed |=
+                move_profile_key_to_nested(profile, &mut reviewers, &["reviewerSprint"], "sprint");
+
+            if !test_card.is_empty() {
+                profile.insert("testCard".to_owned(), Value::Object(test_card));
+            }
+            if !reviewers.is_empty() {
+                profile.insert("reviewers".to_owned(), Value::Object(reviewers));
+            }
+        }
+    }
+    changed
+}
+
+fn has_legacy_profile_keys(value: &Value) -> bool {
+    value
+        .get("profiles")
+        .and_then(Value::as_array)
+        .is_some_and(|profiles| {
+            profiles.iter().any(|profile| {
+                profile.as_object().is_some_and(|profile| {
+                    [
+                        "programField",
+                        "testCardProgramField",
+                        "assignedTo",
+                        "testCardAssignedTo",
+                        "team",
+                        "testCardTeam",
+                        "reviewerDev",
+                        "reviewerSprint",
+                    ]
+                    .iter()
+                    .any(|key| profile.contains_key(*key))
+                })
+            })
+        })
+}
+
+fn has_legacy_provider_schema(value: &Value) -> bool {
+    let has_legacy_root = value.as_object().is_some_and(|object| {
+        LEGACY_PROVIDER_ROOT_KEYS
+            .iter()
+            .any(|key| object.contains_key(*key))
+    });
+    let Some(providers) = value.get("providers").and_then(Value::as_array) else {
+        return has_legacy_root;
+    };
+    has_legacy_root
+        || providers.iter().any(Value::is_string)
+        || (!providers.is_empty() && value.get("defaultProvider").is_none())
+}
+
+/// Normaliza chaves legadas no JSON existente sem reserializar segredos.
 fn migrate_legacy_json(raw: &str, config: &Config) -> crate::error::Result<String> {
     let mut value: Value =
         serde_json::from_str(raw).map_err(|error| crate::error::AppError::Config {
             message: format!("falha ao migrar config.json: {error}"),
         })?;
-    let object = value
-        .as_object_mut()
-        .ok_or_else(|| crate::error::AppError::Config {
-            message: "config.json deve conter um objeto JSON".to_owned(),
+    canonicalize_profile_keys(&mut value);
+    {
+        let object = value
+            .as_object_mut()
+            .ok_or_else(|| crate::error::AppError::Config {
+                message: "config.json deve conter um objeto JSON".to_owned(),
+            })?;
+        let has_profiles = object
+            .get("profiles")
+            .and_then(Value::as_array)
+            .is_some_and(|profiles| !profiles.is_empty());
+        if !has_profiles {
+            let profile = config
+                .profiles
+                .iter()
+                .find(|profile| profile.name == AGROTRACE_PROFILE)
+                .cloned()
+                .unwrap_or_else(|| legacy_profile_from_object(object));
+            object.insert(
+                "profiles".to_owned(),
+                serde_json::to_value([profile]).map_err(|error| {
+                    crate::error::AppError::Config {
+                        message: format!("falha ao serializar perfil legado: {error}"),
+                    }
+                })?,
+            );
+            object.insert(
+                "defaultProfile".to_owned(),
+                Value::String(AGROTRACE_PROFILE.to_owned()),
+            );
+        }
+        for key in LEGACY_ROOT_KEYS {
+            object.remove(key);
+        }
+    }
+    let canonical_config = if has_legacy_provider_schema(&value) {
+        let mut canonical_config = config.clone();
+        canonical_config.providers = default_providers();
+        canonical_config
+    } else {
+        config.clone()
+    };
+    let canonical =
+        serde_json::to_value(canonical_config).map_err(|error| crate::error::AppError::Config {
+            message: format!("falha ao serializar providers canônicos: {error}"),
         })?;
-    let has_profiles = object
-        .get("profiles")
-        .and_then(Value::as_array)
-        .is_some_and(|profiles| !profiles.is_empty());
-    if !has_profiles {
-        let profile = config
-            .profiles
-            .iter()
-            .find(|profile| profile.name == AGROTRACE_PROFILE)
-            .cloned()
-            .unwrap_or_else(|| legacy_profile_from_object(object));
-        object.insert(
-            "profiles".to_owned(),
-            serde_json::to_value([profile]).map_err(|error| crate::error::AppError::Config {
-                message: format!("falha ao serializar perfil legado: {error}"),
-            })?,
-        );
-        object.insert(
-            "defaultProfile".to_owned(),
-            Value::String(AGROTRACE_PROFILE.to_owned()),
-        );
+    {
+        let object = value.as_object_mut().expect("objeto JSON validado");
+        if let Some(providers) = canonical.get("providers") {
+            object.insert("providers".to_owned(), providers.clone());
+        }
+        if let Some(default_provider) = canonical.get("defaultProvider") {
+            object.insert("defaultProvider".to_owned(), default_provider.clone());
+        }
+        for key in LEGACY_PROVIDER_ROOT_KEYS {
+            object.remove(key);
+        }
+        if let Some(api_key) = canonical.get("apiKey") {
+            object.insert("apiKey".to_owned(), api_key.clone());
+        } else {
+            object.remove("apiKey");
+        }
     }
-    for key in LEGACY_ROOT_KEYS {
-        object.remove(key);
-    }
-    if let Some(profiles) = object.get_mut("profiles").and_then(Value::as_array_mut) {
+    if let Some(profiles) = value
+        .as_object_mut()
+        .and_then(|object| object.get_mut("profiles"))
+        .and_then(Value::as_array_mut)
+    {
         for profile in profiles {
             if let Some(profile) = profile.as_object_mut() {
                 profile.remove("azurePat");
@@ -664,6 +1332,7 @@ pub fn apply_cli_overrides(
 ) {
     if let Some(p) = provider {
         config.providers = vec![p.to_owned()];
+        p.clone_into(&mut config.default_provider);
     }
     if let Some(m) = model {
         // O modelo override aplica-se ao provider ativo (primeiro da lista).
@@ -716,8 +1385,15 @@ fn load_config_internal(migrate_legacy: bool) -> crate::error::Result<Config> {
         legacy.as_ref().map(|paths| paths.config_file.as_path()),
     );
     if let Some((_, raw)) = &config_source {
-        let file_cfg: Config =
+        let mut raw_value: Value =
             serde_json::from_str(raw).map_err(|e| crate::error::AppError::Config {
+                message: format!("{}: {e}", paths.config_file.display()),
+            })?;
+        // Alias antigo é aceito para leitura, mas a normalização antes do
+        // deserialize também resolve arquivos que contenham os dois nomes.
+        canonicalize_profile_keys(&mut raw_value);
+        let file_cfg: Config =
+            serde_json::from_value(raw_value).map_err(|e| crate::error::AppError::Config {
                 message: format!("{}: {e}", paths.config_file.display()),
             })?;
         config = file_cfg;
@@ -757,7 +1433,9 @@ fn load_config_internal(migrate_legacy: bool) -> crate::error::Result<Config> {
             serde_json::from_str(&raw).map_err(|error| crate::error::AppError::Config {
                 message: format!("falha ao ler config.json para migração: {error}"),
             })?;
-        let has_legacy = raw_value.as_object().is_some_and(has_legacy_root_keys);
+        let has_legacy = raw_value.as_object().is_some_and(has_legacy_root_keys)
+            || has_legacy_profile_keys(&raw_value)
+            || has_legacy_provider_schema(&raw_value);
         if migrate_legacy && has_legacy {
             let has_profiles = raw_value
                 .get("profiles")
@@ -854,6 +1532,31 @@ mod tests {
             .config_dir()
             .join("pr-tools");
         assert_eq!(config_paths().directory, expected);
+    }
+
+    #[test]
+    fn profile_key_normalization_should_prefer_new_names_when_both_exist() {
+        let mut raw = serde_json::json!({
+            "profiles": [{
+                "name": "Novo",
+                "programField": "Custom.Legado",
+                "testCardProgramField": "Custom.Novo",
+                "assignedTo": "legado@example.com",
+                "testCardAssignedTo": "novo@example.com",
+                "team": "Legacy Team",
+                "testCardTeam": "New Team"
+            }]
+        });
+
+        assert!(canonicalize_profile_keys(&mut raw));
+        let profile: ProcessProfile =
+            serde_json::from_value(raw["profiles"][0].clone()).expect("perfil normalizado");
+        assert_eq!(profile.program_field, "Custom.Novo");
+        assert_eq!(profile.assigned_to, "novo@example.com");
+        assert_eq!(profile.team, "New Team");
+        assert!(raw["profiles"][0].get("programField").is_none());
+        assert!(raw["profiles"][0].get("assignedTo").is_none());
+        assert!(raw["profiles"][0].get("team").is_none());
     }
 
     #[test]
@@ -963,6 +1666,12 @@ mod tests {
             }]
         });
         let mut config: Config = serde_json::from_value(raw.clone()).unwrap();
+        assert_eq!(
+            config.profiles[0].program_field,
+            "Custom.ProgramasExistente"
+        );
+        assert_eq!(config.profiles[0].assigned_to, "atual@example.com");
+        assert_eq!(config.profiles[0].team, "Atual Team");
         let migrated = migrate_legacy_json(&raw.to_string(), &config).unwrap();
         let value: Value = serde_json::from_str(&migrated).unwrap();
         for key in LEGACY_ROOT_KEYS {
@@ -970,11 +1679,34 @@ mod tests {
         }
         assert_eq!(value["defaultProfile"], "Existente");
         assert_eq!(value["profiles"][0]["areaPath"], "Atual\\QA");
-        assert_eq!(value["profiles"][0]["reviewerDev"], "atual-dev@example.com");
+        assert_eq!(
+            value["profiles"][0]["testCard"]["programField"],
+            "Custom.ProgramasExistente"
+        );
+        assert_eq!(
+            value["profiles"][0]["testCard"]["assignedTo"],
+            "atual@example.com"
+        );
+        assert_eq!(value["profiles"][0]["testCard"]["team"], "Atual Team");
+        assert!(value["profiles"][0].get("programField").is_none());
+        assert!(value["profiles"][0].get("assignedTo").is_none());
+        assert!(value["profiles"][0].get("team").is_none());
+        assert_eq!(
+            value["profiles"][0]["reviewers"]["development"],
+            "atual-dev@example.com"
+        );
+        assert_eq!(
+            value["profiles"][0]["reviewers"]["sprint"],
+            "atual-sprint@example.com"
+        );
+        assert!(value["profiles"][0].get("reviewerDev").is_none());
+        assert!(value["profiles"][0].get("reviewerSprint").is_none());
         assert!(value["profiles"][0].get("azurePat").is_none());
         assert!(value["profiles"][0].get("apiKey").is_none());
         assert_eq!(value["bindings"][0]["profile"], "Existente");
-        assert_eq!(value["providers"], serde_json::json!(["codex"]));
+        assert_eq!(value["providers"][0]["id"], "codex");
+        assert_eq!(value["providers"][0]["type"], "codex");
+        assert_eq!(value["defaultProvider"], "codex");
         config.profiles = serde_json::from_value(value["profiles"].clone()).unwrap();
         assert_eq!(config.profiles.len(), 1);
     }
@@ -990,8 +1722,146 @@ mod tests {
             assert!(value.get(key).is_none(), "chave legada serializada: {key}");
         }
         let profile = &value["profiles"][0];
+        assert!(profile["testCard"].get("programField").is_some());
+        assert!(profile["testCard"].get("assignedTo").is_some());
+        assert!(profile["testCard"].get("team").is_some());
+        assert!(profile.get("programField").is_none());
+        assert!(profile.get("assignedTo").is_none());
+        assert!(profile.get("team").is_none());
         assert!(profile.get("azurePat").is_none());
         assert!(profile.get("apiKey").is_none());
+        assert_eq!(value["defaultProvider"], "codex");
+        assert_eq!(value["providers"][0]["type"], "codex");
+    }
+
+    #[test]
+    fn nested_config_should_load_provider_and_profile_values() {
+        let raw = serde_json::json!({
+            "defaultProfile": "Agrotrace",
+            "defaultProvider": "openai",
+            "providers": [
+                {
+                    "id": "codex",
+                    "type": "codex",
+                    "model": "gpt-5.6-luna",
+                    "reasoning": "medium"
+                },
+                {
+                    "id": "openai",
+                    "type": "openai-compatible",
+                    "baseUrl": "https://api.example/v1",
+                    "model": "gpt-4o-mini"
+                }
+            ],
+            "profiles": [{
+                "name": "Agrotrace",
+                "program": "Agrotrace",
+                "areaPath": "AGROTRACE\\Devops",
+                "inheritIterationPath": true,
+                "parentTransition": "Test QA",
+                "priority": 2,
+                "reviewers": {
+                    "development": "dev@example.com",
+                    "sprint": "sprint@example.com"
+                },
+                "testCard": {
+                    "assignedTo": "qa@example.com",
+                    "programField": "Custom.ProgramasAgrotrace",
+                    "team": "DevOps"
+                }
+            }]
+        });
+        let config: Config = serde_json::from_value(raw).expect("configuração aninhada");
+
+        assert_eq!(config.default_provider, "openai-compatible");
+        assert_eq!(config.compatible_provider_id, "openai");
+        assert_eq!(config.base_url, "https://api.example/v1");
+        assert_eq!(config.codex_reasoning, "medium");
+        assert_eq!(config.profiles[0].reviewer_dev, "dev@example.com");
+        assert_eq!(
+            config.profiles[0].program_field,
+            "Custom.ProgramasAgrotrace"
+        );
+
+        let value = serde_json::to_value(config).expect("configuração serializável");
+        assert_eq!(value["defaultProvider"], "openai");
+        assert_eq!(value["providers"][1]["id"], "openai");
+        assert_eq!(value["providers"][1]["type"], "openai-compatible");
+        assert_eq!(
+            value["profiles"][0]["reviewers"]["development"],
+            "dev@example.com"
+        );
+        assert_eq!(
+            value["profiles"][0]["testCard"]["programField"],
+            "Custom.ProgramasAgrotrace"
+        );
+    }
+
+    #[test]
+    fn legacy_provider_list_should_be_migrated_even_with_nested_profiles() {
+        let raw = serde_json::json!({
+            "providers": ["codex"],
+            "profiles": [{
+                "name": "Agrotrace",
+                "program": "Agrotrace",
+                "areaPath": "AGROTRACE\\Devops",
+                "testCard": {
+                    "assignedTo": "qa@example.com",
+                    "programField": "Custom.ProgramasAgrotrace",
+                    "team": "DevOps"
+                },
+                "reviewers": {"development": "", "sprint": ""}
+            }]
+        });
+        let config: Config = serde_json::from_value(raw.clone()).expect("configuração legada");
+        let migrated = migrate_legacy_json(&raw.to_string(), &config).expect("migração");
+        let value: Value = serde_json::from_str(&migrated).expect("JSON migrado");
+
+        assert_eq!(value["providers"][0]["id"], "codex");
+        assert_eq!(value["providers"][0]["type"], "codex");
+        assert_eq!(value["defaultProvider"], "codex");
+    }
+
+    #[test]
+    fn mixed_config_should_remove_flat_provider_settings_during_migration() {
+        let raw = serde_json::json!({
+            "apiKey": "",
+            "baseUrl": "https://api.example/v1",
+            "codexModel": "gpt-5.6-luna",
+            "codexReasoning": "medium",
+            "compatibleModel": "gpt-4o-mini",
+            "opencodeModel": "openai/gpt-5.5",
+            "defaultProfile": "Agrotrace",
+            "defaultProvider": "codex",
+            "providers": [{
+                "id": "codex",
+                "type": "codex",
+                "model": "gpt-5.6-luna",
+                "reasoning": "medium"
+            }],
+            "profiles": [{
+                "name": "Agrotrace",
+                "program": "Agrotrace",
+                "areaPath": "AGROTRACE\\Devops",
+                "reviewers": {"development": "", "sprint": ""},
+                "testCard": {
+                    "assignedTo": "qa@example.com",
+                    "programField": "Custom.ProgramasAgrotrace",
+                    "team": "DevOps"
+                }
+            }]
+        });
+        let config: Config = serde_json::from_value(raw.clone()).expect("configuração misturada");
+        let migrated = migrate_legacy_json(&raw.to_string(), &config).expect("migração");
+        let value: Value = serde_json::from_str(&migrated).expect("JSON migrado");
+
+        for key in LEGACY_PROVIDER_ROOT_KEYS {
+            assert!(value.get(key).is_none(), "chave antiga persistida: {key}");
+        }
+        assert!(value.get("apiKey").is_none());
+        assert_eq!(value["providers"].as_array().unwrap().len(), 3);
+        assert_eq!(value["providers"][0]["reasoning"], "medium");
+        assert_eq!(value["providers"][2]["type"], "openai-compatible");
     }
 
     #[test]

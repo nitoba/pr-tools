@@ -72,6 +72,13 @@ enum TestEvent {
     Progress(f64, String),
     /// Rótulo textual da fase ("preparando…", "gerando…").
     PhaseLabel(String),
+    /// Contexto preparado e settings iniciais disponíveis antes da geração.
+    Prepared {
+        /// Contexto congelado para a tentativa atual.
+        prep: Box<TestCardPrep>,
+        /// Valores iniciais dos 6 campos de settings.
+        initial: [String; 6],
+    },
     /// Geração concluída (prep + card + settings iniciais).
     Generated {
         /// Contexto preparado (p/ criar e atualizar o pai depois).
@@ -247,7 +254,7 @@ fn field_hint(idx: usize) -> &'static str {
         2 => r"ex.: MeuProjeto\Sprint 12",
         3 => "número > 0 (ex.: 2)",
         4 => "Custom.Team (obrigatório)",
-        _ => "campo de programa do perfil (obrigatório)",
+        _ => "referenceName Azure (ex.: Custom.ProgramasAgrotrace)",
     }
 }
 
@@ -452,6 +459,7 @@ impl TestApp {
     /// Estado inicial ajustado ao contrato de entrada selecionado.
     fn for_request(request: &TestCardRequest) -> Self {
         let mut app = Self::new();
+        app.set_initial_fields(initial_field_values_before_prepare(request));
         match request {
             TestCardRequest::Cli(options) | TestCardRequest::CliWithProfile { options, .. } => {
                 app.create_mode = CreateMode::from_options(options);
@@ -522,6 +530,7 @@ impl TestApp {
                     self.phase = TestPhase::Gerando;
                 }
             }
+            TestEvent::Prepared { prep, initial } => self.on_prepared(*prep, initial),
             TestEvent::Generated {
                 prep,
                 title,
@@ -549,6 +558,19 @@ impl TestApp {
         self.logs.push_back(line);
     }
 
+    fn set_initial_fields(&mut self, initial: [String; 6]) {
+        for (i, val) in initial.into_iter().enumerate() {
+            if let Some(slot) = self.fields.get_mut(i) {
+                *slot = LineEditor::new(val);
+            }
+        }
+    }
+
+    fn on_prepared(&mut self, prep: TestCardPrep, initial: [String; 6]) {
+        self.set_initial_fields(initial);
+        self.prep = Some(prep);
+    }
+
     fn on_generated(
         &mut self,
         prep: TestCardPrep,
@@ -556,11 +578,7 @@ impl TestApp {
         body: String,
         initial: [String; 6],
     ) {
-        for (i, val) in initial.into_iter().enumerate() {
-            if let Some(slot) = self.fields.get_mut(i) {
-                *slot = LineEditor::new(val);
-            }
-        }
+        self.set_initial_fields(initial);
         self.title = title;
         self.body = body;
         self.content_edit = None;
@@ -910,6 +928,11 @@ async fn backend_prepare_generate_with<P, PFut, G, GFut>(
             return;
         }
     };
+    let initial = initial_field_values(options.as_ref(), &prep);
+    let _ = tx.send(TestEvent::Prepared {
+        prep: Box::new(prep.clone()),
+        initial: initial.clone(),
+    });
     let _ = tx.send(TestEvent::Log(format!("pai #{} resolvido", prep.parent.id)));
     let _ = tx.send(TestEvent::PhaseLabel("gerando card via IA…".to_owned()));
     let _ = tx.send(TestEvent::Progress(0.3, "chamando provider".to_owned()));
@@ -933,7 +956,6 @@ async fn backend_prepare_generate_with<P, PFut, G, GFut>(
     if !buf.is_empty() {
         let _ = tx.send(TestEvent::Token(buf));
     }
-    let initial = initial_field_values(options.as_ref(), &prep);
     let _ = tx.send(TestEvent::Progress(1.0, "pronto p/ revisão".to_owned()));
     let _ = tx.send(TestEvent::Generated {
         prep: Box::new(prep),
@@ -943,19 +965,67 @@ async fn backend_prepare_generate_with<P, PFut, G, GFut>(
     });
 }
 
+fn format_priority(priority: f64) -> String {
+    if priority.fract() == 0.0 {
+        format!("{priority:.0}")
+    } else {
+        format!("{priority}")
+    }
+}
+
+/// Valores disponíveis antes de o backend resolver o pai e o perfil.
+fn initial_field_values_before_prepare(request: &TestCardRequest) -> [String; 6] {
+    match request {
+        TestCardRequest::CliWithProfile { options, profile } => [
+            options
+                .area_path
+                .clone()
+                .unwrap_or_else(|| profile.profile.area_path.clone()),
+            options
+                .assigned_to
+                .clone()
+                .unwrap_or_else(|| profile.profile.assigned_to.clone()),
+            options.iteration_path.clone().unwrap_or_default(),
+            options
+                .priority
+                .clone()
+                .unwrap_or_else(|| format_priority(profile.profile.priority)),
+            options
+                .team
+                .clone()
+                .unwrap_or_else(|| profile.profile.team.clone()),
+            options
+                .program
+                .clone()
+                .unwrap_or_else(|| profile.profile.program.clone()),
+        ],
+        TestCardRequest::PublishedPr(context) => [
+            context.settings.area_path.clone(),
+            context.settings.assigned_to.clone(),
+            context.settings.iteration_path.clone(),
+            format_priority(context.settings.priority),
+            context.settings.team.clone(),
+            context.settings.program.clone(),
+        ],
+        TestCardRequest::Cli(options) => [
+            options.area_path.clone().unwrap_or_default(),
+            options.assigned_to.clone().unwrap_or_default(),
+            options.iteration_path.clone().unwrap_or_default(),
+            options.priority.clone().unwrap_or_else(|| "2".to_owned()),
+            options.team.clone().unwrap_or_default(),
+            options.program.clone().unwrap_or_default(),
+        ],
+    }
+}
+
 /// Valores iniciais dos 6 campos (CLI > config; iteração herdada do pai).
 fn initial_field_values(options: Option<&CliOptions>, prep: &TestCardPrep) -> [String; 6] {
     if let Some(settings) = &prep.settings {
-        let priority = if settings.priority.fract() == 0.0 {
-            format!("{:.0}", settings.priority)
-        } else {
-            format!("{}", settings.priority)
-        };
         return [
             settings.area_path.clone(),
             settings.assigned_to.clone(),
             settings.iteration_path.clone(),
-            priority,
+            format_priority(settings.priority),
             settings.team.clone(),
             settings.program.clone(),
         ];
@@ -964,16 +1034,11 @@ fn initial_field_values(options: Option<&CliOptions>, prep: &TestCardPrep) -> [S
         return std::array::from_fn(|_| String::new());
     };
     if let Ok(s) = TestSettings::from_cli_or_profile(options, &prep.profile, &prep.parent) {
-        let priority = if s.priority.fract() == 0.0 {
-            format!("{:.0}", s.priority)
-        } else {
-            format!("{}", s.priority)
-        };
         [
             s.area_path,
             s.assigned_to,
             s.iteration_path,
-            priority,
+            format_priority(s.priority),
             s.team,
             s.program,
         ]
@@ -3081,14 +3146,14 @@ fn fixture_metadata(
         test_case_fields: vec![
             WorkItemFieldMetadata {
                 reference_name: "Custom.Team".to_owned(),
-                field_type: "String".to_owned(),
+                field_type: Some("String".to_owned()),
                 required: true,
                 default_value: None,
                 allowed_values: Vec::new(),
             },
             WorkItemFieldMetadata {
                 reference_name: profile.program_field.clone(),
-                field_type: "String".to_owned(),
+                field_type: Some("String".to_owned()),
                 required: true,
                 default_value: None,
                 allowed_values: Vec::new(),
@@ -3237,6 +3302,29 @@ mod tests {
         assert!(rendered.contains("Agrotrace"));
         assert!(rendered.contains("Custom.ProgramasAgrotrace"));
         assert_eq!(app.fields[4].value, "DevOps");
+    }
+
+    #[test]
+    fn prepared_event_should_populate_settings_before_generation_finishes() {
+        let mut app = TestApp::new();
+        app.on_event(TestEvent::Prepared {
+            prep: Box::new(published_prep()),
+            initial: [
+                "project\\QA".to_owned(),
+                "qa@example.com".to_owned(),
+                "project\\Sprint 12".to_owned(),
+                "2".to_owned(),
+                "DevOps".to_owned(),
+                "Agrotrace".to_owned(),
+            ],
+        });
+
+        assert_eq!(app.phase, TestPhase::Preparando);
+        assert_eq!(app.fields[0].value, "project\\QA");
+        assert_eq!(app.fields[1].value, "qa@example.com");
+        assert_eq!(app.fields[4].value, "DevOps");
+        assert_eq!(app.fields[5].value, "Agrotrace");
+        assert!(app.prep.is_some());
     }
 
     #[test]

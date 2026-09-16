@@ -58,9 +58,7 @@ async fn main() {
         prt::cli::Command::Test => run_test(&options).await,
         prt::cli::Command::Init => run_init(&options).await,
         prt::cli::Command::Doctor => run_doctor(&options).await,
-        prt::cli::Command::Update => prt::features::update::run()
-            .await
-            .map_err(anyhow::Error::new),
+        prt::cli::Command::Update => prt::tui::update::run().await,
         // Inalcançável: `completions` retorna mais acima.
         prt::cli::Command::Completions => Ok(()),
     };
@@ -82,11 +80,14 @@ async fn handle_desc_dry_run(
     if !options.output.dry_run {
         return Ok(false);
     }
-    let provider = prep
-        .config
-        .providers
-        .first()
-        .map_or("codex", String::as_str);
+    let provider = if prep.config.default_provider.trim().is_empty() {
+        prep.config
+            .providers
+            .first()
+            .map_or("codex", String::as_str)
+    } else {
+        prep.config.default_provider.as_str()
+    };
     let tty = std::io::IsTerminal::is_terminal(&std::io::stdout());
     if !tty {
         println!(

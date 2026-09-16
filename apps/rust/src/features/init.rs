@@ -72,11 +72,17 @@ impl InitDraft {
         Self {
             pat_input: String::new(),
             has_existing_pat: !cfg.azure_pat.is_empty(),
-            provider: cfg
-                .providers
-                .first()
-                .cloned()
-                .unwrap_or_else(|| "codex".to_owned()),
+            provider: if PROVIDERS
+                .iter()
+                .any(|(provider, _)| *provider == cfg.default_provider)
+            {
+                cfg.default_provider
+            } else {
+                cfg.providers
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| "codex".to_owned())
+            },
             codex_model: cfg.codex_model,
             codex_path: cfg.codex_path,
             codex_reasoning: cfg.codex_reasoning,
@@ -96,8 +102,19 @@ impl InitDraft {
     /// `keep_pat`/`keep_key` são os valores atuais lidos do disco.
     #[must_use]
     pub fn to_config(&self, keep_pat: &str, keep_key: &str) -> Config {
+        let mut providers = vec![
+            "codex".to_owned(),
+            "opencode".to_owned(),
+            "openai-compatible".to_owned(),
+        ];
+        if let Some(index) = providers
+            .iter()
+            .position(|provider| provider == &self.provider)
+        {
+            providers.swap(0, index);
+        }
         Config {
-            providers: vec![self.provider.clone()],
+            providers,
             base_url: or_default(&self.base_url, DEFAULT_BASE_URL),
             compatible_model: or_default(&self.compatible_model, DEFAULT_COMPATIBLE_MODEL),
             compatible_reasoning: or_default(&self.compatible_reasoning, COMPATIBLE_REASONING),
@@ -128,6 +145,8 @@ impl InitDraft {
             profiles: Vec::new(),
             bindings: Vec::new(),
             default_profile: String::new(),
+            default_provider: self.provider.clone(),
+            compatible_provider_id: "openai".to_owned(),
         }
     }
 

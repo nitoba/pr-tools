@@ -173,20 +173,32 @@ fn git(args: &[&str]) -> Result<String> {
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_owned())
 }
 
-/// Extrai Work Item da branch (`(?:^|[/_-])(\d+)(?:$|[/_-])`).
+/// Extrai o Work Item da branch.
 ///
-/// # Panics
-///
-/// Entra em pânico na inicialização do `OnceLock` se a regex fixa for
-/// inválida (inacessível em uso normal — o padrão é constante válida).
+/// O número que identifica uma branch `sprint/<n>` não é um Work Item. Ele é
+/// ignorado para evitar que uma branch de sprint seja usada acidentalmente
+/// como o pai do Test Case. Se houver uma branch composta, como
+/// `sprint/110/feature/11763-desc`, o primeiro número que não pertence ao
+/// segmento `sprint` continua sendo considerado.
 #[must_use]
 pub fn work_item_from_branch(branch: &str) -> String {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| Regex::new(r"(?:^|[/_-])(\d+)(?:$|[/_-])").expect("regex válida"));
-    re.captures(branch)
-        .and_then(|c| c.get(1))
-        .map(|m| m.as_str().to_owned())
-        .unwrap_or_default()
+    let branch = branch
+        .strip_prefix("refs/heads/")
+        .unwrap_or(branch)
+        .trim_matches(['/', '_', '-']);
+    let mut previous_segment: Option<&str> = None;
+    for segment in branch.split(['/', '_', '-']) {
+        if segment.is_empty() {
+            continue;
+        }
+        let is_sprint_number =
+            previous_segment.is_some_and(|previous| previous.eq_ignore_ascii_case("sprint"));
+        if !is_sprint_number && segment.chars().all(|character| character.is_ascii_digit()) {
+            return segment.to_owned();
+        }
+        previous_segment = Some(segment);
+    }
+    String::new()
 }
 
 /// Resolve targets (`sprint` → `sprintBranch`; default `[sprintBranch, dev]`).
@@ -508,6 +520,16 @@ mod tests {
     fn work_item_should_extract_from_branch() {
         assert_eq!(work_item_from_branch("feature/11763-desc"), "11763");
         assert_eq!(work_item_from_branch("main"), "");
+    }
+
+    #[test]
+    fn work_item_should_ignore_sprint_branch_number() {
+        assert_eq!(work_item_from_branch("sprint/110"), "");
+        assert_eq!(work_item_from_branch("refs/heads/sprint/110"), "");
+        assert_eq!(
+            work_item_from_branch("sprint/110/feature/11763-desc"),
+            "11763"
+        );
     }
 
     #[test]
