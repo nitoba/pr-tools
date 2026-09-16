@@ -10,6 +10,61 @@ use serde_json::{Value, json};
 use crate::azure::{AzureClient, WorkItem, encode_segment};
 use crate::error::{AppError, Result};
 
+/// Tipo de Work Item retornado pelo catálogo do projeto.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct WorkItemTypeMetadata {
+    /// Nome exibido e usado no endpoint.
+    pub name: String,
+    /// Identificador interno, quando retornado pelo Azure.
+    #[serde(default, rename = "referenceName")]
+    pub reference_name: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct WorkItemTypeListResponse {
+    #[serde(default, rename = "value")]
+    items: Vec<WorkItemTypeMetadata>,
+}
+
+/// Metadados de um campo de Work Item Type.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct WorkItemFieldMetadata {
+    /// Nome interno (`System.Title`, `Custom.Team`, etc.).
+    #[serde(rename = "referenceName")]
+    pub reference_name: String,
+    /// Tipo Azure (`String`, `Integer`, `Identity`, ...).
+    #[serde(rename = "type")]
+    pub field_type: String,
+    /// Se o campo precisa de valor no Work Item.
+    #[serde(default, alias = "alwaysRequired")]
+    pub required: bool,
+    /// Valor padrão declarado pelo processo, quando houver.
+    #[serde(default, rename = "defaultValue")]
+    pub default_value: Option<Value>,
+    /// Valores permitidos declarados pelo processo.
+    #[serde(default, rename = "allowedValues")]
+    pub allowed_values: Vec<Value>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WorkItemFieldListResponse {
+    #[serde(default, rename = "value")]
+    items: Vec<WorkItemFieldMetadata>,
+}
+
+/// Estado permitido por um Work Item Type.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct WorkItemStateMetadata {
+    /// Nome literal do estado (`Test QA`, por exemplo).
+    pub name: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct WorkItemStateListResponse {
+    #[serde(default, rename = "value")]
+    items: Vec<WorkItemStateMetadata>,
+}
+
 /// Limite de cada campo rico projetado para o prompt de `prt desc`.
 pub const FUNCTIONAL_RICH_FIELD_LIMIT: usize = 3000;
 /// Limite combinado dos campos ricos projetados para o prompt de `prt desc`.
@@ -266,8 +321,10 @@ pub struct TestCaseInput {
     pub priority: Option<f64>,
     /// Time (`Custom.Team`).
     pub team: Option<String>,
-    /// Programa (`Custom.ProgramasAgrotrace`).
+    /// Programa no campo fixo do perfil selecionado.
     pub program: Option<String>,
+    /// Reference name do campo fixo de programa do perfil selecionado.
+    pub program_field: Option<String>,
     /// Responsável (`System.AssignedTo`).
     pub assigned_to: Option<String>,
     /// Organização Azure (`dev.azure.com/{org}`).
@@ -346,6 +403,64 @@ pub async fn query_wiql(client: &AzureClient, project: &str, wiql: &str) -> Resu
     Ok(response.items.into_iter().map(|item| item.id).collect())
 }
 
+/// Lista os Work Item Types disponíveis no projeto.
+///
+/// # Errors
+///
+/// Propaga [`AppError::Azure`] em falha HTTP ou payload inválido.
+pub async fn list_work_item_types(
+    client: &AzureClient,
+    project: &str,
+) -> Result<Vec<WorkItemTypeMetadata>> {
+    let response: WorkItemTypeListResponse = client
+        .get(&format!(
+            "{}/_apis/wit/workitemtypes",
+            encode_segment(project)
+        ))
+        .await?;
+    Ok(response.items)
+}
+
+/// Lista todos os fields de um Work Item Type, incluindo defaults e allowed values.
+///
+/// # Errors
+///
+/// Propaga [`AppError::Azure`] em falha HTTP ou payload inválido.
+pub async fn list_work_item_type_fields(
+    client: &AzureClient,
+    project: &str,
+    work_item_type: &str,
+) -> Result<Vec<WorkItemFieldMetadata>> {
+    let response: WorkItemFieldListResponse = client
+        .get(&format!(
+            "{}/_apis/wit/workitemtypes/{}/fields?$expand=all",
+            encode_segment(project),
+            encode_segment(work_item_type),
+        ))
+        .await?;
+    Ok(response.items)
+}
+
+/// Lista os estados permitidos por um Work Item Type.
+///
+/// # Errors
+///
+/// Propaga [`AppError::Azure`] em falha HTTP ou payload inválido.
+pub async fn list_work_item_type_states(
+    client: &AzureClient,
+    project: &str,
+    work_item_type: &str,
+) -> Result<Vec<WorkItemStateMetadata>> {
+    let response: WorkItemStateListResponse = client
+        .get(&format!(
+            "{}/_apis/wit/workitemtypes/{}/states",
+            encode_segment(project),
+            encode_segment(work_item_type),
+        ))
+        .await?;
+    Ok(response.items)
+}
+
 /// Busca até `count` Test Cases recentes (WIQL + um GET por item).
 ///
 /// Espelha o trecho de exemplos do `prepare` do service Dart: a WIQL propaga
@@ -413,36 +528,45 @@ fn json_num(value: f64) -> Value {
 /// Espelha `createTestCase` do Dart na ordem e nos campos: `System.Title`,
 /// `System.Description` (html), `Microsoft.VSTS.TCM.Steps` (xml),
 /// `System.AreaPath`, `System.IterationPath`, `Microsoft.VSTS.Common.Priority`,
-/// `Custom.Team`, `Custom.ProgramasAgrotrace`, `System.AssignedTo`
+/// `Custom.Team`, o campo de programa do perfil e `System.AssignedTo`
 /// (opcionais vazios são omitidos) + relação `Related` com o pai
 /// quando `parent_id > 0` e `organization` presente.
 #[must_use]
 pub fn build_create_patch(input: &TestCaseInput, parent_url: Option<&str>) -> Vec<Value> {
     let mut ops = vec![json!({"op": "add", "path": "/fields/System.Title", "value": input.title})];
-    let optional: [(&str, Option<Value>); 7] = [
+    let optional: Vec<(String, Option<Value>)> = vec![
         (
-            "/fields/System.Description",
+            "/fields/System.Description".to_owned(),
             input.description_html.clone().map(Value::from),
         ),
         (
-            "/fields/Microsoft.VSTS.TCM.Steps",
+            "/fields/Microsoft.VSTS.TCM.Steps".to_owned(),
             input.steps_xml.clone().map(Value::from),
         ),
         (
-            "/fields/System.AreaPath",
+            "/fields/System.AreaPath".to_owned(),
             input.area_path.clone().map(Value::from),
         ),
         (
-            "/fields/System.IterationPath",
+            "/fields/System.IterationPath".to_owned(),
             input.iteration_path.clone().map(Value::from),
         ),
         (
-            "/fields/Microsoft.VSTS.Common.Priority",
+            "/fields/Microsoft.VSTS.Common.Priority".to_owned(),
             input.priority.map(json_num),
         ),
-        ("/fields/Custom.Team", input.team.clone().map(Value::from)),
         (
-            "/fields/Custom.ProgramasAgrotrace",
+            "/fields/Custom.Team".to_owned(),
+            input.team.clone().map(Value::from),
+        ),
+        (
+            format!(
+                "/fields/{}",
+                input
+                    .program_field
+                    .as_deref()
+                    .unwrap_or(crate::config::AGROTRACE_PROGRAM_FIELD)
+            ),
             input.program.clone().map(Value::from),
         ),
     ];
@@ -479,7 +603,22 @@ pub fn build_create_patch(input: &TestCaseInput, parent_url: Option<&str>) -> Ve
 /// presentes.
 #[must_use]
 pub fn build_test_qa_patch(effort: Option<f64>, real_effort: Option<f64>) -> Vec<Value> {
-    let mut ops = vec![json!({"op": "add", "path": "/fields/System.State", "value": "Test QA"})];
+    build_parent_patch(Some("Test QA"), effort, real_effort)
+}
+
+/// Monta o patch do pai preservando esforços e incluindo estado somente
+/// quando o perfil declarou uma transição.
+#[must_use]
+pub fn build_parent_patch(
+    transition: Option<&str>,
+    effort: Option<f64>,
+    real_effort: Option<f64>,
+) -> Vec<Value> {
+    let mut ops = transition
+        .filter(|state| !state.trim().is_empty())
+        .map_or_else(Vec::new, |state| {
+            vec![json!({"op": "add", "path": "/fields/System.State", "value": state})]
+        });
     if let Some(value) = effort {
         ops.push(json!({
             "op": "add",
@@ -563,10 +702,30 @@ pub async fn update_parent_to_test_qa(
     effort: Option<&str>,
     real_effort: Option<&str>,
 ) -> Result<()> {
-    let body = build_test_qa_patch(
+    update_parent_with_transition(client, parent_id, Some("Test QA"), effort, real_effort).await
+}
+
+/// Atualiza o pai usando a transição declarada pelo perfil, quando houver.
+///
+/// # Errors
+///
+/// Retorna [`AppError::Cli`] se algum esforço for inválido; propaga
+/// [`AppError::Azure`] em falha HTTP.
+pub async fn update_parent_with_transition(
+    client: &AzureClient,
+    parent_id: i64,
+    transition: Option<&str>,
+    effort: Option<&str>,
+    real_effort: Option<&str>,
+) -> Result<()> {
+    let body = build_parent_patch(
+        transition,
         parse_optional_decimal(effort, "effort")?,
         parse_optional_decimal(real_effort, "real effort")?,
     );
+    if body.is_empty() {
+        return Ok(());
+    }
     let _: Value = client
         .patch(&format!("_apis/wit/workitems/{parent_id}"), &body)
         .await?;
@@ -739,6 +898,42 @@ mod tests {
 
         let only_state = build_test_qa_patch(None, None);
         assert_eq!(only_state.len(), 1);
+    }
+
+    #[test]
+    fn checkmilk_patch_should_use_only_checkmilk_program_field() {
+        let input = TestCaseInput {
+            title: "Card CheckMilk".to_owned(),
+            team: Some("DevOps".to_owned()),
+            program: Some("Checkmilk".to_owned()),
+            program_field: Some(crate::config::CHECKMILK_PROGRAM_FIELD.to_owned()),
+            ..TestCaseInput::default()
+        };
+        let patch = build_create_patch(&input, None);
+        let paths: Vec<&str> = patch
+            .iter()
+            .filter_map(|operation| operation.get("path").and_then(Value::as_str))
+            .collect();
+        assert!(paths.contains(&"/fields/Custom.ProgramasCheckmilk"));
+        assert!(!paths.contains(&"/fields/Custom.ProgramasAgrotrace"));
+    }
+
+    #[test]
+    fn optional_parent_transition_should_preserve_efforts() {
+        let without_state = build_parent_patch(None, Some(1.0), Some(2.0));
+        assert_eq!(without_state.len(), 2);
+        assert!(
+            without_state
+                .iter()
+                .all(|operation| operation.get("path").and_then(Value::as_str)
+                    != Some("/fields/System.State"))
+        );
+        let with_state = build_parent_patch(Some("Test QA"), Some(1.0), Some(2.0));
+        assert_eq!(with_state[0]["value"], "Test QA");
+        assert!(with_state.iter().any(|operation| {
+            operation.get("path").and_then(Value::as_str)
+                == Some("/fields/Microsoft.VSTS.Scheduling.Effort")
+        }));
     }
 
     #[test]

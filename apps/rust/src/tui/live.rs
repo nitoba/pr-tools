@@ -566,12 +566,17 @@ fn start_publish(
     app.commit_reviewer();
     if recovery {
         // A recuperação deve refletir alterações feitas no `prt init` desde a
-        // tentativa anterior, sem alterar o snapshot usado no primeiro envio.
-        if let Ok(config) = config::load_config() {
-            app.publish_setup = Some(PublishSetup {
-                reviewer_sprint: config.reviewer_sprint,
-                reviewer_dev: config.reviewer_dev,
-            });
+        // tentativa anterior, sem trocar o perfil selecionado para este
+        // remote. Se a configuração atual estiver inválida, preserva os
+        // defaults da tentativa anterior e deixa a publicação explicitar o
+        // erro na próxima validação.
+        if let (Ok(config), Some(remote)) = (config::load_config(), base.remote.as_ref()) {
+            if let Ok(profile) = crate::features::process_profiles::select(&config, remote) {
+                app.publish_setup = Some(PublishSetup {
+                    reviewer_sprint: profile.profile.reviewer_sprint,
+                    reviewer_dev: profile.profile.reviewer_dev,
+                });
+            }
         }
     }
     // Vazio volta ao default (como no Dart: vazio = padrão).
@@ -2168,13 +2173,16 @@ fn make_publish_parts(prep: &DescribePrep) -> (Option<PublishSetup>, Option<Stri
             None,
             Some("PAT não configurado — rode `prt init`.".to_owned()),
         ),
-        Some(_) => (
-            Some(PublishSetup {
-                reviewer_sprint: prep.config.reviewer_sprint.clone(),
-                reviewer_dev: prep.config.reviewer_dev.clone(),
-            }),
-            None,
-        ),
+        Some(remote) => match crate::features::process_profiles::select(&prep.config, remote) {
+            Ok(profile) => (
+                Some(PublishSetup {
+                    reviewer_sprint: profile.profile.reviewer_sprint,
+                    reviewer_dev: profile.profile.reviewer_dev,
+                }),
+                None,
+            ),
+            Err(error) => (None, Some(error.to_string())),
+        },
     };
     // Base própria para a task de publicação (o `prep` move para o backend).
     let publish_base = PublishBase {

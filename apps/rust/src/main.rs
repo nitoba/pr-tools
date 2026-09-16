@@ -637,6 +637,13 @@ mod tests {
             "fields": {"System.Title": "Mudança", "System.WorkItemType": "Task"}
         }))
         .expect("pai");
+        let config = prt::config::Config {
+            azure_pat: "pat".to_owned(),
+            test_team: "DevOps".to_owned(),
+            test_program: "Agrotrace".to_owned(),
+            ..prt::config::Config::default()
+        };
+        let profile = prt::features::process_profiles::legacy_selection(&config, remote.clone());
         prt::features::test_card::TestCardLaunchContext {
             published_pr: prt::azure::pull_requests::PublishedPr {
                 target: "dev".to_owned(),
@@ -648,12 +655,7 @@ mod tests {
             work_item: Some(parent),
             source_ref_name: "refs/heads/feature/11763-mudanca".to_owned(),
             target_ref_name: "refs/heads/dev".to_owned(),
-            config: prt::config::Config {
-                azure_pat: "pat".to_owned(),
-                test_team: "DevOps".to_owned(),
-                test_program: "Agrotrace".to_owned(),
-                ..prt::config::Config::default()
-            },
+            config,
             settings: prt::features::test_card::TestSettings {
                 area_path: String::new(),
                 assigned_to: String::new(),
@@ -662,6 +664,7 @@ mod tests {
                 team: "DevOps".to_owned(),
                 program: "Agrotrace".to_owned(),
             },
+            profile,
             fingerprint: prt::git::GitContextFingerprint::default(),
         }
     }

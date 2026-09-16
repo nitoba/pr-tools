@@ -19,6 +19,7 @@ use crate::cli::CliOptions;
 use crate::config::{self, Config};
 use crate::error::{AppError, Result};
 use crate::features::describe::DescribePrep;
+use crate::features::process_profiles::{self, ProfileMetadata, ProfileSelection};
 use crate::git::{self, ChangeContext};
 
 /// Limite das operações Azure acionadas pela recuperação da TUI.
@@ -53,6 +54,8 @@ pub struct TestCardLaunchContext {
     pub config: Config,
     /// Os seis valores de configuração de Test Case resolvidos na origem.
     pub settings: TestSettings,
+    /// Perfil de processo congelado no handoff.
+    pub profile: ProfileSelection,
     /// Fingerprint do checkout no momento da publicação.
     pub fingerprint: git::GitContextFingerprint,
 }
@@ -108,6 +111,10 @@ pub struct TestCardPrep {
     pub pr_id: Option<String>,
     /// Configuração resolvida para a entrada publicada, quando disponível.
     pub settings: Option<TestSettings>,
+    /// Perfil congelado para criação, candidatos e recovery.
+    pub profile: ProfileSelection,
+    /// Metadata consultado antes da primeira escrita.
+    pub metadata: ProfileMetadata,
     /// Alterações do PR já resumidas em texto.
     pub pr_changes: String,
     /// Exemplos de Test Case (`- #id título` por linha).
@@ -349,6 +356,12 @@ async fn prepare_cli_with(
     let pr = fetch_requested_pr(client, remote, options).await?;
     let parent_id = resolve_parent_id(client, remote, options, &change, pr.as_ref()).await?;
     let parent = azure::get_work_item(client, &parent_id.to_string()).await?;
+    let profile = process_profiles::select(&config, remote)?;
+    let metadata =
+        process_profiles::load_metadata(client, &remote.project, &profile, parent.work_item_type())
+            .await?;
+    let initial_settings = TestSettings::from_cli_or_profile(options, &profile, &parent)?;
+    validate_profile_settings(&profile, &metadata, &initial_settings)?;
     let pr_changes = fetch_pr_changes_text(client, remote, pr.as_ref()).await;
     let examples_text = fetch_examples_text(client, remote, options).await?;
     let prompt = build_test_card_prompt(&parent, &change, pr.as_ref(), &pr_changes, &examples_text);
@@ -358,6 +371,8 @@ async fn prepare_cli_with(
         parent,
         pr_id: options.pr.as_ref().map(|id| id.as_str().to_owned()),
         settings: None,
+        profile,
+        metadata,
         pr_changes,
         examples_text,
         prompt,
@@ -378,9 +393,10 @@ async fn prepare_published_pr(context: &TestCardLaunchContext) -> Result<TestCar
         ));
     }
     if context.settings.program.trim().is_empty() {
-        return Err(AppError::cli(
-            "Custom.ProgramasAgrotrace é obrigatório para preparar o test case.",
-        ));
+        return Err(AppError::cli(format!(
+            "{} é obrigatório para preparar o test case.",
+            context.profile.program_field
+        )));
     }
     if !context.settings.priority.is_finite() || context.settings.priority <= 0.0 {
         return Err(AppError::cli(
@@ -453,6 +469,14 @@ where
             .ok_or_else(|| AppError::cli("Work Item pai não encontrado após a resolução"))?;
         (parent_id, parent)
     };
+    let metadata = process_profiles::load_metadata(
+        client,
+        &context.remote.project,
+        &context.profile,
+        parent.work_item_type(),
+    )
+    .await?;
+    validate_profile_settings(&context.profile, &metadata, &context.settings)?;
 
     let mut change = collect(&pr.source_ref_name, &pr.target_ref_name)?;
     if change.remote.as_ref() != Some(&context.remote) {
@@ -475,6 +499,8 @@ where
         parent,
         pr_id: Some(published.id.to_string()),
         settings: Some(context.settings.clone()),
+        profile: context.profile.clone(),
+        metadata,
         pr_changes,
         examples_text,
         prompt,
@@ -704,7 +730,7 @@ pub struct TestSettings {
     pub priority: f64,
     /// Time (`Custom.Team`, obrigatório).
     pub team: String,
-    /// Programa (`Custom.ProgramasAgrotrace`, obrigatório).
+    /// Programa cujo `referenceName` é escolhido pelo perfil.
     pub program: String,
 }
 
@@ -721,7 +747,7 @@ pub enum TestSettingsField {
     Priority,
     /// `Custom.Team`.
     Team,
-    /// `Custom.ProgramasAgrotrace`.
+    /// Campo de programa definido pelo perfil.
     Program,
 }
 
@@ -748,7 +774,7 @@ impl TestSettingsField {
             Self::IterationPath => "IterationPath",
             Self::Priority => "prioridade",
             Self::Team => "Custom.Team",
-            Self::Program => "Custom.ProgramasAgrotrace",
+            Self::Program => "campo de programa",
         }
     }
 }
@@ -800,16 +826,31 @@ impl TestSettings {
     /// # Errors
     ///
     /// Retorna [`AppError::Cli`] se `--priority` não for positivo ou se
-    /// `Custom.Team` / `Custom.ProgramasAgrotrace` estiverem vazios.
+    /// `Custom.Team` / o campo de programa do perfil estiverem vazios.
     pub fn from_cli_or_config(
         options: &CliOptions,
         config: &Config,
         parent: &WorkItem,
     ) -> Result<Self> {
+        let profile = legacy_profile_selection(config);
+        Self::from_cli_or_profile(options, &profile, parent)
+    }
+
+    /// Resolve precedência CLI > perfil selecionado.
+    ///
+    /// # Errors
+    ///
+    /// Retorna [`AppError::Cli`] quando um valor obrigatório ou a prioridade
+    /// resolvida é inválida.
+    pub fn from_cli_or_profile(
+        options: &CliOptions,
+        profile: &ProfileSelection,
+        parent: &WorkItem,
+    ) -> Result<Self> {
         let team = options
             .team
             .clone()
-            .unwrap_or_else(|| config.test_team.clone());
+            .unwrap_or_else(|| profile.profile.team.clone());
         if team.trim().is_empty() {
             return Err(AppError::cli(
                 "Custom.Team é obrigatório para criar o test case.",
@@ -818,26 +859,33 @@ impl TestSettings {
         let program = options
             .program
             .clone()
-            .unwrap_or_else(|| config.test_program.clone());
+            .unwrap_or_else(|| profile.profile.program.clone());
         if program.trim().is_empty() {
-            return Err(AppError::cli(
-                "Custom.ProgramasAgrotrace é obrigatório para criar o test case.",
-            ));
+            return Err(AppError::cli(format!(
+                "{} é obrigatório para criar o test case.",
+                profile.program_field
+            )));
         }
         Ok(Self {
             area_path: options
                 .area_path
                 .clone()
-                .unwrap_or_else(|| config.test_area_path.clone()),
+                .unwrap_or_else(|| profile.profile.area_path.clone()),
             assigned_to: options
                 .assigned_to
                 .clone()
-                .unwrap_or_else(|| config.test_assigned_to.clone()),
-            iteration_path: options
-                .iteration_path
-                .clone()
-                .unwrap_or_else(|| work_item_field(parent, "System.IterationPath").to_owned()),
-            priority: parse_priority(options.priority.as_deref())?,
+                .unwrap_or_else(|| profile.profile.assigned_to.clone()),
+            iteration_path: options.iteration_path.clone().unwrap_or_else(|| {
+                if profile.profile.inherit_iteration_path {
+                    work_item_field(parent, "System.IterationPath").to_owned()
+                } else {
+                    String::new()
+                }
+            }),
+            priority: parse_priority_with_default(
+                options.priority.as_deref(),
+                profile.profile.priority,
+            )?,
             team,
             program,
         })
@@ -850,26 +898,43 @@ impl TestSettings {
     ///
     /// # Errors
     ///
-    /// Retorna erro quando `Custom.Team` ou `Custom.ProgramasAgrotrace` está
+    /// Retorna erro quando `Custom.Team` ou o campo de programa do perfil está
     /// ausente na configuração.
     pub fn from_config(config: &Config, parent: &WorkItem) -> Result<Self> {
-        if config.test_team.trim().is_empty() {
+        Self::from_profile(&legacy_profile_selection(config), parent)
+    }
+
+    /// Resolve settings sem uma nova linha de comando para o handoff publicado.
+    ///
+    /// # Errors
+    ///
+    /// Retorna [`AppError::Cli`] quando `Custom.Team`, o campo de programa ou a
+    /// prioridade padrão do perfil é inválida.
+    pub fn from_profile(profile: &ProfileSelection, parent: &WorkItem) -> Result<Self> {
+        let team = profile.profile.team.clone();
+        if team.trim().is_empty() {
             return Err(AppError::cli(
                 "Custom.Team é obrigatório para criar o test case.",
             ));
         }
-        if config.test_program.trim().is_empty() {
-            return Err(AppError::cli(
-                "Custom.ProgramasAgrotrace é obrigatório para criar o test case.",
-            ));
+        let program = profile.profile.program.clone();
+        if program.trim().is_empty() {
+            return Err(AppError::cli(format!(
+                "{} é obrigatório para criar o test case.",
+                profile.program_field
+            )));
         }
         Ok(Self {
-            area_path: config.test_area_path.clone(),
-            assigned_to: config.test_assigned_to.clone(),
-            iteration_path: work_item_field(parent, "System.IterationPath").to_owned(),
-            priority: 2.0,
-            team: config.test_team.clone(),
-            program: config.test_program.clone(),
+            area_path: profile.profile.area_path.clone(),
+            assigned_to: profile.profile.assigned_to.clone(),
+            iteration_path: if profile.profile.inherit_iteration_path {
+                work_item_field(parent, "System.IterationPath").to_owned()
+            } else {
+                String::new()
+            },
+            priority: parse_priority_with_default(None, profile.profile.priority)?,
+            team,
+            program,
         })
     }
 }
@@ -888,6 +953,7 @@ impl TestCardLaunchContext {
         let remote = prep.context.remote.clone().ok_or_else(|| AppError::Git {
             message: "remote Azure DevOps não encontrado para continuar ao Test Case".to_owned(),
         })?;
+        let profile = process_profiles::select(&prep.config, &remote)?;
         let work_item_id = if prep.work_item_id.trim().is_empty() {
             None
         } else {
@@ -905,16 +971,16 @@ impl TestCardLaunchContext {
             relations: Vec::new(),
         };
         let settings =
-            TestSettings::from_config(&prep.config, parent.as_ref().unwrap_or(&fallback_parent))
+            TestSettings::from_profile(&profile, parent.as_ref().unwrap_or(&fallback_parent))
                 .unwrap_or_else(|_| TestSettings {
-                    area_path: prep.config.test_area_path.clone(),
-                    assigned_to: prep.config.test_assigned_to.clone(),
+                    area_path: profile.profile.area_path.clone(),
+                    assigned_to: profile.profile.assigned_to.clone(),
                     iteration_path: parent.as_ref().map_or_else(String::new, |item| {
                         work_item_field(item, "System.IterationPath").to_owned()
                     }),
-                    priority: 2.0,
-                    team: prep.config.test_team.clone(),
-                    program: prep.config.test_program.clone(),
+                    priority: profile.profile.priority,
+                    team: profile.profile.team.clone(),
+                    program: profile.profile.program.clone(),
                 });
         Ok(Self {
             published_pr: published_pr.clone(),
@@ -925,6 +991,7 @@ impl TestCardLaunchContext {
             target_ref_name: format!("refs/heads/{}", published_pr.target),
             config: prep.config.clone(),
             settings,
+            profile,
             fingerprint: prep.fingerprint.clone(),
         })
     }
@@ -1037,7 +1104,8 @@ pub async fn find_create_candidates(
                 relation.rel == "System.LinkTypes.Related"
                     && relation_id(&relation.url) == Some(prep.parent.id)
             });
-            let (matching_fields, comparable_fields) = matching_settings_fields(&item, settings);
+            let (matching_fields, comparable_fields) =
+                matching_settings_fields(&item, settings, prep.profile.program_field);
             TestCaseCandidate {
                 id: item.id,
                 url: candidate_url(prep, item.id),
@@ -1110,7 +1178,11 @@ fn candidate_url(prep: &TestCardPrep, id: i64) -> String {
     }
 }
 
-fn matching_settings_fields(item: &WorkItem, settings: &TestSettings) -> (usize, usize) {
+fn matching_settings_fields(
+    item: &WorkItem,
+    settings: &TestSettings,
+    program_field: &str,
+) -> (usize, usize) {
     let priority = settings.priority.to_string();
     let expected = [
         ("System.AreaPath", settings.area_path.as_str()),
@@ -1118,7 +1190,7 @@ fn matching_settings_fields(item: &WorkItem, settings: &TestSettings) -> (usize,
         ("System.IterationPath", settings.iteration_path.as_str()),
         ("Microsoft.VSTS.Common.Priority", priority.as_str()),
         ("Custom.Team", settings.team.as_str()),
-        ("Custom.ProgramasAgrotrace", settings.program.as_str()),
+        (program_field, settings.program.as_str()),
     ];
     let mut matching = 0;
     let mut comparable = 0;
@@ -1232,9 +1304,14 @@ fn test_settings_field(raw: &str) -> Option<TestSettingsField> {
 /// # Errors
 ///
 /// Retorna [`AppError::Cli`] se não for número positivo.
-fn parse_priority(raw: Option<&str>) -> Result<f64> {
+fn parse_priority_with_default(raw: Option<&str>, default: f64) -> Result<f64> {
     let Some(text) = raw.map(str::trim).filter(|t| !t.is_empty()) else {
-        return Ok(2.0);
+        if default.is_finite() && default > 0.0 {
+            return Ok(default);
+        }
+        return Err(AppError::cli(
+            "prioridade padrão deve ser um número positivo.",
+        ));
     };
     let number: f64 = text.replace(',', ".").parse().unwrap_or(f64::NAN);
     if number.is_finite() && number > 0.0 {
@@ -1242,6 +1319,41 @@ fn parse_priority(raw: Option<&str>) -> Result<f64> {
     } else {
         Err(AppError::cli("--priority deve ser um número positivo."))
     }
+}
+
+fn legacy_profile_selection(config: &Config) -> ProfileSelection {
+    ProfileSelection {
+        profile: config::ProcessProfile::from_legacy(config),
+        program_field: config::AGROTRACE_PROGRAM_FIELD,
+        remote: git::RepositoryRemote {
+            organization: String::new(),
+            project: String::new(),
+            repository: String::new(),
+        },
+    }
+}
+
+pub(crate) fn validate_profile_settings(
+    selection: &ProfileSelection,
+    metadata: &ProfileMetadata,
+    settings: &TestSettings,
+) -> Result<()> {
+    for (reference_name, value) in [
+        ("Custom.Team", settings.team.as_str()),
+        (selection.program_field, settings.program.as_str()),
+    ] {
+        let field = metadata
+            .test_case_fields
+            .iter()
+            .find(|field| field.reference_name == reference_name)
+            .ok_or_else(|| AppError::Config {
+                message: format!(
+                    "validação de metadata: o field {reference_name} não existe no Work Item Type Test Case"
+                ),
+            })?;
+        process_profiles::validate_field_value(field, value)?;
+    }
+    Ok(())
 }
 
 /// Valida título/corpo antes de criar (espelha `parseRequiredText`).
@@ -1273,6 +1385,26 @@ pub fn build_test_case_input(
     title: &str,
     body: &str,
 ) -> TestCaseInput {
+    build_test_case_input_with_program_field(
+        settings,
+        crate::config::AGROTRACE_PROGRAM_FIELD,
+        organization,
+        parent_id,
+        title,
+        body,
+    )
+}
+
+/// Monta o payload usando o campo fixo do perfil selecionado.
+#[must_use]
+pub fn build_test_case_input_with_program_field(
+    settings: &TestSettings,
+    program_field: &str,
+    organization: &str,
+    parent_id: i64,
+    title: &str,
+    body: &str,
+) -> TestCaseInput {
     TestCaseInput {
         title: title.to_owned(),
         description_html: Some(markdown_to_html(body)),
@@ -1283,6 +1415,7 @@ pub fn build_test_case_input(
         priority: Some(settings.priority),
         team: empty_to_none(&settings.team),
         program: empty_to_none(&settings.program),
+        program_field: Some(program_field.to_owned()),
         assigned_to: {
             let trimmed = settings.assigned_to.trim();
             (!trimmed.is_empty()).then(|| trimmed.to_owned())
@@ -1365,7 +1498,15 @@ async fn create_with_pat_and_timeout(
         Some(timeout) => azure::client_for_with_timeout(Some(remote), pat, timeout)?,
         None => azure::client_for(Some(remote), pat)?,
     };
-    let input = build_test_case_input(settings, &remote.organization, prep.parent.id, title, body);
+    validate_profile_settings(&prep.profile, &prep.metadata, settings)?;
+    let input = build_test_case_input_with_program_field(
+        settings,
+        prep.profile.program_field,
+        &remote.organization,
+        prep.parent.id,
+        title,
+        body,
+    );
     work_items::create_test_case(&client, &remote.project, &input).await
 }
 
@@ -1381,7 +1522,14 @@ pub async fn update_parent(
     real_effort: Option<&str>,
 ) -> Result<()> {
     let client = azure::client_for(prep.context.remote.as_ref(), prep.config.azure_pat.trim())?;
-    work_items::update_parent_to_test_qa(&client, prep.parent.id, effort, real_effort).await
+    work_items::update_parent_with_transition(
+        &client,
+        prep.parent.id,
+        prep.profile.profile.parent_transition.as_deref(),
+        effort,
+        real_effort,
+    )
+    .await
 }
 
 /// Atualiza o pai usando o PAT atualmente salvo, para a recuperação da TUI.
@@ -1395,7 +1543,14 @@ pub async fn update_parent_with_current_config(
     real_effort: Option<&str>,
 ) -> Result<()> {
     let client = current_azure_client(prep)?;
-    work_items::update_parent_to_test_qa(&client, prep.parent.id, effort, real_effort).await
+    work_items::update_parent_with_transition(
+        &client,
+        prep.parent.id,
+        prep.profile.profile.parent_transition.as_deref(),
+        effort,
+        real_effort,
+    )
+    .await
 }
 
 /// Texto de `## Título` (só `##`, como o Dart; `#` sozinho é parágrafo).
@@ -1655,6 +1810,207 @@ mod tests {
         (format!("http://{address}/org"), receiver, handle)
     }
 
+    fn metadata_responses() -> Vec<String> {
+        vec![
+            serde_json::to_string(&serde_json::json!({
+                "value": [{"name": "Test Case", "referenceName": "Microsoft.TestCase"}]
+            }))
+            .unwrap(),
+            serde_json::to_string(&serde_json::json!({
+                "value": [
+                    {"referenceName": "Custom.Team", "type": "String", "required": true},
+                    {"referenceName": "Custom.ProgramasAgrotrace", "type": "String", "required": true}
+                ]
+            }))
+            .unwrap(),
+            serde_json::to_string(&serde_json::json!({"value": [{"name": "Test QA"}]})).unwrap(),
+        ]
+    }
+
+    fn metadata_fixture_for_profile(selection: &ProfileSelection) -> ProfileMetadata {
+        ProfileMetadata {
+            test_case_type: crate::azure::work_items::WorkItemTypeMetadata {
+                name: "Test Case".to_owned(),
+                reference_name: "Microsoft.TestCase".to_owned(),
+            },
+            test_case_fields: vec![
+                crate::azure::work_items::WorkItemFieldMetadata {
+                    reference_name: "Custom.Team".to_owned(),
+                    field_type: "String".to_owned(),
+                    required: true,
+                    default_value: None,
+                    allowed_values: Vec::new(),
+                },
+                crate::azure::work_items::WorkItemFieldMetadata {
+                    reference_name: selection.program_field.to_owned(),
+                    field_type: "String".to_owned(),
+                    required: true,
+                    default_value: None,
+                    allowed_values: Vec::new(),
+                },
+            ],
+            parent_type: "User Story".to_owned(),
+            parent_states: vec![crate::azure::work_items::WorkItemStateMetadata {
+                name: "Test QA".to_owned(),
+            }],
+        }
+    }
+
+    #[tokio::test]
+    async fn metadata_validation_should_require_test_case_type() {
+        let context = published_context();
+        let (base_url, request_rx, server) = spawn_json_server(vec![
+            serde_json::to_string(&serde_json::json!({
+                "value": [{"name": "Task", "referenceName": "Microsoft.Task"}]
+            }))
+            .unwrap(),
+        ]);
+        let client = crate::azure::AzureClient::new_for_test(&base_url, "pat");
+        let error = process_profiles::load_metadata(
+            &client,
+            &context.remote.project,
+            &context.profile,
+            "User Story",
+        )
+        .await
+        .expect_err("Test Case ausente deveria bloquear");
+        assert!(error.to_string().contains("Test Case"));
+        assert!(error.to_string().contains("Agrotrace"));
+        assert_eq!(request_rx.recv().expect("consulta de tipos").method, "GET");
+        server.join().expect("servidor de tipos");
+    }
+
+    #[test]
+    fn metadata_validation_should_require_supported_profile_fields() {
+        let context = published_context();
+        let fields = vec![
+            crate::azure::work_items::WorkItemFieldMetadata {
+                reference_name: "Custom.Team".to_owned(),
+                field_type: "string".to_owned(),
+                required: true,
+                default_value: None,
+                allowed_values: Vec::new(),
+            },
+            crate::azure::work_items::WorkItemFieldMetadata {
+                reference_name: context.profile.program_field.to_owned(),
+                field_type: "string".to_owned(),
+                required: true,
+                default_value: None,
+                allowed_values: vec![serde_json::json!("Agrotrace")],
+            },
+        ];
+        assert!(process_profiles::validate_schema_fields(&context.profile, &fields).is_ok());
+        let mut incompatible = fields;
+        incompatible[1].field_type = "integer".to_owned();
+        assert!(process_profiles::validate_schema_fields(&context.profile, &incompatible).is_err());
+    }
+
+    #[test]
+    fn metadata_validation_should_report_required_field_without_default() {
+        let context = published_context();
+        let metadata = ProfileMetadata {
+            test_case_type: crate::azure::work_items::WorkItemTypeMetadata {
+                name: "Test Case".to_owned(),
+                reference_name: "Microsoft.TestCase".to_owned(),
+            },
+            test_case_fields: vec![
+                crate::azure::work_items::WorkItemFieldMetadata {
+                    reference_name: "Custom.Team".to_owned(),
+                    field_type: "String".to_owned(),
+                    required: true,
+                    default_value: None,
+                    allowed_values: Vec::new(),
+                },
+                crate::azure::work_items::WorkItemFieldMetadata {
+                    reference_name: context.profile.program_field.to_owned(),
+                    field_type: "String".to_owned(),
+                    required: true,
+                    default_value: None,
+                    allowed_values: Vec::new(),
+                },
+            ],
+            parent_type: "User Story".to_owned(),
+            parent_states: vec![],
+        };
+        let settings = TestSettings {
+            area_path: String::new(),
+            assigned_to: String::new(),
+            iteration_path: String::new(),
+            priority: 2.0,
+            team: String::new(),
+            program: "Agrotrace".to_owned(),
+        };
+        let error = validate_profile_settings(&context.profile, &metadata, &settings)
+            .expect_err("field obrigatório sem valor deveria falhar");
+        assert!(error.to_string().contains("Custom.Team"));
+    }
+
+    #[tokio::test]
+    async fn metadata_validation_should_require_configured_parent_state() {
+        let context = published_context();
+        let mut responses = metadata_responses();
+        responses[2] = serde_json::to_string(&serde_json::json!({"value": []})).unwrap();
+        let (base_url, request_rx, server) = spawn_json_server(responses);
+        let client = crate::azure::AzureClient::new_for_test(&base_url, "pat");
+        let error = process_profiles::load_metadata(
+            &client,
+            &context.remote.project,
+            &context.profile,
+            "User Story",
+        )
+        .await
+        .expect_err("estado ausente deveria bloquear");
+        assert!(error.to_string().contains("Test QA"));
+        assert_eq!(request_rx.iter().count(), 3);
+        server.join().expect("servidor de estados");
+    }
+
+    #[tokio::test]
+    async fn metadata_failure_should_prevent_creation_request() {
+        let context = published_context();
+        let (base_url, request_rx, server) =
+            spawn_json_server(vec!["resposta com pat=nao-deve-aparecer".to_owned()]);
+        let client = crate::azure::AzureClient::new_for_test(&base_url, "secret-pat");
+        let error = process_profiles::load_metadata(
+            &client,
+            &context.remote.project,
+            &context.profile,
+            "User Story",
+        )
+        .await
+        .expect_err("falha de metadata deveria bloquear");
+        assert!(error.to_string().contains("validação de metadata"));
+        assert!(!error.to_string().contains("secret-pat"));
+        assert_eq!(
+            request_rx.recv().expect("consulta de metadata").method,
+            "GET"
+        );
+        server.join().expect("servidor de falha");
+    }
+
+    #[test]
+    fn recovery_should_keep_profile_snapshot_when_pat_is_reloaded() {
+        let context = published_context();
+        let prep = TestCardPrep {
+            config: context.config.clone(),
+            context: test_change(),
+            parent: context.work_item.clone().expect("pai"),
+            pr_id: Some(context.published_pr.id.to_string()),
+            settings: Some(context.settings.clone()),
+            profile: context.profile.clone(),
+            metadata: metadata_fixture_for_profile(&context.profile),
+            pr_changes: String::new(),
+            examples_text: String::new(),
+            prompt: String::new(),
+        };
+        assert_eq!(prep.profile.name(), "Agrotrace");
+        assert_eq!(
+            prep.profile.program_field,
+            crate::config::AGROTRACE_PROGRAM_FIELD
+        );
+        assert_eq!(prep.metadata.test_case_fields.len(), 2);
+    }
+
     #[test]
     fn examples_should_default_to_2() {
         assert_eq!(parse_examples_count(None).unwrap(), 2);
@@ -1761,6 +2117,15 @@ mod tests {
             repository: "repo".to_owned(),
         };
         let parent = test_work_item(11763, "User Story", "Mudança funcional");
+        let config = Config {
+            azure_pat: "pat".to_owned(),
+            test_area_path: "project\\QA".to_owned(),
+            test_assigned_to: "qa@example.com".to_owned(),
+            test_team: "DevOps".to_owned(),
+            test_program: "Agrotrace".to_owned(),
+            ..Config::default()
+        };
+        let profile = legacy_profile_selection(&config);
         TestCardLaunchContext {
             published_pr: PublishedPr {
                 target: "dev".to_owned(),
@@ -1772,14 +2137,7 @@ mod tests {
             work_item: Some(parent),
             source_ref_name: "refs/heads/feat".to_owned(),
             target_ref_name: "refs/heads/dev".to_owned(),
-            config: Config {
-                azure_pat: "pat".to_owned(),
-                test_area_path: "project\\QA".to_owned(),
-                test_assigned_to: "qa@example.com".to_owned(),
-                test_team: "DevOps".to_owned(),
-                test_program: "Agrotrace".to_owned(),
-                ..Config::default()
-            },
+            config,
             settings: TestSettings {
                 area_path: "project\\QA".to_owned(),
                 assigned_to: "qa@example.com".to_owned(),
@@ -1788,13 +2146,14 @@ mod tests {
                 team: "DevOps".to_owned(),
                 program: "Agrotrace".to_owned(),
             },
+            profile,
             fingerprint: crate::git::GitContextFingerprint::default(),
         }
     }
 
     async fn prepare_published_fixture() -> (TestCardPrep, Vec<Vec<String>>, Vec<CapturedRequest>) {
         let context = published_context();
-        let (base_url, request_rx, server) = spawn_json_server(vec![
+        let mut responses = vec![
             serde_json::to_string(&serde_json::json!({
                 "pullRequestId": 99,
                 "repository": {"name": "repo", "project": {"name": "project"}},
@@ -1808,11 +2167,11 @@ mod tests {
                 "value": [{"id": 11763}]
             }))
             .unwrap(),
-            serde_json::to_string(&serde_json::json!({
-                "workItems": []
-            }))
-            .unwrap(),
-        ]);
+        ];
+        responses.extend(metadata_responses());
+        responses.push(serde_json::to_string(&serde_json::json!({"value": []})).unwrap());
+        responses.push(serde_json::to_string(&serde_json::json!({"workItems": []})).unwrap());
+        let (base_url, request_rx, server) = spawn_json_server(responses);
         let client = crate::azure::AzureClient::new_for_test(&base_url, "pat");
         let mut git_calls = Vec::new();
         let prep = prepare_published_pr_with(
@@ -1839,7 +2198,7 @@ mod tests {
         .await
         .expect("preparação publicada");
         let mut requests = Vec::new();
-        for _ in 0..3 {
+        for _ in 0..7 {
             requests.push(request_rx.recv().expect("requisição Azure"));
         }
         server.join().expect("servidor Azure");
@@ -2101,7 +2460,7 @@ mod tests {
 
     #[tokio::test]
     async fn cli_request_should_run_the_existing_preparation_adapter() {
-        let (base_url, request_rx, server) = spawn_json_server(vec![
+        let mut responses = vec![
             serde_json::to_string(&serde_json::json!({
                 "pullRequestId": 99,
                 "repository": {"name": "meurepo", "project": {"name": "MeuProj"}},
@@ -2118,8 +2477,10 @@ mod tests {
                 }
             }))
             .unwrap(),
-            serde_json::to_string(&serde_json::json!({"value": []})).unwrap(),
-        ]);
+        ];
+        responses.extend(metadata_responses());
+        responses.push(serde_json::to_string(&serde_json::json!({"value": []})).unwrap());
+        let (base_url, request_rx, server) = spawn_json_server(responses);
         let client = crate::azure::AzureClient::new_for_test(&base_url, "pat");
         let mut options = test_options();
         options.create = true;
@@ -2160,13 +2521,14 @@ mod tests {
         assert!(prep.settings.is_none());
         assert!(prep.prompt.contains("PR ID: 99"));
         assert!(prep.prompt.contains("Base: refs/heads/dev"));
-        let requests = (0..3)
+        let requests = (0..6)
             .map(|_| request_rx.recv().expect("requisição standalone"))
             .collect::<Vec<_>>();
         assert_eq!(requests[0].method, "GET");
         assert!(requests[0].target.contains("pullRequests/99"));
         assert!(requests[1].target.contains("workitems/11763"));
-        assert!(requests[2].target.contains("pullRequests/99/iterations"));
+        assert!(requests[2].target.contains("workitemtypes"));
+        assert!(requests[5].target.contains("pullRequests/99/iterations"));
         server.join().expect("servidor standalone");
     }
 
@@ -2344,7 +2706,7 @@ mod tests {
         let mut context = published_context();
         context.work_item_id = None;
         context.work_item = None;
-        let (base_url, request_rx, server) = spawn_json_server(vec![
+        let mut responses = vec![
             serde_json::to_string(&serde_json::json!({
                 "pullRequestId": 99,
                 "repository": {"name": "repo", "project": {"name": "project"}},
@@ -2371,9 +2733,11 @@ mod tests {
                 }
             }))
             .unwrap(),
-            serde_json::to_string(&serde_json::json!({"value": []})).unwrap(),
-            serde_json::to_string(&serde_json::json!({"workItems": []})).unwrap(),
-        ]);
+        ];
+        responses.extend(metadata_responses());
+        responses.push(serde_json::to_string(&serde_json::json!({"value": []})).unwrap());
+        responses.push(serde_json::to_string(&serde_json::json!({"workItems": []})).unwrap());
+        let (base_url, request_rx, server) = spawn_json_server(responses);
         let client = crate::azure::AzureClient::new_for_test(&base_url, "pat");
         let expected_remote = context.remote.clone();
         let mut prep_change = test_change();
@@ -2387,14 +2751,15 @@ mod tests {
         assert_eq!(prep.parent.id, 11763);
         assert_eq!(prep.context.work_item_id, "11763");
         assert_ne!(prep.parent.work_item_type(), "Test Case");
-        let requests = (0..6)
+        let requests = (0..9)
             .map(|_| request_rx.recv().expect("requisição de resolução"))
             .collect::<Vec<_>>();
         assert!(requests[1].target.contains("pullRequests/99/workitems"));
         assert!(requests[2].target.contains("workitems/11763"));
         assert!(requests[3].target.contains("workitems/12000"));
-        assert!(requests[4].target.contains("pullRequests/99/iterations"));
-        assert!(requests[5].target.contains("_apis/wit/wiql"));
+        assert!(requests[4].target.contains("workitemtypes"));
+        assert!(requests[7].target.contains("pullRequests/99/iterations"));
+        assert!(requests[8].target.contains("_apis/wit/wiql"));
         server.join().expect("servidor de resolução");
 
         let mut no_parent_context = published_context();
@@ -2563,18 +2928,21 @@ mod tests {
             team: "QA".to_owned(),
             program: String::new(),
         };
-        assert_eq!(matching_settings_fields(&item, &settings), (4, 4));
+        assert_eq!(
+            matching_settings_fields(&item, &settings, crate::config::AGROTRACE_PROGRAM_FIELD),
+            (4, 4)
+        );
     }
 
     #[test]
-    fn build_input_should_map_settings_to_test_case() {
+    fn agrotrace_payload_should_keep_defaults_and_cli_overrides() {
         let settings = TestSettings {
             area_path: "Proj\\T".to_owned(),
             assigned_to: "  a@b.c  ".to_owned(),
             iteration_path: String::new(),
             priority: 2.0,
-            team: "DevOps".to_owned(),
-            program: "Agrotrace".to_owned(),
+            team: "CliTeam".to_owned(),
+            program: "CliProgram".to_owned(),
         };
         let input =
             build_test_case_input(&settings, "minhaorg", 7, "Título", "## Objetivo\nValidar X");
@@ -2582,14 +2950,28 @@ mod tests {
         assert!(
             input
                 .description_html
+                .as_ref()
                 .is_some_and(|h| h.contains("<h2>Objetivo</h2>"))
         );
-        assert!(input.steps_xml.is_some_and(|x| x.contains("<steps")));
+        assert!(
+            input
+                .steps_xml
+                .as_ref()
+                .is_some_and(|x| x.contains("<steps"))
+        );
         assert_eq!(input.area_path.as_deref(), Some("Proj\\T"));
         assert_eq!(input.iteration_path, None);
         assert_eq!(input.parent_id, Some(7));
         assert_eq!(input.organization.as_deref(), Some("minhaorg"));
         assert_eq!(input.assigned_to.as_deref(), Some("a@b.c"));
+        let patch = crate::azure::work_items::build_create_patch(&input, None);
+        assert!(patch.iter().any(|operation| {
+            operation["path"] == "/fields/Custom.Team" && operation["value"] == "CliTeam"
+        }));
+        assert!(patch.iter().any(|operation| {
+            operation["path"] == "/fields/Custom.ProgramasAgrotrace"
+                && operation["value"] == "CliProgram"
+        }));
     }
 
     #[test]

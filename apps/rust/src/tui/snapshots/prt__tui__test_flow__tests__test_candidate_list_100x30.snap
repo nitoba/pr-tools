@@ -1,5 +1,6 @@
 ---
 source: apps/rust/src/tui/test_flow.rs
+assertion_line: 4443
 expression: "$crate :: tui :: snapshot_value(terminal.backend())"
 ---
 "◆ prt <version>  ·  test  ·  revisão                                                                    "
@@ -22,10 +23,10 @@ expression: "$crate :: tui :: snapshot_value(terminal.backend())"
 "│      │ enter usar selecionado · d excluir · r atualizar · esc voltar                      │ório) │"
 "│      ╰────────────────────────────────────────────────────────────────────────────────────╯      │"
 "│                                                     █ │ │                                        │"
-"│                                                     █ │ │   Programa *  ·                        │"
-"│                                                     █ │ │ Custom.ProgramasAgrotrace              │"
-"│                                                     █ │ │ (obrigatório)                          │"
-"│                                                     ║ │ │ —                                      │"
+"│                                                     █ │ │   Programa *  ·  campo de programa do  │"
+"│                                                     █ │ │ perfil (obrigatório)                   │"
+"│                                                     █ │ │ —                                      │"
+"│                                                     ║ │ │                                        │"
 "│                                                     ║ │ │                                        │"
 "│                                                     ║ │ │                                        │"
 "│                                                     ║ │ │                                        │"

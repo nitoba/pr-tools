@@ -10,6 +10,7 @@ use regex::Regex;
 use tokio::time::timeout;
 
 use crate::config::{Config, config_paths, load_config};
+use crate::features::process_profiles;
 use crate::git::{RepositoryRemote, parse_azure_remote};
 
 /// Timeout por comando externo (espelha `doctorCommandTimeout` do Dart).
@@ -95,7 +96,7 @@ fn fail_check(component: &'static str, detail: String, fix: String) -> Check {
 /// contexto de PR (`--source`); `None` usa a branch atual.
 pub async fn inspect(source: Option<&str>) -> DoctorReport {
     let mut checks = Vec::new();
-    let remote = inspect_git(source, &mut checks).await;
+    let git = inspect_git(source, &mut checks).await;
     let config = match load_config() {
         Ok(config) => config,
         Err(err) => {
@@ -109,9 +110,215 @@ pub async fn inspect(source: Option<&str>) -> DoctorReport {
         }
     };
     inspect_configuration(&config, &mut checks).await;
+    inspect_process_profiles(
+        &config,
+        git.remote.as_ref(),
+        git.work_item_id.as_deref(),
+        &mut checks,
+    )
+    .await;
     inspect_providers(&config, &mut checks).await;
-    inspect_azure(&config, remote.as_ref(), &mut checks).await;
+    inspect_azure(&config, git.remote.as_ref(), &mut checks).await;
     DoctorReport { checks }
+}
+
+#[derive(Debug, Default)]
+struct GitInspection {
+    remote: Option<RepositoryRemote>,
+    work_item_id: Option<String>,
+}
+
+/// Valida a associação local antes das sondas remotas. O fallback legado é
+/// permitido pelo fluxo, mas o diagnóstico sinaliza a ausência de binding
+/// explícito para que clones do mesmo projeto não dependam do default global.
+async fn inspect_process_profiles(
+    config: &Config,
+    remote: Option<&RepositoryRemote>,
+    work_item_id: Option<&str>,
+    checks: &mut Vec<Check>,
+) {
+    let Some(remote) = remote else {
+        checks.push(fail_check(
+            "Perfis de processo",
+            "remote Azure não disponível para selecionar um perfil.".to_owned(),
+            "Configure um remote Azure DevOps válido e repita `prt doctor`.".to_owned(),
+        ));
+        return;
+    };
+    let label = remote_label(remote);
+    if let Err(error) = process_profiles::validate_config(config) {
+        checks.push(fail_check(
+            "Perfis de processo",
+            format!("{label}: {error}"),
+            "Corrija os perfis/bindings em config.json; use somente Agrotrace ou CheckMilk e uma associação por remote.".to_owned(),
+        ));
+        return;
+    }
+    let bindings = process_profiles::binding_for(&config.bindings, remote);
+    if bindings.is_empty() {
+        let fallback = if config.default_profile.trim().is_empty() {
+            crate::config::AGROTRACE_PROFILE
+        } else {
+            config.default_profile.trim()
+        };
+        checks.push(fail_check(
+            "Binding de processo",
+            format!("{label}: nenhum binding explícito; fallback ativo: {fallback}."),
+            format!("Associe {label} a um perfil em config.json ou execute `prt init`."),
+        ));
+    } else {
+        checks.push(ok_check(
+            "Binding de processo",
+            format!("{label}: {}.", bindings[0].profile),
+        ));
+    }
+    let selection = match process_profiles::select(config, remote) {
+        Ok(selection) => selection,
+        Err(error) => {
+            checks.push(fail_check(
+                "Perfil de processo",
+                format!("{label}: {error}"),
+                "Corrija o perfil selecionado e repita `prt doctor`.".to_owned(),
+            ));
+            return;
+        }
+    };
+    checks.push(ok_check(
+        "Perfil de processo",
+        format!(
+            "{label}: {} · {}.",
+            selection.name(),
+            selection.program_field
+        ),
+    ));
+    if selection.profile.team.trim().is_empty() {
+        checks.push(fail_check(
+            "Campos do perfil",
+            format!("{label} / {}: Custom.Team está vazio.", selection.name()),
+            format!(
+                "Preencha team no perfil {} em `prt init` ou config.json.",
+                selection.name()
+            ),
+        ));
+    }
+    if selection.profile.program.trim().is_empty() {
+        checks.push(fail_check(
+            "Campos do perfil",
+            format!(
+                "{label} / {}: {} está vazio.",
+                selection.name(),
+                selection.program_field
+            ),
+            format!(
+                "Preencha program no perfil {} em `prt init` ou config.json.",
+                selection.name()
+            ),
+        ));
+    }
+    for (target, reviewer) in [
+        ("dev", selection.profile.reviewer_dev.as_str()),
+        ("sprint", selection.profile.reviewer_sprint.as_str()),
+    ] {
+        if !reviewer.trim().is_empty() && !is_valid_email(reviewer) {
+            checks.push(fail_check(
+                "Reviewer do perfil",
+                format!(
+                    "{label} / {} / {target}: reviewer inválido.",
+                    selection.name()
+                ),
+                format!(
+                    "Corrija reviewer{} no perfil {} em config.json.",
+                    if target == "dev" { "Dev" } else { "Sprint" },
+                    selection.name()
+                ),
+            ));
+        }
+    }
+    if config.azure_pat.trim().is_empty() {
+        return;
+    }
+    let client = match crate::azure::client_for_with_timeout(
+        Some(remote),
+        config.azure_pat.trim(),
+        HTTP_TIMEOUT,
+    ) {
+        Ok(client) => client,
+        Err(error) => {
+            checks.push(fail_check(
+                "Metadata do perfil",
+                format!("{label} / {}: {error}", selection.name()),
+                "Confirme o PAT e repita `prt doctor`.".to_owned(),
+            ));
+            return;
+        }
+    };
+    let parent_type = match work_item_id {
+        Some(id) => match crate::azure::get_work_item(&client, id).await {
+            Ok(item) => item.work_item_type().to_owned(),
+            Err(error) => {
+                checks.push(fail_check(
+                    "Metadata do pai",
+                    format!("{label}: não foi possível consultar o Work Item pai: {error}"),
+                    "Confirme o ID da branch e as permissões de leitura de Work Items.".to_owned(),
+                ));
+                return;
+            }
+        },
+        None if selection.profile.parent_transition.is_some() => {
+            checks.push(warn_check(
+                "Metadata do pai",
+                format!(
+                    "{label} / {}: nenhum Work Item da branch; o estado do pai não foi validado.",
+                    selection.name()
+                ),
+                "Use uma branch com Work Item numérico ou rode `prt test --work-item <id>`."
+                    .to_owned(),
+            ));
+            return;
+        }
+        None => String::new(),
+    };
+    match process_profiles::load_metadata(&client, &remote.project, &selection, &parent_type).await
+    {
+        Ok(metadata) => {
+            let values_valid = [
+                ("Custom.Team", selection.profile.team.as_str()),
+                (selection.program_field, selection.profile.program.as_str()),
+            ]
+            .into_iter()
+            .filter_map(|(reference_name, value)| {
+                metadata
+                    .test_case_fields
+                    .iter()
+                    .find(|field| field.reference_name == reference_name)
+                    .map(|field| process_profiles::validate_field_value(field, value))
+            })
+            .all(|result| result.is_ok());
+            if values_valid {
+                checks.push(ok_check(
+                    "Metadata do perfil",
+                    format!(
+                        "{label} / {}: Test Case, fields e estado compatíveis.",
+                        selection.name()
+                    ),
+                ));
+            } else {
+                checks.push(fail_check(
+                    "Valores do perfil",
+                    format!(
+                        "{label} / {}: um valor padrão não é aceito pelo Azure.",
+                        selection.name()
+                    ),
+                    "Ajuste team/program aos allowedValues retornados pelo processo.".to_owned(),
+                ));
+            }
+        }
+        Err(error) => checks.push(fail_check(
+            "Metadata do perfil",
+            format!("{label} / {}: {error}", selection.name()),
+            "Confirme o Work Item Type, fields e estado do processo no Azure DevOps.".to_owned(),
+        )),
+    }
 }
 
 /// Executa `prog args` com timeout.
@@ -243,7 +450,7 @@ fn normalize_base_url(raw: &str) -> String {
 ///
 /// Nunca falha: cada problema vira um [`Check`]. Retorna o remote Azure
 /// parseado do `origin` (para a sonda do Azure).
-async fn inspect_git(source: Option<&str>, checks: &mut Vec<Check>) -> Option<RepositoryRemote> {
+async fn inspect_git(source: Option<&str>, checks: &mut Vec<Check>) -> GitInspection {
     let version = run_cmd("git", &["--version"], CMD_TIMEOUT).await;
     let Some(version) = version else {
         checks.push(fail_check(
@@ -251,7 +458,7 @@ async fn inspect_git(source: Option<&str>, checks: &mut Vec<Check>) -> Option<Re
             "O executável git não está disponível.".to_owned(),
             "Instale o Git e abra um novo terminal antes de executar `prt doctor`.".to_owned(),
         ));
-        return None;
+        return GitInspection::default();
     };
     checks.push(ok_check("Git", clean_line(&version)));
 
@@ -265,7 +472,7 @@ async fn inspect_git(source: Option<&str>, checks: &mut Vec<Check>) -> Option<Re
             "O diretório atual não está dentro de um repositório Git.".to_owned(),
             "Entre no clone do projeto usado para gerar o contexto.".to_owned(),
         ));
-        return None;
+        return GitInspection::default();
     };
     checks.push(ok_check(
         "Repositório Git",
@@ -328,15 +535,18 @@ async fn inspect_git(source: Option<&str>, checks: &mut Vec<Check>) -> Option<Re
         }
     }
 
-    inspect_git_context(source, checks).await;
-    azure_remote
+    let work_item_id = inspect_git_context(source, checks).await;
+    GitInspection {
+        remote: azure_remote,
+        work_item_id,
+    }
 }
 
 /// Tenta coletar o contexto de PR via `git::collect` sem propagar erro.
 ///
 /// Sucesso gera `Contexto de PR` + `Work Item da branch`; erro vira aviso
 /// em `Contexto de PR/Test Case` (não aborta o `doctor`).
-async fn inspect_git_context(source: Option<&str>, checks: &mut Vec<Check>) {
+async fn inspect_git_context(source: Option<&str>, checks: &mut Vec<Check>) -> Option<String> {
     let owned = source.map(str::to_owned);
     let collected =
         tokio::task::spawn_blocking(move || crate::git::collect(owned.as_deref())).await;
@@ -357,7 +567,9 @@ async fn inspect_git_context(source: Option<&str>, checks: &mut Vec<Check>) {
             } else {
                 let id = ctx.work_item_id.as_str();
                 checks.push(ok_check("Work Item da branch", format!("#{id}.")));
+                return Some(ctx.work_item_id);
             }
+            None
         }
         Ok(Err(err)) => {
             let detail = err.to_string();
@@ -366,6 +578,7 @@ async fn inspect_git_context(source: Option<&str>, checks: &mut Vec<Check>) {
                 detail,
                 "Entre na branch da alteração ou use `--source <branch>`.".to_owned(),
             ));
+            None
         }
         Err(join_err) => {
             checks.push(warn_check(
@@ -373,6 +586,7 @@ async fn inspect_git_context(source: Option<&str>, checks: &mut Vec<Check>) {
                 format!("falha interna ao coletar contexto Git: {join_err}"),
                 "Entre na branch da alteração ou use `--source <branch>`.".to_owned(),
             ));
+            None
         }
     }
 }
@@ -1039,6 +1253,33 @@ mod tests {
         assert!(!is_valid_email("sem-dominio@"));
         assert!(!is_valid_email("nome@sem-ponto"));
         assert!(is_valid_email("  dev@example.com  "));
+    }
+
+    #[tokio::test]
+    async fn profile_binding_validation_should_report_actionable_failure() {
+        let remote = RepositoryRemote {
+            organization: "org".to_owned(),
+            project: "CHECKMILK".to_owned(),
+            repository: "checkmilk".to_owned(),
+        };
+        let config = Config {
+            default_profile: crate::config::AGROTRACE_PROFILE.to_owned(),
+            profiles: vec![
+                crate::config::ProcessProfile::named(crate::config::AGROTRACE_PROFILE)
+                    .expect("perfil suportado"),
+            ],
+            ..Config::default()
+        };
+        let mut checks = Vec::new();
+        inspect_process_profiles(&config, Some(&remote), None, &mut checks).await;
+        let binding = checks
+            .iter()
+            .find(|check| check.component == "Binding de processo")
+            .expect("check de binding");
+        assert!(!binding.ok);
+        assert!(binding.detail.contains("org/CHECKMILK/checkmilk"));
+        assert!(binding.fix.contains("prt init"));
+        assert_eq!(DoctorReport { checks }.exit_code(), 1);
     }
 
     #[test]

@@ -23,7 +23,8 @@ use unicode_width::UnicodeWidthChar;
 
 use super::{StatusHeader, border_type, status_header, status_layout, theme};
 use crate::features::init::{
-    InitDraft, InitResult, PROVIDERS, REASONING_LEVELS, save_draft, validate_optional_email,
+    InitDraft, InitResult, PROVIDERS, REASONING_LEVELS, save_draft_for_profile_with_transition,
+    validate_optional_email,
 };
 
 /// Resultado do wizard.
@@ -53,6 +54,11 @@ const STEPS: &[Step] = &[
     Step::Model,
     Step::TestDefaults,
     Step::Review,
+];
+
+const PROFILE_OPTIONS: &[(&str, &str)] = &[
+    ("Agrotrace", "Agrotrace · Custom.ProgramasAgrotrace"),
+    ("CheckMilk", "CheckMilk · Custom.ProgramasCheckmilk"),
 ];
 
 impl Step {
@@ -86,6 +92,8 @@ enum Field {
     CompatModel,
     CompatReasoning,
     ApiKey,
+    Profile,
+    Transition,
     AreaPath,
     Team,
     Program,
@@ -110,6 +118,8 @@ impl Field {
             Self::CompatModel => "Modelo OpenAI-compatible",
             Self::CompatReasoning => "Thinking level",
             Self::ApiKey => "API key",
+            Self::Profile => "Perfil de processo",
+            Self::Transition => "Transição do Work Item pai",
             Self::AreaPath => "AreaPath padrão",
             Self::Team => "Team padrão",
             Self::Program => "Program padrão",
@@ -144,6 +154,8 @@ impl Field {
                     "opcional · só p/ endpoints autenticados".to_owned()
                 }
             }
+            Self::Profile => "Agrotrace ou CheckMilk · schema fixo".to_owned(),
+            Self::Transition => "opcional · vazio não executa PATCH de estado".to_owned(),
             Self::CodexReasoning | Self::OpencodeReasoning | Self::CompatReasoning => {
                 "←/→ para alternar".to_owned()
             }
@@ -164,8 +176,9 @@ impl Field {
             Self::CompatModel => crate::config::DEFAULT_COMPATIBLE_MODEL,
             Self::BaseUrl => crate::config::DEFAULT_BASE_URL,
             Self::AreaPath => r"MeuProjeto\Time",
+            Self::Profile | Self::Program => "Agrotrace",
+            Self::Transition => "Test QA",
             Self::Team => "DevOps",
-            Self::Program => "Agrotrace",
             _ => "",
         }
     }
@@ -179,7 +192,11 @@ impl Field {
     fn is_select(self) -> bool {
         matches!(
             self,
-            Self::Provider | Self::CodexReasoning | Self::OpencodeReasoning | Self::CompatReasoning
+            Self::Provider
+                | Self::Profile
+                | Self::CodexReasoning
+                | Self::OpencodeReasoning
+                | Self::CompatReasoning
         )
     }
 
@@ -209,7 +226,13 @@ fn fields_for(step: Step, provider: &str) -> Vec<Field> {
             ],
             _ => vec![Field::CodexPath, Field::CodexModel, Field::CodexReasoning],
         },
-        Step::TestDefaults => vec![Field::AreaPath, Field::Team, Field::Program],
+        Step::TestDefaults => vec![
+            Field::Profile,
+            Field::AreaPath,
+            Field::Team,
+            Field::Program,
+            Field::Transition,
+        ],
         Step::Review => vec![],
     }
 }
@@ -217,6 +240,8 @@ fn fields_for(step: Step, provider: &str) -> Vec<Field> {
 /// Estado do wizard. O `edit_*` é o editor de linha única do campo focado.
 pub struct InitWizard {
     draft: InitDraft,
+    profile_name: String,
+    parent_transition: String,
     step: usize,
     field: usize,
     edit_value: String,
@@ -235,8 +260,26 @@ impl InitWizard {
     /// Cria wizard com rascunho pré-preenchido do disco.
     #[must_use]
     pub fn new() -> Self {
+        let existing_profile = crate::config::load_config().ok().map_or_else(
+            || ("Agrotrace".to_owned(), "Test QA".to_owned()),
+            |config| {
+                let name = PROFILE_OPTIONS
+                    .iter()
+                    .find(|(name, _)| *name == config.default_profile)
+                    .map_or("Agrotrace", |(name, _)| *name);
+                let transition = config
+                    .profiles
+                    .iter()
+                    .find(|profile| profile.name == name)
+                    .and_then(|profile| profile.parent_transition.clone())
+                    .unwrap_or_else(|| "Test QA".to_owned());
+                (name.to_owned(), transition)
+            },
+        );
         let mut w = Self {
             draft: InitDraft::load_existing(),
+            profile_name: existing_profile.0,
+            parent_transition: existing_profile.1,
             step: 0,
             field: 0,
             edit_value: String::new(),
@@ -282,6 +325,8 @@ impl InitWizard {
             Field::CompatModel => d.compatible_model.clone(),
             Field::CompatReasoning => d.compatible_reasoning.clone(),
             Field::ApiKey => d.api_key_input.clone(),
+            Field::Profile => self.profile_name.clone(),
+            Field::Transition => self.parent_transition.clone(),
             Field::AreaPath => d.test_area_path.clone(),
             Field::Team => d.test_team.clone(),
             Field::Program => d.test_program.clone(),
@@ -290,6 +335,28 @@ impl InitWizard {
 
     /// Grava valor no rascunho.
     fn set(&mut self, field: Field, value: String) {
+        if field == Field::Profile {
+            let previous_default = if self.profile_name == "CheckMilk" {
+                "Checkmilk"
+            } else {
+                "Agrotrace"
+            };
+            if self.draft.test_program.trim().is_empty()
+                || self.draft.test_program.trim() == previous_default
+            {
+                self.draft.test_program = if value == "CheckMilk" {
+                    "Checkmilk".to_owned()
+                } else {
+                    "Agrotrace".to_owned()
+                };
+            }
+            self.profile_name = value;
+            return;
+        }
+        if field == Field::Transition {
+            self.parent_transition = value;
+            return;
+        }
         let d = &mut self.draft;
         match field {
             Field::Pat => d.pat_input = value,
@@ -307,6 +374,8 @@ impl InitWizard {
             Field::CompatModel => d.compatible_model = value,
             Field::CompatReasoning => d.compatible_reasoning = value,
             Field::ApiKey => d.api_key_input = value,
+            Field::Profile => unreachable!("perfil tratado antes do draft"),
+            Field::Transition => unreachable!("transição tratada antes do draft"),
             Field::AreaPath => d.test_area_path = value,
             Field::Team => d.test_team = value,
             Field::Program => d.test_program = value,
@@ -317,6 +386,7 @@ impl InitWizard {
     fn select_state(&self, field: Field) -> (Vec<(&'static str, &'static str)>, usize) {
         let (options, current) = match field {
             Field::Provider => (PROVIDERS.to_vec(), self.draft.provider.as_str()),
+            Field::Profile => (PROFILE_OPTIONS.to_vec(), self.profile_name.as_str()),
             _ => (
                 REASONING_LEVELS.to_vec(),
                 match field {
@@ -524,7 +594,11 @@ impl InitWizard {
             self.error = Some(err);
             return;
         }
-        match save_draft(&self.draft) {
+        match save_draft_for_profile_with_transition(
+            &self.draft,
+            &self.profile_name,
+            Some(self.parent_transition.as_str()),
+        ) {
             Ok(res) => {
                 self.done = Some(res);
                 self.error = None;
@@ -931,6 +1005,34 @@ fn render_review(wiz: &InitWizard, area: Rect, buf: &mut Buffer) {
         _ => "—".to_owned(),
     };
     let rows = [
+        (
+            "perfil",
+            format!(
+                "{} / {}",
+                wiz.profile_name,
+                if wiz.profile_name == "CheckMilk" {
+                    "Custom.ProgramasCheckmilk"
+                } else {
+                    "Custom.ProgramasAgrotrace"
+                }
+            ),
+        ),
+        ("transição pai", or_dash(&wiz.parent_transition)),
+        (
+            "binding",
+            crate::git::collect(None)
+                .ok()
+                .and_then(|context| context.remote)
+                .map_or_else(
+                    || "remote Azure não detectado".to_owned(),
+                    |remote| {
+                        format!(
+                            "{}/{}/{}",
+                            remote.organization, remote.project, remote.repository
+                        )
+                    },
+                ),
+        ),
         ("provider", d.provider.clone()),
         ("modelo", model_line),
         ("executável", executable),
@@ -1346,6 +1448,8 @@ mod tests {
     /// Wizard hermético p/ snapshots: zera tudo que `load_existing()` lê do disco.
     fn hermetic_wizard() -> InitWizard {
         let mut wiz = InitWizard::new();
+        wiz.profile_name = "Agrotrace".to_owned();
+        wiz.parent_transition = "Test QA".to_owned();
         wiz.draft.pat_input.clear();
         wiz.draft.has_existing_pat = false;
         wiz.draft.reviewer_sprint.clear();
@@ -1377,6 +1481,25 @@ mod tests {
         wiz.flagged.clear();
         wiz.rebind();
         wiz
+    }
+
+    #[test]
+    fn wizard_review_should_show_profile_binding_and_reviewers() {
+        let mut wiz = hermetic_wizard();
+        wiz.profile_name = "CheckMilk".to_owned();
+        wiz.draft.reviewer_dev = "dev@checkmilk.example".to_owned();
+        wiz.draft.reviewer_sprint = "sprint@checkmilk.example".to_owned();
+        wiz.step = STEPS.len() - 1;
+        let mut buffer = ratatui::buffer::Buffer::empty(ratatui::layout::Rect::new(0, 0, 100, 30));
+        render_review(&wiz, buffer.area, &mut buffer);
+        let text = buffer
+            .content
+            .iter()
+            .map(|cell| cell.symbol().to_owned())
+            .collect::<String>();
+        assert!(text.contains("CheckMilk"));
+        assert!(text.contains("dev@checkmilk.example"));
+        assert!(text.contains("sprint@checkmilk.example"));
     }
 
     #[test]

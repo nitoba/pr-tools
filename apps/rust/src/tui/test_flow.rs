@@ -247,7 +247,7 @@ fn field_hint(idx: usize) -> &'static str {
         2 => r"ex.: MeuProjeto\Sprint 12",
         3 => "número > 0 (ex.: 2)",
         4 => "Custom.Team (obrigatório)",
-        _ => "Custom.ProgramasAgrotrace (obrigatório)",
+        _ => "campo de programa do perfil (obrigatório)",
     }
 }
 
@@ -613,9 +613,17 @@ impl TestApp {
         self.progress = 1.0;
         "criado".clone_into(&mut self.progress_label);
         self.push_log(format!("criado #{id}"));
-        // A confirmação do pai aparece imediatamente para não encerrar o
-        // fluxo antes que o usuário decida sobre a atualização.
-        self.dialog = Some(TestDialog::ConfirmTestQa(false));
+        // Perfis sem transição não oferecem uma confirmação nem executam um
+        // PATCH de estado após a criação.
+        self.dialog = if self
+            .prep
+            .as_ref()
+            .is_none_or(|prep| prep.profile.profile.parent_transition.is_some())
+        {
+            Some(TestDialog::ConfirmTestQa(false))
+        } else {
+            None
+        };
     }
 
     fn on_create_failed(&mut self, failure: &CreateFailure) {
@@ -689,7 +697,15 @@ impl TestApp {
             "candidato #{} selecionado como criado",
             candidate.id
         ));
-        self.dialog = Some(TestDialog::ConfirmTestQa(false));
+        self.dialog = if self
+            .prep
+            .as_ref()
+            .is_none_or(|prep| prep.profile.profile.parent_transition.is_some())
+        {
+            Some(TestDialog::ConfirmTestQa(false))
+        } else {
+            None
+        };
         true
     }
 
@@ -711,26 +727,27 @@ impl TestApp {
             }
         };
         let team = get(4);
-        if team.trim().is_empty() {
-            return Err("team é obrigatório (Custom.Team).".to_owned());
-        }
         let program = get(5);
-        if program.trim().is_empty() {
-            return Err("programa é obrigatório (Custom.ProgramasAgrotrace).".to_owned());
-        }
         let assigned = get(1);
         if !optional_email_ok(assigned.as_str()) {
             return Err("responsável: informe um email válido ou deixe vazio.".to_owned());
         }
         let priority = parse_priority_text(get(3).as_str())?;
-        Ok(TestSettings {
+        let settings = TestSettings {
             area_path: get(0),
             assigned_to: assigned,
             iteration_path: get(2),
             priority,
             team,
             program,
-        })
+        };
+        let prep = self
+            .prep
+            .as_ref()
+            .ok_or_else(|| "preparação do perfil não está disponível.".to_owned())?;
+        test_card::validate_profile_settings(&prep.profile, &prep.metadata, &settings)
+            .map_err(|error| error.to_string())?;
+        Ok(settings)
     }
 }
 
@@ -944,7 +961,7 @@ fn initial_field_values(options: Option<&CliOptions>, prep: &TestCardPrep) -> [S
     let Some(options) = options else {
         return std::array::from_fn(|_| String::new());
     };
-    if let Ok(s) = TestSettings::from_cli_or_config(options, &prep.config, &prep.parent) {
+    if let Ok(s) = TestSettings::from_cli_or_profile(options, &prep.profile, &prep.parent) {
         let priority = if s.priority.fract() == 0.0 {
             format!("{:.0}", s.priority)
         } else {
@@ -961,27 +978,33 @@ fn initial_field_values(options: Option<&CliOptions>, prep: &TestCardPrep) -> [S
     } else {
         let area = match options.area_path.clone() {
             Some(v) => v,
-            None => prep.config.test_area_path.clone(),
+            None => prep.profile.profile.area_path.clone(),
         };
         let assigned = match options.assigned_to.clone() {
             Some(v) => v,
-            None => prep.config.test_assigned_to.clone(),
+            None => prep.profile.profile.assigned_to.clone(),
         };
         let iteration = match options.iteration_path.clone() {
             Some(v) => v,
-            None => test_card::work_item_field(&prep.parent, "System.IterationPath").to_owned(),
+            None => {
+                if prep.profile.profile.inherit_iteration_path {
+                    test_card::work_item_field(&prep.parent, "System.IterationPath").to_owned()
+                } else {
+                    String::new()
+                }
+            }
         };
         let priority = match options.priority.clone() {
             Some(v) => v,
-            None => "2".to_owned(),
+            None => prep.profile.profile.priority.to_string(),
         };
         let team = match options.team.clone() {
             Some(v) => v,
-            None => prep.config.test_team.clone(),
+            None => prep.profile.profile.team.clone(),
         };
         let program = match options.program.clone() {
             Some(v) => v,
-            None => prep.config.test_program.clone(),
+            None => prep.profile.profile.program.clone(),
         };
         [area, assigned, iteration, priority, team, program]
     }
@@ -1322,6 +1345,23 @@ fn settings_lines(app: &TestApp, inner: Rect, focused_panel: bool) -> Vec<Line<'
         .min(max_start);
     let end = (start + visible_count).min(FIELD_COUNT);
     let mut lines: Vec<Line> = Vec::new();
+    if let Some(prep) = &app.prep {
+        lines.push(Line::from(Span::styled(
+            format!(
+                "Perfil: {} · programa: {}",
+                prep.profile.name(),
+                prep.profile.program_field
+            ),
+            theme().accent,
+        )));
+        lines.push(Line::from(Span::styled(
+            format!(
+                "reviewer dev: {} · sprint: {}",
+                prep.profile.profile.reviewer_dev, prep.profile.profile.reviewer_sprint
+            ),
+            theme().muted,
+        )));
+    }
     if start > 0 {
         lines.push(Line::from(Span::styled(
             "↑ mais campos acima",
@@ -1330,7 +1370,14 @@ fn settings_lines(app: &TestApp, inner: Rect, focused_panel: bool) -> Vec<Line<'
     }
     for (i, slot) in app.fields.iter().enumerate().skip(start).take(end - start) {
         let focused = focused_panel && app.field_focus % FIELD_COUNT == i;
-        let label = field_label(i);
+        let dynamic_label = (i == TestSettingsField::Program.index())
+            .then(|| {
+                app.prep
+                    .as_ref()
+                    .map(|prep| format!("Programa ({}) *", prep.profile.program_field))
+            })
+            .flatten();
+        let label = dynamic_label.as_deref().unwrap_or_else(|| field_label(i));
         let marker = if focused { "▸ " } else { "  " };
         let field_error = app.error_field.is_some_and(|field| field.index() == i);
         let label_style = if focused {
@@ -1356,7 +1403,17 @@ fn settings_lines(app: &TestApp, inner: Rect, focused_panel: bool) -> Vec<Line<'
                 },
             ),
             Span::styled(label.to_owned(), label_style),
-            Span::styled(format!("  ·  {}", field_hint(i)), theme().muted),
+            Span::styled(
+                if i == TestSettingsField::Program.index() {
+                    dynamic_label.as_deref().map_or_else(
+                        || format!("  ·  {}", field_hint(i)),
+                        |value| format!("  ·  {value} (obrigatório)"),
+                    )
+                } else {
+                    format!("  ·  {}", field_hint(i))
+                },
+                theme().muted,
+            ),
         ]));
         let value = slot.value.clone();
         let cursor = slot.cursor;
@@ -2107,6 +2164,8 @@ pub(crate) async fn exercise_published_request_for_test(
         parent,
         pr_id: Some(context.published_pr.id.to_string()),
         settings: Some(context.settings.clone()),
+        profile: context.profile.clone(),
+        metadata: fixture_metadata(&context.profile),
         pr_changes: "changes remotas".to_owned(),
         examples_text: String::new(),
         prompt: "prompt remoto".to_owned(),
@@ -2989,6 +3048,41 @@ where
 }
 
 #[cfg(test)]
+fn fixture_metadata(
+    profile: &crate::features::process_profiles::ProfileSelection,
+) -> crate::features::process_profiles::ProfileMetadata {
+    use crate::azure::work_items::{
+        WorkItemFieldMetadata, WorkItemStateMetadata, WorkItemTypeMetadata,
+    };
+    crate::features::process_profiles::ProfileMetadata {
+        test_case_type: WorkItemTypeMetadata {
+            name: "Test Case".to_owned(),
+            reference_name: "Microsoft.TestCase".to_owned(),
+        },
+        test_case_fields: vec![
+            WorkItemFieldMetadata {
+                reference_name: "Custom.Team".to_owned(),
+                field_type: "String".to_owned(),
+                required: true,
+                default_value: None,
+                allowed_values: Vec::new(),
+            },
+            WorkItemFieldMetadata {
+                reference_name: profile.program_field.to_owned(),
+                field_type: "String".to_owned(),
+                required: true,
+                default_value: None,
+                allowed_values: Vec::new(),
+            },
+        ],
+        parent_type: "User Story".to_owned(),
+        parent_states: vec![WorkItemStateMetadata {
+            name: "Test QA".to_owned(),
+        }],
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use std::io::{Read, Write};
     use std::net::TcpListener;
@@ -2996,6 +3090,8 @@ mod tests {
     use std::thread::{JoinHandle, spawn};
 
     use super::*;
+    use crate::cli::{Command, OutputFlags};
+    use crate::features::process_profiles;
     use crate::git::{ChangeContext, GitContextFingerprint, RepositoryRemote};
     use ratatui::{
         DefaultTerminal, Terminal, TerminalOptions, Viewport, backend::TestBackend, layout::Rect,
@@ -3037,6 +3133,13 @@ mod tests {
             }
         }))
         .expect("snapshot do pai");
+        let config = crate::config::Config {
+            azure_pat: "pat".to_owned(),
+            test_team: "DevOps".to_owned(),
+            test_program: "Agrotrace".to_owned(),
+            ..crate::config::Config::default()
+        };
+        let profile = process_profiles::legacy_selection(&config, remote.clone());
         TestCardRequest::PublishedPr(crate::features::test_card::TestCardLaunchContext {
             published_pr: crate::azure::pull_requests::PublishedPr {
                 target: "dev".to_owned(),
@@ -3048,12 +3151,7 @@ mod tests {
             work_item: Some(parent),
             source_ref_name: "refs/heads/feature/11763-exemplo".to_owned(),
             target_ref_name: "refs/heads/dev".to_owned(),
-            config: crate::config::Config {
-                azure_pat: "pat".to_owned(),
-                test_team: "DevOps".to_owned(),
-                test_program: "Agrotrace".to_owned(),
-                ..crate::config::Config::default()
-            },
+            config,
             settings: TestSettings {
                 area_path: "project\\QA".to_owned(),
                 assigned_to: "qa@example.com".to_owned(),
@@ -3062,6 +3160,7 @@ mod tests {
                 team: "DevOps".to_owned(),
                 program: "Agrotrace".to_owned(),
             },
+            profile,
             fingerprint: GitContextFingerprint::default(),
         })
     }
@@ -3086,10 +3185,96 @@ mod tests {
             parent: context.work_item.expect("pai"),
             pr_id: Some(context.published_pr.id.to_string()),
             settings: Some(context.settings),
+            profile: context.profile.clone(),
+            metadata: fixture_metadata(&context.profile),
             pr_changes: "changes".to_owned(),
             examples_text: "- #5 Exemplo".to_owned(),
             prompt: "prompt com PR e refs".to_owned(),
         }
+    }
+
+    #[test]
+    fn review_should_show_selected_profile_and_settings() {
+        let prep = published_prep();
+        let mut app = TestApp::new();
+        app.on_generated(
+            prep,
+            "Card CheckMilk".to_owned(),
+            "## Objetivo\nValidar".to_owned(),
+            [
+                "area".to_owned(),
+                "qa@example.com".to_owned(),
+                "project\\Sprint 12".to_owned(),
+                "2".to_owned(),
+                "DevOps".to_owned(),
+                "Agrotrace".to_owned(),
+            ],
+        );
+        let rendered = format!("{:?}", settings_lines(&app, Rect::new(0, 0, 100, 30), true));
+        assert!(rendered.contains("Agrotrace"));
+        assert!(rendered.contains("Custom.ProgramasAgrotrace"));
+        assert_eq!(app.fields[4].value, "DevOps");
+    }
+
+    #[test]
+    fn create_failure_should_keep_snapshot_and_require_explicit_retry() {
+        let prep = published_prep();
+        let mut app = TestApp::new();
+        app.on_generated(
+            prep,
+            "Card".to_owned(),
+            "## Objetivo\nX".to_owned(),
+            [
+                String::new(),
+                String::new(),
+                String::new(),
+                "2".to_owned(),
+                "DevOps".to_owned(),
+                "Agrotrace".to_owned(),
+            ],
+        );
+        app.on_create_failed(&CreateFailure {
+            message: "falha".to_owned(),
+            kind: CreateFailureKind::OutcomeUnknown,
+            field: None,
+        });
+        assert!(
+            app.prep
+                .as_ref()
+                .is_some_and(|prep| prep.profile.name() == "Agrotrace")
+        );
+        assert_eq!(app.create_recovery, CreateRecoveryState::Available);
+        assert!(app.dialog.is_some());
+    }
+
+    #[test]
+    fn no_create_should_not_write_and_review_should_show_final_profile() {
+        let options = CliOptions {
+            command: Command::Test,
+            source: None,
+            targets: Vec::new(),
+            resume: false,
+            session: None,
+            work_item: None,
+            provider: None,
+            model: None,
+            base_url: None,
+            api_key: None,
+            create: false,
+            no_create: true,
+            pr: None,
+            area_path: None,
+            assigned_to: None,
+            iteration_path: None,
+            priority: None,
+            team: None,
+            program: None,
+            examples: None,
+            output: OutputFlags::default(),
+            completion_shell: None,
+        };
+        let app = TestApp::for_request(&TestCardRequest::Cli(options));
+        assert!(matches!(app.create_mode, CreateMode::ReviewOnly));
     }
 
     fn spawn_http_error_server(

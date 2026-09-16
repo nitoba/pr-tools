@@ -8,8 +8,9 @@
 use std::path::Path;
 
 use crate::config::{
-    COMPATIBLE_REASONING, Config, DEFAULT_BASE_URL, DEFAULT_COMPATIBLE_MODEL, DEFAULT_TEMPLATE,
-    OPENCODE_MODEL, OPENCODE_REASONING, config_paths,
+    AGROTRACE_PROFILE, COMPATIBLE_REASONING, Config, DEFAULT_BASE_URL, DEFAULT_COMPATIBLE_MODEL,
+    DEFAULT_TEMPLATE, OPENCODE_MODEL, OPENCODE_REASONING, ProcessProfile, RepositoryProfileBinding,
+    config_paths,
 };
 use crate::error::{AppError, Result};
 
@@ -30,6 +31,16 @@ pub const REASONING_LEVELS: &[(&str, &str)] = &[
     ("high", "reasoning aprofundado"),
     ("xhigh", "máxima profundidade"),
 ];
+
+/// Valida o conjunto fechado de schemas expostos pelo wizard.
+#[must_use]
+pub fn validate_process_profile_name(name: &str) -> Option<String> {
+    if ProcessProfile::named(name).is_some() {
+        None
+    } else {
+        Some("schema de perfil inválido; use Agrotrace ou CheckMilk".to_owned())
+    }
+}
 
 /// Valida email opcional — espelha `validateOptionalEmail`.
 ///
@@ -171,6 +182,9 @@ impl InitDraft {
             test_team: or_default(&self.test_team, "DevOps"),
             test_program: or_default(&self.test_program, "Agrotrace"),
             template: current_template(),
+            profiles: Vec::new(),
+            bindings: Vec::new(),
+            default_profile: String::new(),
         }
     }
 
@@ -238,10 +252,100 @@ pub struct InitResult {
 ///
 /// Retorna [`AppError`] se não conseguir escrever os arquivos.
 pub fn save_draft(draft: &InitDraft) -> Result<InitResult> {
+    let previous = crate::config::load_config().unwrap_or_default();
+    let profile = if previous.default_profile.trim().is_empty() {
+        AGROTRACE_PROFILE
+    } else {
+        previous.default_profile.as_str()
+    };
+    let transition = previous
+        .profiles
+        .iter()
+        .find(|candidate| candidate.name == profile)
+        .map_or(Some("Test QA"), |candidate| {
+            candidate.parent_transition.as_deref()
+        });
+    save_draft_for_profile_with_transition(draft, profile, transition)
+}
+
+/// Salva o draft e atualiza o perfil fixo escolhido pelo wizard.
+///
+/// # Errors
+///
+/// Retorna [`AppError`] se o perfil for inválido ou não conseguir escrever os
+/// arquivos de configuração.
+pub fn save_draft_for_profile(draft: &InitDraft, profile_name: &str) -> Result<InitResult> {
+    save_draft_for_profile_with_transition(draft, profile_name, Some("Test QA"))
+}
+
+/// Salva o perfil escolhido incluindo a transição opcional do Work Item pai.
+///
+/// # Errors
+///
+/// Retorna [`AppError`] se o perfil for inválido, a configuração não passar na
+/// validação ou não conseguir escrever os arquivos.
+pub fn save_draft_for_profile_with_transition(
+    draft: &InitDraft,
+    profile_name: &str,
+    parent_transition: Option<&str>,
+) -> Result<InitResult> {
     let paths = config_paths();
     std::fs::create_dir_all(&paths.directory)?;
     let previous = crate::config::load_config().unwrap_or_default();
-    let cfg = draft.to_config(&previous.azure_pat, &previous.api_key);
+    let mut cfg = draft.to_config(&previous.azure_pat, &previous.api_key);
+    // O wizard antigo edita somente defaults globais; nunca pode apagar
+    // perfis/bindings já configurados. Configurações sem a seção nova recebem
+    // a migração legada no mesmo salvamento.
+    cfg.profiles = previous.profiles;
+    cfg.bindings = previous.bindings;
+    cfg.default_profile = previous.default_profile;
+    cfg.migrate_legacy_profiles();
+    if let Some(message) = validate_process_profile_name(profile_name) {
+        return Err(AppError::Config { message });
+    }
+    let mut profile = ProcessProfile::named(profile_name).ok_or_else(|| AppError::Config {
+        message: "schema de perfil inválido; use Agrotrace ou CheckMilk".to_owned(),
+    })?;
+    profile.area_path.clone_from(&cfg.test_area_path);
+    profile.assigned_to.clone_from(&cfg.test_assigned_to);
+    profile.team.clone_from(&cfg.test_team);
+    profile.program.clone_from(&cfg.test_program);
+    profile.reviewer_dev.clone_from(&cfg.reviewer_dev);
+    profile.reviewer_sprint.clone_from(&cfg.reviewer_sprint);
+    profile.parent_transition = parent_transition
+        .map(str::trim)
+        .filter(|transition| !transition.is_empty())
+        .map(str::to_owned);
+    if let Some(existing) = cfg
+        .profiles
+        .iter_mut()
+        .find(|existing| existing.name == profile.name)
+    {
+        *existing = profile;
+    } else {
+        cfg.profiles.push(profile);
+    }
+    profile_name.clone_into(&mut cfg.default_profile);
+    if let Some(remote) = crate::git::collect(None)
+        .ok()
+        .and_then(|context| context.remote)
+    {
+        if let Some(binding) = cfg.bindings.iter_mut().find(|binding| {
+            binding.organization == remote.organization
+                && binding.project == remote.project
+                && binding.repository == remote.repository
+        }) {
+            profile_name.clone_into(&mut binding.profile);
+        } else {
+            cfg.bindings.push(RepositoryProfileBinding {
+                profile: profile_name.to_owned(),
+                organization: remote.organization,
+                project: remote.project,
+                repository: remote.repository,
+            });
+        }
+    }
+    crate::features::process_profiles::validate_config(&cfg)?;
 
     // config.json sem o PAT (fica só no .env), como no Dart.
     let mut json = serde_json::to_value(&cfg).map_err(|e| AppError::Config {
@@ -381,6 +485,14 @@ mod tests {
         assert_eq!(cfg.test_team, "DevOps");
         assert_eq!(cfg.test_program, "Agrotrace");
         assert_eq!(cfg.codex_model, crate::config::CODEX_MODEL);
+    }
+
+    #[test]
+    fn unsupported_profile_schema_should_fail_before_save() {
+        let error = validate_process_profile_name("OutroProcesso")
+            .expect("schema fora do conjunto deveria falhar");
+        assert!(error.contains("Agrotrace"));
+        assert!(error.contains("CheckMilk"));
     }
 
     #[test]
