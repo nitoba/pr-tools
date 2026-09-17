@@ -11,8 +11,7 @@ crates/prt/
 ├── Cargo.toml
 ├── build.rs
 ├── src/
-│   ├── main.rs          # entrypoint mínimo
-│   ├── application/     # composição do executável e dispatch dos comandos
+│   ├── main.rs          # entrada do executável e dispatch dos comandos
 │   ├── lib.rs           # fachada pública e mapa das fronteiras internas
 │   ├── cli.rs           # contrato/parsing da CLI
 │   ├── config/          # modelo, persistência e migração de configuração
@@ -46,13 +45,9 @@ Contém os casos de uso do `prt`: preparar e gerar descrições, criar Test Case
 
 Contém somente apresentação e interação de terminal. Pode chamar features e adaptar seus resultados para a interface, mas regras reutilizáveis de domínio ou integração não devem nascer aqui.
 
-### `application`
-
-É a camada de composição do executável. Inicializa tracing, interpreta o resultado da CLI e faz o dispatch para os fluxos apropriados. Pode coordenar `features` e `tui`, mas não deve concentrar regras reutilizáveis de negócio. A orquestração existente foi movida para cá sem alteração funcional para manter esta refatoração segura.
-
 ### `cli` e `main`
 
-`cli.rs` define o contrato de linha de comando. `main.rs` deve permanecer um entrypoint mínimo que apenas transfere o controle para `application`.
+`cli.rs` define o contrato de linha de comando. `main.rs` é a composição do executável: inicialização, parsing e dispatch. Novas regras de negócio devem preferencialmente entrar em `features/`, não crescer no entrypoint.
 
 ## Compatibilidade de módulos
 
@@ -64,9 +59,8 @@ A refatoração mantém a API interna/pública existente (`prt::ai`, `prt::azure
 2. Casos de uso entram em `features/` e recebem/compõem as integrações necessárias.
 3. Código visual e estado de widgets permanecem em `tui/`.
 4. Código transversal só entra em `core/` quando é realmente compartilhado e não representa um caso de uso.
-5. `main.rs` permanece mínimo; composição e dispatch pertencem a `application/`.
-6. Regras reutilizáveis descobertas em `application/` devem ser extraídas para `features/` em mudanças focadas, com testes próprios.
-7. A separação em novos crates deve acontecer quando uma fronteira passar a ter ciclo de vida, testes ou reutilização independentes. Não criar crates apenas para reduzir o tamanho de arquivos.
+5. `main.rs` deve continuar sendo uma camada de composição; lógica nova deve ser empurrada para módulos de feature.
+6. A separação em novos crates deve acontecer quando uma fronteira passar a ter ciclo de vida, testes ou reutilização independentes. Não criar crates apenas para reduzir o tamanho de arquivos.
 
 ## Validação
 
