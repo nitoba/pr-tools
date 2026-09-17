@@ -236,7 +236,7 @@ prt update
 
 As releases são preparadas automaticamente pelo `release-plz`, usando o
 `git-cliff` para atualizar o [CHANGELOG.md](CHANGELOG.md). O fluxo cria uma
-Release PR com o incremento de versão em `apps/rust/Cargo.toml`, o changelog e,
+Release PR com o incremento de versão em `crates/prt/Cargo.toml`, o changelog e,
 após o merge, uma tag `vX.Y.Z` e uma GitHub Release em modo draft. O workflow
 de release executa os testes, compila e anexa os binários para Linux, macOS e
 Windows, gera uma descrição humanizada com um endpoint OpenAI-compatible e só
@@ -278,16 +278,23 @@ execute `git-cliff --config git-cliff.toml -o CHANGELOG.md`.
 
 ## Estrutura do projeto
 
-A aplicação Rust com Ratatui fica em `apps/rust/`:
+A aplicação Rust fica em `crates/prt/`, organizada por fronteiras arquiteturais explícitas:
 
 ```text
-apps/
-└── rust/   # aplicação prt
+crates/prt/
+├── src/
+│   ├── core/          # erros e primitivas transversais
+│   ├── integrations/  # AI, Azure DevOps e Git
+│   ├── features/      # casos de uso e orquestração
+│   ├── tui/           # interface Ratatui
+│   ├── config/        # configuração e migração
+│   ├── cli.rs         # contrato da linha de comando
+│   ├── lib.rs         # fachada pública dos módulos
+│   └── main.rs        # entrypoint e dispatch
+└── tests/             # testes de integração
 ```
 
-A raiz contém a configuração do repositório, a automação em `scripts/`,
-a documentação e os workflows do GitHub. O comando continua sendo `prt`
-e a configuração permanece em `~/.config/pr-tools`.
+Veja [ARCHITECTURE.md](ARCHITECTURE.md) para as responsabilidades de cada camada e as regras de evolução. A raiz contém a configuração do workspace, a automação em `scripts/`, a documentação e os workflows do GitHub. O comando continua sendo `prt` e a configuração permanece em `~/.config/pr-tools`.
 
 Os instaladores principais são `scripts/install.sh` e `scripts/install.ps1`.
 Os aliases `scripts/install-rust.sh` e `scripts/install-rust.ps1` continuam
@@ -296,13 +303,13 @@ disponíveis para compatibilidade com instalações existentes.
 ## Desenvolvimento
 
 ```bash
-cargo fmt --manifest-path apps/rust/Cargo.toml -- --check
-cargo clippy --manifest-path apps/rust/Cargo.toml --locked --all-targets -- -D clippy::correctness
-cargo test --manifest-path apps/rust/Cargo.toml --locked
-cargo build --manifest-path apps/rust/Cargo.toml --locked --all-targets
+cargo fmt --manifest-path crates/prt/Cargo.toml -- --check
+cargo clippy --manifest-path crates/prt/Cargo.toml --locked --all-targets -- -D clippy::correctness
+cargo test --manifest-path crates/prt/Cargo.toml --locked
+cargo build --manifest-path crates/prt/Cargo.toml --locked --all-targets
 ```
 
-`./scripts/build-rust.sh` gera `apps/rust/dist/prt-rust-<plataforma>` para o
+`./scripts/build-rust.sh` gera `crates/prt/dist/prt-rust-<plataforma>` para o
 host atual, depois de executar as verificações Rust por padrão. A plataforma
 pode ser informada explicitamente, desde que corresponda ao host, por exemplo
 `./scripts/build-rust.sh linux-x64`.
@@ -318,7 +325,7 @@ autenticados separadamente na máquina do usuário.
 ### Snapshots da TUI Rust
 
 Os testes de renderização usam o Insta para comparar a interface com os arquivos
-`.snap` em `apps/rust/src/tui/snapshots/`. Essas referências fazem parte dos
+`.snap` em `crates/prt/src/tui/snapshots/`. Essas referências fazem parte dos
 testes e devem ser versionadas junto com mudanças intencionais na interface.
 Apenas os candidatos `.snap.new`, ainda pendentes de revisão, são ignorados.
 
@@ -330,15 +337,15 @@ repositório (Bash/Zsh):
 cargo install cargo-insta --locked
 
 # Gere candidatos. Diferenças ou referências ausentes fazem esta etapa falhar.
-INSTA_UPDATE=new cargo test --manifest-path apps/rust/Cargo.toml --locked
+INSTA_UPDATE=new cargo test --manifest-path crates/prt/Cargo.toml --locked
 
 # Revise os diffs e aceite apenas as mudanças esperadas.
-(cd apps/rust && cargo insta review)
+(cd crates/prt && cargo insta review)
 
 # Confirme que a suíte passa sem gerar ou aceitar referências automaticamente.
-INSTA_UPDATE=no cargo test --manifest-path apps/rust/Cargo.toml --locked
+INSTA_UPDATE=no cargo test --manifest-path crates/prt/Cargo.toml --locked
 
-git add apps/rust/src/tui/snapshots/
+git add crates/prt/src/tui/snapshots/
 ```
 
 Inclua os `.snap` revisados no mesmo commit da mudança visual. Não remova nem
