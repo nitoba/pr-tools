@@ -1,5 +1,5 @@
-# Source compatibility fixture
+# Source-path compatibility
 
-This directory is not a runtime Azure integration module. The implementation lives in `../integrations/azure/`.
+This directory is not a runtime Azure integration boundary. The implementation lives in `../integrations/azure/`.
 
-`features/update_pull_request.rs` currently contains a source-level regression test that reads `../azure/pull_requests.rs` with `include_str!`. The file here reuses the exact implementation blob so that the architectural move does not change behavior or force an unrelated rewrite of that regression test. A future focused test cleanup can replace the source inspection with behavioral assertions and remove this compatibility directory.
+`features/update_pull_request.rs` contains a source-level regression test that still reads `../azure/pull_requests.rs` with `include_str!`. The `pull_requests.rs` entry here is therefore a Git symlink to the real integration source. It preserves that existing test without duplicating or weakening the implementation. A future focused test cleanup can replace the source-path assertion with behavioral coverage and remove this compatibility path.
