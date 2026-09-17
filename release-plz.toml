@@ -1,4 +1,4 @@
-# Release configuration for the single Rust binary in apps/rust/.
+# Release configuration for the Rust CLI package in crates/prt/.
 # release-plz uses git-cliff to update CHANGELOG.md.
 
 [workspace]

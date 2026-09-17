@@ -20,13 +20,13 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Format
-        run: cargo fmt --manifest-path apps/rust/Cargo.toml -- --check
+        run: cargo fmt --manifest-path crates/prt/Cargo.toml -- --check
 
       - name: Clippy
-        run: cargo clippy --manifest-path apps/rust/Cargo.toml --locked --all-targets -- -D clippy::correctness
+        run: cargo clippy --manifest-path crates/prt/Cargo.toml --locked --all-targets -- -D clippy::correctness
 
       - name: Test
-        run: cargo test --manifest-path apps/rust/Cargo.toml --locked
+        run: cargo test --manifest-path crates/prt/Cargo.toml --locked
 
       - name: Build native artifact
-        run: cargo build --manifest-path apps/rust/Cargo.toml --locked --all-targets
+        run: cargo build --manifest-path crates/prt/Cargo.toml --locked --all-targets
