@@ -19,13 +19,13 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Format
-        run: cargo fmt --manifest-path apps/rust/Cargo.toml -- --check
+        run: cargo fmt --manifest-path crates/prt/Cargo.toml -- --check
 
       - name: Clippy
-        run: cargo clippy --manifest-path apps/rust/Cargo.toml --locked --all-targets -- -D clippy::correctness
+        run: cargo clippy --manifest-path crates/prt/Cargo.toml --locked --all-targets -- -D clippy::correctness
 
       - name: Test
-        run: cargo test --manifest-path apps/rust/Cargo.toml --locked
+        run: cargo test --manifest-path crates/prt/Cargo.toml --locked
 
   build:
     needs: rust-checks
@@ -63,20 +63,20 @@ jobs:
 
       - name: Stage primary Rust artifact
         shell: bash
-        run: cp "apps/rust/dist/${{ matrix.rust_asset }}" "apps/rust/dist/${{ matrix.primary_asset }}"
+        run: cp "crates/prt/dist/${{ matrix.rust_asset }}" "crates/prt/dist/${{ matrix.primary_asset }}"
 
       - name: Upload primary Rust artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.primary_asset }}
-          path: apps/rust/dist/${{ matrix.primary_asset }}
+          path: crates/prt/dist/${{ matrix.primary_asset }}
           if-no-files-found: error
 
       - name: Upload Rust compatibility artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.rust_asset }}
-          path: apps/rust/dist/${{ matrix.rust_asset }}
+          path: crates/prt/dist/${{ matrix.rust_asset }}
           if-no-files-found: error
 
   release:

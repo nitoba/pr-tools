@@ -2,11 +2,11 @@ pre-commit:
   commands:
     format:
       glob: "**/*.rs"
-      run: cargo fmt --manifest-path apps/rust/Cargo.toml -- --check
+      run: cargo fmt --manifest-path crates/prt/Cargo.toml -- --check
     analyze:
-      run: cargo clippy --manifest-path apps/rust/Cargo.toml --locked --all-targets -- -D clippy::correctness
+      run: cargo clippy --manifest-path crates/prt/Cargo.toml --locked --all-targets -- -D clippy::correctness
 
 pre-push:
   commands:
     rust-test:
-      run: cargo test --manifest-path apps/rust/Cargo.toml --locked
+      run: cargo test --manifest-path crates/prt/Cargo.toml --locked

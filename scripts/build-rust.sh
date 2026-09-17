@@ -5,14 +5,14 @@
 #
 # Alvos: linux-x64, linux-arm64, macos-arm64, windows-x64.
 # O alvo precisa ser o host atual (sem cross por padrão).
-# Saída: apps/rust/dist/prt-rust-<alvo>[.exe]
+# Saída: crates/prt/dist/prt-rust-<alvo>[.exe]
 #
 # Etapas: cargo fmt --check, clippy (-D correctness), test, build --release.
 # Use --no-verify para pular fmt/clippy/test (build puro).
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-APP_DIR="$REPO_ROOT/apps/rust"
+APP_DIR="$REPO_ROOT/crates/prt"
 cd "$REPO_ROOT"
 
 usage() {

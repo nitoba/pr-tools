@@ -1,8 +1,8 @@
 //! Build script mínimo: expõe o hash do commit via `PRT_COMMIT`.
 //!
 //! Usado pelo `--version` (`option_env!("PRT_COMMIT")`).
-//! O crate vive em `apps/rust/`, então o Git é consultado a partir da raiz do
-//! monorepo. Sem lógica de build — só resolve o hash, com fallback `unknown`.
+//! O crate vive em `crates/prt/`, então o Git é consultado a partir da raiz do
+//! workspace. Sem lógica de build — só resolve o hash, com fallback `unknown`.
 
 use std::path::Path;
 use std::process::Command;
