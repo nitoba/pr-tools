@@ -564,7 +564,7 @@ async fn inspect_git(source: Option<&str>, checks: &mut Vec<Check>) -> GitInspec
 async fn inspect_git_context(source: Option<&str>, checks: &mut Vec<Check>) -> Option<String> {
     let owned = source.map(str::to_owned);
     let collected =
-        tokio::task::spawn_blocking(move || crate::git::collect(owned.as_deref())).await;
+        tokio::task::spawn_blocking(move || crate::git::collect(owned.as_deref(), &[])).await;
     match collected {
         Ok(Ok(ctx)) => {
             let lines = ctx.diff_original_lines;

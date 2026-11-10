@@ -198,7 +198,7 @@ pub fn inspect_with_migration(
         config::load_config_without_migration()?
     };
     process_profiles::validate_config(&config)?;
-    let change = git::collect(source)?;
+    let change = git::collect(source, &[])?;
     let Some(remote) = change.remote else {
         return Ok(ProfileDecision::NoRemote { config });
     };
