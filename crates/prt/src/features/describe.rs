@@ -80,8 +80,37 @@ pub struct DescribePrep {
     pub fingerprint: GitContextFingerprint,
     /// Perfil selecionado antes da geração; permanece congelado no handoff.
     pub profile: Option<ProfileSelection>,
+    /// PRs concluídos que tornam esta geração uma continuação.
+    pub follow_up: Option<FollowUp>,
     /// Prompt de usuário.
     pub prompt: String,
+}
+
+/// Continuação de PRs já concluídos da mesma branch.
+///
+/// Quando presente, diff, log e prompt cobrem somente as mudanças feitas
+/// depois de `base_commit`, e não tudo que a branch já entregou.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FollowUp {
+    /// Commit a partir do qual as mudanças são descritas.
+    pub base_commit: String,
+    /// PRs concluídos, um por target.
+    pub previous: Vec<ai::PreviousPullRequest>,
+}
+
+impl FollowUp {
+    /// Rótulo para preparação, logs e saída não interativa.
+    #[must_use]
+    pub fn display_label(&self) -> String {
+        let previous = self
+            .previous
+            .iter()
+            .map(|pr| format!("#{} ({})", pr.id, pr.target))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let short: String = self.base_commit.chars().take(8).collect();
+        format!("continuação do PR {previous} · mudanças desde {short}")
+    }
 }
 
 /// Prepara config + contexto + prompt.
@@ -115,7 +144,7 @@ pub async fn prepare_with_profile(
         options.base_url.as_deref(),
         options.api_key.as_deref(),
     );
-    let context = git::collect(options.source.as_deref(), &options.targets)?;
+    let mut context = git::collect(options.source.as_deref(), &options.targets)?;
     let profile = match selected_profile {
         Some(profile) => {
             if context.remote.as_ref() != Some(&profile.remote) {
@@ -150,9 +179,13 @@ pub async fn prepare_with_profile(
         &work_item_id,
     )
     .await;
+    let follow_up = detect_follow_up(&mut context, &config.azure_pat, &targets).await;
     let fingerprint =
         git::GitContextFingerprint::capture(&context.branch, &targets).unwrap_or_default();
-    let prompt = ai::build_describe_prompt(
+    let follow_up_section = follow_up.as_ref().map_or_else(String::new, |follow_up| {
+        ai::build_follow_up_section(&follow_up.previous)
+    });
+    let describe_prompt = ai::build_describe_prompt(
         &context.branch,
         &targets,
         &work_item_id,
@@ -160,6 +193,7 @@ pub async fn prepare_with_profile(
         &context.log,
         &context.diff,
     );
+    let prompt = format!("{follow_up_section}{describe_prompt}");
     Ok(DescribePrep {
         config,
         context,
@@ -169,7 +203,81 @@ pub async fn prepare_with_profile(
         work_item,
         fingerprint,
         profile,
+        follow_up,
         prompt,
+    })
+}
+
+/// Detecta um PR de continuação e recorta o contexto Git para ele.
+///
+/// A detecção é best-effort: sem PAT, sem remote ou com falha do Azure, a
+/// geração segue com o contexto completo da branch.
+async fn detect_follow_up(
+    context: &mut ChangeContext,
+    pat: &str,
+    targets: &[String],
+) -> Option<FollowUp> {
+    let remote = context.remote.clone()?;
+    let client = azure::client_for_with_timeout(Some(&remote), pat, TUI_AZURE_TIMEOUT).ok()?;
+    let previous = completed_pull_requests(&client, &remote, &context.source_ref, targets).await?;
+    follow_up_from(context, previous, git::narrow_to_follow_up)
+}
+
+/// Busca o PR concluído mais recente de cada target.
+///
+/// Retorna `None` quando algum target nunca recebeu esta branch: ele precisa
+/// da descrição completa, e a mesma descrição é publicada em todos. Targets
+/// que só têm um PR ativo não entram na conta, pois não recebem um PR novo.
+async fn completed_pull_requests(
+    client: &azure::AzureClient,
+    remote: &git::RepositoryRemote,
+    source_ref: &str,
+    targets: &[String],
+) -> Option<Vec<pull_requests::CompletedPullRequest>> {
+    let mut previous = Vec::new();
+    for target in targets {
+        let history = pull_requests::pull_request_history(
+            client,
+            &remote.project,
+            &remote.repository,
+            source_ref,
+            &format!("refs/heads/{target}"),
+        )
+        .await
+        .map_err(|error| {
+            info!(target, error = %safe_azure_error(&error), "histórico de PRs indisponível");
+        })
+        .ok()?;
+        match history.last_completed {
+            Some(pull_request) => previous.push(pull_request),
+            None if history.has_active => {}
+            None => return None,
+        }
+    }
+    (!previous.is_empty()).then_some(previous)
+}
+
+fn follow_up_from(
+    context: &mut ChangeContext,
+    previous: Vec<pull_requests::CompletedPullRequest>,
+    narrow: impl FnOnce(&mut ChangeContext, &[String]) -> Option<String>,
+) -> Option<FollowUp> {
+    let merged_commits: Vec<String> = previous
+        .iter()
+        .map(|pull_request| pull_request.merged_source_commit.clone())
+        .collect();
+    let base_commit = narrow(context, &merged_commits)?;
+    Some(FollowUp {
+        base_commit,
+        previous: previous
+            .into_iter()
+            .map(|pull_request| ai::PreviousPullRequest {
+                id: pull_request.id,
+                target: pull_request.target,
+                title: pull_request.title,
+                description: pull_request.description,
+            })
+            .collect(),
     })
 }
 
@@ -467,6 +575,62 @@ mod tests {
         let remote = None;
         let status = load_functional_context(remote, "", "").await;
         assert_eq!(status, FunctionalContextStatus::NotRequested);
+    }
+
+    fn completed(id: i64, target: &str, commit: &str) -> pull_requests::CompletedPullRequest {
+        pull_requests::CompletedPullRequest {
+            target: target.to_owned(),
+            id,
+            title: format!("PR {id}"),
+            description: String::new(),
+            merged_source_commit: commit.to_owned(),
+        }
+    }
+
+    fn feature_context() -> ChangeContext {
+        ChangeContext {
+            branch: "feature/42".to_owned(),
+            source_ref: "refs/heads/feature/42".to_owned(),
+            base_branch: "origin/sprint/12".to_owned(),
+            sprint_branch: "sprint/12".to_owned(),
+            diff: "diff completo".to_owned(),
+            diff_original_lines: 1,
+            log: "log completo".to_owned(),
+            work_item_id: "42".to_owned(),
+            remote: None,
+        }
+    }
+
+    #[test]
+    fn follow_up_should_describe_only_changes_after_completed_pull_requests() {
+        let mut context = feature_context();
+        let follow_up = follow_up_from(
+            &mut context,
+            vec![completed(12, "dev", "abcdef1234567890")],
+            |context, commits| {
+                assert_eq!(commits, ["abcdef1234567890"]);
+                context.diff = "diff novo".to_owned();
+                Some(commits[0].clone())
+            },
+        )
+        .expect("continuação");
+
+        assert_eq!(context.diff, "diff novo");
+        assert_eq!(follow_up.previous[0].id, 12);
+        assert_eq!(
+            follow_up.display_label(),
+            "continuação do PR #12 (dev) · mudanças desde abcdef12"
+        );
+    }
+
+    #[test]
+    fn follow_up_should_be_skipped_when_git_cannot_narrow_the_context() {
+        let mut context = feature_context();
+        let follow_up =
+            follow_up_from(&mut context, vec![completed(12, "dev", "abc")], |_, _| None);
+
+        assert_eq!(follow_up, None);
+        assert_eq!(context.diff, "diff completo");
     }
 
     #[test]

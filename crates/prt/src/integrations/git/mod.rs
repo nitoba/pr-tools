@@ -572,6 +572,64 @@ where
     })
 }
 
+/// Restringe o contexto às mudanças feitas depois de PRs já concluídos.
+///
+/// `merged_commits` são os commits da origem entregues por cada PR concluído
+/// (um por target). O mais antigo vira a nova base, de modo que diff e log
+/// cubram tudo que ainda falta em algum target. Retorna a base usada.
+///
+/// O contexto fica intacto e `None` é retornado quando o recorte não é
+/// confiável: commit ausente no clone, fora do histórico da branch (rebase ou
+/// force-push) ou igual à ponta da branch (nada novo desde o PR anterior).
+pub fn narrow_to_follow_up(
+    context: &mut ChangeContext,
+    merged_commits: &[String],
+) -> Option<String> {
+    narrow_to_follow_up_with(context, merged_commits, git)
+}
+
+pub(crate) fn narrow_to_follow_up_with<F>(
+    context: &mut ChangeContext,
+    merged_commits: &[String],
+    mut command: F,
+) -> Option<String>
+where
+    F: FnMut(&[&str]) -> Result<String>,
+{
+    let branch = context.branch.clone();
+    let mut base: Option<&str> = None;
+    for commit in merged_commits {
+        let commit = commit.trim();
+        if commit.is_empty() || !commit.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return None;
+        }
+        command(&["merge-base", "--is-ancestor", commit, &branch]).ok()?;
+        base = match base {
+            Some(current) if command(&["merge-base", "--is-ancestor", current, commit]).is_ok() => {
+                Some(current)
+            }
+            _ => Some(commit),
+        };
+    }
+    let base = base?;
+    let base_oid = command(&["rev-parse", "--verify", &format!("{base}^{{commit}}")]).ok()?;
+    let tip_oid = command(&["rev-parse", "--verify", &format!("{branch}^{{commit}}")]).ok()?;
+    if base_oid == tip_oid {
+        return None;
+    }
+    let diff_raw = command(&["diff", base, &branch]).ok()?;
+    let log = command(&["log", "--oneline", "-50", &format!("{base}..{branch}")]).ok()?;
+    context.diff_original_lines = diff_raw.lines().count();
+    context.diff = diff_raw
+        .lines()
+        .take(MAX_DIFF_LINES)
+        .collect::<Vec<_>>()
+        .join("\n");
+    context.log = log;
+    base.clone_into(&mut context.base_branch);
+    Some(base.to_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -737,6 +795,89 @@ mod tests {
         assert!(message.contains("sprint/13"), "{message}");
         assert!(message.contains("git fetch"), "{message}");
         assert!(!calls.iter().any(|call| call.starts_with("diff")));
+    }
+
+    fn follow_up_context() -> ChangeContext {
+        ChangeContext {
+            branch: "feature/42".to_owned(),
+            source_ref: "refs/heads/feature/42".to_owned(),
+            base_branch: "origin/sprint/12".to_owned(),
+            sprint_branch: "sprint/12".to_owned(),
+            diff: "diff completo".to_owned(),
+            diff_original_lines: 1,
+            log: "log completo".to_owned(),
+            work_item_id: "42".to_owned(),
+            remote: None,
+        }
+    }
+
+    /// Histórico linear `aaa -> bbb -> ccc` com a branch apontando para `tip`.
+    fn follow_up_git(tip: &'static str) -> impl FnMut(&[&str]) -> Result<String> {
+        let order = |oid: &str| ["aaa", "bbb", "ccc"].iter().position(|known| *known == oid);
+        move |args: &[&str]| {
+            let failure = || {
+                Err(AppError::Git {
+                    message: format!("falhou: {}", args.join(" ")),
+                })
+            };
+            let resolve = |name: &str| {
+                let name = name.trim_end_matches("^{commit}");
+                if name == "feature/42" { tip } else { name }.to_owned()
+            };
+            match args {
+                ["merge-base", "--is-ancestor", ancestor, descendant] => {
+                    match (order(&resolve(ancestor)), order(&resolve(descendant))) {
+                        (Some(left), Some(right)) if left <= right => Ok(String::new()),
+                        _ => failure(),
+                    }
+                }
+                ["rev-parse", "--verify", name] => Ok(resolve(name)),
+                ["diff", base, branch] => Ok(format!("diff {base} {branch}\nlinha")),
+                ["log", "--oneline", "-50", range] => Ok(format!("log {range}")),
+                _ => failure(),
+            }
+        }
+    }
+
+    #[test]
+    fn follow_up_should_diff_only_changes_after_the_merged_commit() {
+        let mut context = follow_up_context();
+        let base =
+            narrow_to_follow_up_with(&mut context, &["bbb".to_owned()], follow_up_git("ccc"));
+
+        assert_eq!(base.as_deref(), Some("bbb"));
+        assert_eq!(context.diff, "diff bbb feature/42\nlinha");
+        assert_eq!(context.diff_original_lines, 2);
+        assert_eq!(context.log, "log bbb..feature/42");
+        assert_eq!(context.base_branch, "bbb");
+    }
+
+    #[test]
+    fn follow_up_should_use_oldest_merged_commit_across_targets() {
+        for commits in [["bbb", "aaa"], ["aaa", "bbb"]] {
+            let mut context = follow_up_context();
+            let commits = commits.map(str::to_owned);
+            let base = narrow_to_follow_up_with(&mut context, &commits, follow_up_git("ccc"));
+            assert_eq!(base.as_deref(), Some("aaa"));
+        }
+    }
+
+    #[test]
+    fn follow_up_should_keep_full_context_when_narrowing_is_not_reliable() {
+        // Commit fora do histórico (rebase), nada novo desde o PR e sem PRs.
+        for (commits, tip) in [
+            (vec!["zzz".to_owned()], "ccc"),
+            (vec!["0ff".to_owned()], "ccc"),
+            (vec!["ccc".to_owned()], "ccc"),
+            (Vec::new(), "ccc"),
+        ] {
+            let mut context = follow_up_context();
+            let base = narrow_to_follow_up_with(&mut context, &commits, follow_up_git(tip));
+            assert_eq!(base, None, "{commits:?}");
+            assert_eq!(context.diff, "diff completo");
+            assert_eq!(context.log, "log completo");
+            assert_eq!(context.base_branch, "origin/sprint/12");
+        }
     }
 
     #[test]

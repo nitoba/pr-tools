@@ -2083,6 +2083,7 @@ mod tests {
             work_item: context.work_item.clone(),
             fingerprint: context.fingerprint.clone(),
             profile: Some(context.profile.clone()),
+            follow_up: None,
             prompt: "prompt".to_owned(),
         };
         let launch = TestCardLaunchContext::from_describe(&prep, &context.published_pr).unwrap();

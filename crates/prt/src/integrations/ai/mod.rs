@@ -281,6 +281,70 @@ pub fn build_describe_prompt(
     )
 }
 
+/// PR anterior, já concluído, da mesma branch de origem.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreviousPullRequest {
+    /// ID do PR.
+    pub id: i64,
+    /// Target em que foi concluído.
+    pub target: String,
+    /// Título publicado.
+    pub title: String,
+    /// Descrição publicada.
+    pub description: String,
+}
+
+/// Limite da descrição anterior reenviada como contexto.
+const PREVIOUS_DESCRIPTION_MAX_CHARS: usize = 1500;
+
+/// Monta a seção que orienta a IA a descrever um PR de continuação.
+///
+/// Deve preceder o prompt de [`build_describe_prompt`] quando log e diff já
+/// foram recortados para as mudanças posteriores aos PRs concluídos. Retorna
+/// texto vazio quando não há PR anterior.
+#[must_use]
+pub fn build_follow_up_section(previous: &[PreviousPullRequest]) -> String {
+    if previous.is_empty() {
+        return String::new();
+    }
+    let mut lines = vec![
+        "## PR de continuação".to_owned(),
+        String::new(),
+        "Esta branch já teve Pull Request(s) concluído(s):".to_owned(),
+        String::new(),
+    ];
+    for pr in previous {
+        lines.push(format!("- PR #{} → {}: {}", pr.id, pr.target, pr.title));
+    }
+    lines.push(String::new());
+    lines.push(
+        "O Git Log e o Git Diff abaixo contêm SOMENTE as mudanças feitas depois desses PRs. \
+         Gere título e descrição apenas dessas mudanças novas, como ajuste, correção ou \
+         complemento do que já foi entregue. Não descreva novamente o trabalho anterior nem \
+         reutilize o título anterior; o Work Item e o conteúdo abaixo servem só para situar \
+         a mudança."
+            .to_owned(),
+    );
+    if let Some(pr) = previous.iter().find(|pr| !pr.description.trim().is_empty()) {
+        let description: String = pr
+            .description
+            .trim()
+            .chars()
+            .take(PREVIOUS_DESCRIPTION_MAX_CHARS)
+            .collect();
+        lines.push(String::new());
+        lines.push(format!(
+            "### Descrição do PR #{} (já entregue; apenas contexto)",
+            pr.id
+        ));
+        lines.push(String::new());
+        lines.push(description);
+    }
+    lines.push(String::new());
+    lines.push(String::new());
+    lines.join("\n")
+}
+
 /// Monta o prompt de usuário para atualizar um PR existente.
 ///
 /// O snapshot remoto fica explícito no prompt para que a proposta possa
@@ -609,6 +673,24 @@ mod tests {
         assert!(!prompt.contains("## Contexto funcional do Work Item"));
         assert!(!prompt.contains("Work Item:"));
         assert!(prompt.contains("## Contexto Git"));
+    }
+
+    #[test]
+    fn follow_up_section_should_scope_description_to_new_changes() {
+        assert_eq!(build_follow_up_section(&[]), "");
+
+        let section = build_follow_up_section(&[PreviousPullRequest {
+            id: 12,
+            target: "dev".to_owned(),
+            title: "Adiciona filtro".to_owned(),
+            description: "## Descrição\nFiltro por data.".to_owned(),
+        }]);
+
+        assert!(section.starts_with("## PR de continuação"));
+        assert!(section.contains("- PR #12 → dev: Adiciona filtro"));
+        assert!(section.contains("SOMENTE as mudanças feitas depois desses PRs"));
+        assert!(section.contains("Filtro por data."));
+        assert!(section.ends_with("\n\n"));
     }
 
     #[test]
