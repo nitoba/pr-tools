@@ -160,6 +160,12 @@ struct PullRequestListItem {
     /// Data de criação.
     #[serde(default, deserialize_with = "string_or_empty", rename = "creationDate")]
     creation_date: String,
+    /// Estado remoto (`active`, `completed` ou `abandoned`).
+    #[serde(default, deserialize_with = "string_or_empty")]
+    status: String,
+    /// Data de fechamento (vazia enquanto o PR está ativo).
+    #[serde(default, deserialize_with = "string_or_empty", rename = "closedDate")]
+    closed_date: String,
     /// Links retornados pelo Azure, incluindo o link web navegável.
     #[serde(default, rename = "_links")]
     links: PullRequestLinks,
@@ -446,6 +452,120 @@ pub async fn find_recent_pull_request_candidates(
             .then_with(|| left.id.cmp(&right.id))
     });
     Ok(candidates)
+}
+
+/// PR já concluído da mesma branch de origem para um target.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompletedPullRequest {
+    /// Target sem o prefixo `refs/heads/`.
+    pub target: String,
+    /// ID do PR.
+    pub id: i64,
+    /// Título publicado.
+    pub title: String,
+    /// Descrição publicada.
+    pub description: String,
+    /// Último commit da origem que o PR entregou ao target.
+    pub merged_source_commit: String,
+}
+
+/// Histórico de PRs de uma origem para um target.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PullRequestHistory {
+    /// Se já existe um PR ativo para o mesmo par origem/target.
+    pub has_active: bool,
+    /// PR concluído mais recente, quando houver.
+    pub last_completed: Option<CompletedPullRequest>,
+}
+
+/// Snapshot do PR concluído com o commit de origem que ele entregou.
+#[derive(Debug, Deserialize)]
+struct MergedPullRequest {
+    /// Descrição completa (a listagem pode truncá-la).
+    #[serde(default, deserialize_with = "string_or_empty")]
+    description: String,
+    /// Último commit da origem incluído no merge.
+    #[serde(default, rename = "lastMergeSourceCommit")]
+    last_merge_source_commit: CommitRef,
+}
+
+/// Referência a um commit (`{"commitId": ...}`).
+#[derive(Debug, Default, Deserialize)]
+struct CommitRef {
+    /// SHA do commit.
+    #[serde(default, deserialize_with = "string_or_empty", rename = "commitId")]
+    commit_id: String,
+}
+
+/// Consulta o histórico de PRs da origem para um target.
+///
+/// Usado para detectar um PR de continuação: quando a branch já teve um PR
+/// concluído para o target, a nova descrição deve cobrir apenas o que veio
+/// depois do commit entregue por ele. PRs abandonados são ignorados.
+///
+/// # Errors
+///
+/// Propaga [`crate::error::AppError::Azure`] em falha HTTP ou payload inválido.
+pub async fn pull_request_history(
+    client: &AzureClient,
+    project: &str,
+    repository: &str,
+    source_ref: &str,
+    target_ref: &str,
+) -> Result<PullRequestHistory> {
+    let response: PullRequestList = client
+        .get(&format!(
+            "{}/_apis/git/repositories/{}/pullrequests?searchCriteria.sourceRefName={}&searchCriteria.targetRefName={}&searchCriteria.status=all&$top=50",
+            encode_segment(project),
+            encode_segment(repository),
+            encode_segment(source_ref),
+            encode_segment(target_ref),
+        ))
+        .await?;
+    let matching = || {
+        response.value.iter().filter(|item| {
+            item.pull_request_id > 0
+                && item.source_ref_name == source_ref
+                && item.target_ref_name == target_ref
+        })
+    };
+    let has_active = matching().any(|item| item.status.eq_ignore_ascii_case("active"));
+    let Some(latest) = matching()
+        .filter(|item| item.status.eq_ignore_ascii_case("completed"))
+        .max_by(|left, right| {
+            left.closed_date
+                .cmp(&right.closed_date)
+                .then_with(|| left.pull_request_id.cmp(&right.pull_request_id))
+        })
+    else {
+        return Ok(PullRequestHistory {
+            has_active,
+            last_completed: None,
+        });
+    };
+    let merged: MergedPullRequest = client
+        .get(&format!(
+            "{}/_apis/git/repositories/{}/pullRequests/{}",
+            encode_segment(project),
+            encode_segment(repository),
+            latest.pull_request_id,
+        ))
+        .await?;
+    let merged_source_commit = merged.last_merge_source_commit.commit_id.trim().to_owned();
+    let last_completed = (!merged_source_commit.is_empty()).then(|| CompletedPullRequest {
+        target: target_ref
+            .strip_prefix("refs/heads/")
+            .unwrap_or(target_ref)
+            .to_owned(),
+        id: latest.pull_request_id,
+        title: latest.title.clone(),
+        description: merged.description,
+        merged_source_commit,
+    });
+    Ok(PullRequestHistory {
+        has_active,
+        last_completed,
+    })
 }
 
 /// Entrada de criação de PR (espelha `CreatePullRequestInput` do Dart).
@@ -877,6 +997,87 @@ mod tests {
             }
         });
         (format!("http://{address}/org"), receiver, handle)
+    }
+
+    #[tokio::test]
+    async fn history_should_return_latest_completed_pull_request_and_merged_commit() {
+        let list = serde_json::json!({"value": [
+            {"pullRequestId": 10, "title": "Primeira entrega", "status": "completed",
+             "closedDate": "2026-10-01T10:00:00Z",
+             "sourceRefName": "refs/heads/feature/42", "targetRefName": "refs/heads/dev"},
+            {"pullRequestId": 12, "title": "Segunda entrega", "status": "completed",
+             "closedDate": "2026-10-05T10:00:00Z",
+             "sourceRefName": "refs/heads/feature/42", "targetRefName": "refs/heads/dev"},
+            {"pullRequestId": 13, "title": "Descartado", "status": "abandoned",
+             "closedDate": "2026-10-09T10:00:00Z",
+             "sourceRefName": "refs/heads/feature/42", "targetRefName": "refs/heads/dev"},
+            {"pullRequestId": 14, "title": "Outra origem", "status": "completed",
+             "closedDate": "2026-10-10T10:00:00Z",
+             "sourceRefName": "refs/heads/feature/99", "targetRefName": "refs/heads/dev"}
+        ]});
+        let detail = serde_json::json!({
+            "pullRequestId": 12,
+            "description": "Descrição completa",
+            "lastMergeSourceCommit": {"commitId": "abc123"}
+        });
+        let (base_url, requests, handle) =
+            spawn_json_server(vec![list.to_string(), detail.to_string()]);
+        let client = AzureClient::new_for_test(&base_url, "pat");
+
+        let history = pull_request_history(
+            &client,
+            "project",
+            "repo",
+            "refs/heads/feature/42",
+            "refs/heads/dev",
+        )
+        .await
+        .unwrap();
+        handle.join().unwrap();
+
+        assert!(!history.has_active);
+        assert_eq!(
+            history.last_completed,
+            Some(CompletedPullRequest {
+                target: "dev".to_owned(),
+                id: 12,
+                title: "Segunda entrega".to_owned(),
+                description: "Descrição completa".to_owned(),
+                merged_source_commit: "abc123".to_owned(),
+            })
+        );
+        let listing = requests.recv().unwrap();
+        assert!(listing.target.contains("searchCriteria.status=all"));
+        assert!(
+            listing
+                .target
+                .contains("searchCriteria.sourceRefName=refs%2Fheads%2Ffeature%2F42")
+        );
+        assert!(requests.recv().unwrap().target.contains("/pullRequests/12"));
+    }
+
+    #[tokio::test]
+    async fn history_should_report_active_pull_request_without_completed_one() {
+        let list = serde_json::json!({"value": [
+            {"pullRequestId": 20, "title": "Em revisão", "status": "active",
+             "sourceRefName": "refs/heads/feature/42", "targetRefName": "refs/heads/sprint/12"}
+        ]});
+        let (base_url, _requests, handle) = spawn_json_server(vec![list.to_string()]);
+        let client = AzureClient::new_for_test(&base_url, "pat");
+
+        let history = pull_request_history(
+            &client,
+            "project",
+            "repo",
+            "refs/heads/feature/42",
+            "refs/heads/sprint/12",
+        )
+        .await
+        .unwrap();
+        handle.join().unwrap();
+
+        assert!(history.has_active);
+        assert_eq!(history.last_completed, None);
     }
 
     #[test]

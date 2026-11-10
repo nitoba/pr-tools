@@ -140,6 +140,9 @@ async fn run_desc_plain(
             "criação requer terminal interativo: use sem --create ou em terminal",
         )));
     }
+    if let Some(follow_up) = &prep.follow_up {
+        eprintln!("{}", follow_up.display_label());
+    }
     eprintln!("Gerando descrição via IA…");
     let desc = describe::generate(prep).await.map_err(anyhow::Error::new)?;
     println!(

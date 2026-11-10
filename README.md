@@ -192,6 +192,8 @@ Execute os comandos dentro do clone do projeto que possui o remote Azure DevOps.
 
 O diff enviado à IA é calculado a partir da sprint: a de `--target sprint/<n>` quando informada, ou a mais recente caso contrário (`dev`, `main` e `master` só entram como fallback quando não existe branch de sprint). Se a sprint existir localmente e em `origin`, a ref mais atualizada é usada; o `prt` não faz `git fetch`, então mantenha as refs de `origin` atualizadas.
 
+**PR de continuação:** se a branch já teve um PR concluído para o target (por exemplo, o PR de `dev` foi aprovado e depois vieram correções na mesma branch), o novo título e a nova descrição cobrem somente as mudanças feitas depois do commit que aquele PR entregou. Isso vale quando todos os targets do comando já receberam a branch; targets que só têm um PR ainda ativo não contam. Se algum target nunca recebeu a branch, se o histórico foi reescrito (rebase/force-push) ou se o Azure não puder ser consultado, a descrição completa da branch é gerada.
+
 ```bash
 # Conferir o prompt sem chamar o provider
 prt desc --dry-run

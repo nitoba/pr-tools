@@ -131,6 +131,9 @@ async fn backend_task(prep: DescribePrep, tx: mpsc::UnboundedSender<BackendEvent
         "contexto funcional: {}",
         prep.functional_context.display_label()
     )));
+    if let Some(follow_up) = &prep.follow_up {
+        let _ = tx.send(BackendEvent::Log(follow_up.display_label()));
+    }
     let _ = tx.send(BackendEvent::Log(format!(
         "diff: {} linhas · log com {}",
         prep.context.diff_original_lines,
@@ -2166,6 +2169,7 @@ pub async fn run_resumed_tui(
         work_item: None,
         fingerprint,
         profile,
+        follow_up: None,
         prompt: String::new(),
     };
     let runtime = SessionRuntime::from_existing(store, snapshot);
@@ -3237,6 +3241,7 @@ mod tests {
             profile: Some(crate::features::process_profiles::legacy_selection(
                 &config, remote,
             )),
+            follow_up: None,
             prompt: "prompt".to_owned(),
         }
     }
