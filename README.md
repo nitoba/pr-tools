@@ -190,6 +190,8 @@ sem mostrar PAT ou API key.
 
 Execute os comandos dentro do clone do projeto que possui o remote Azure DevOps. Sem `--target`, o comando gera/publica PRs para a sprint mais recente e `dev`. Ao informar um ou mais `--target`, somente os destinos informados são usados.
 
+O diff enviado à IA é calculado a partir da sprint: a de `--target sprint/<n>` quando informada, ou a mais recente caso contrário (`dev`, `main` e `master` só entram como fallback quando não existe branch de sprint). Se a sprint existir localmente e em `origin`, a ref mais atualizada é usada; o `prt` não faz `git fetch`, então mantenha as refs de `origin` atualizadas.
+
 ```bash
 # Conferir o prompt sem chamar o provider
 prt desc --dry-run

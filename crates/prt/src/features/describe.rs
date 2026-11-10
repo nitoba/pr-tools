@@ -115,7 +115,7 @@ pub async fn prepare_with_profile(
         options.base_url.as_deref(),
         options.api_key.as_deref(),
     );
-    let context = git::collect(options.source.as_deref())?;
+    let context = git::collect(options.source.as_deref(), &options.targets)?;
     let profile = match selected_profile {
         Some(profile) => {
             if context.remote.as_ref() != Some(&profile.remote) {

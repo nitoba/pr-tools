@@ -1,7 +1,10 @@
 //! Contexto Git — espelha `domain/change_context.dart` + `change_context_reader_live.dart`.
 //!
 //! Coleta branch, base (`sprint` > `dev` > `main` > `master`), diff truncado
-//! em 8000 linhas, log (50 oneline) e remote Azure DevOps.
+//! em 8000 linhas, log (50 oneline) e remote Azure DevOps. A sprint usada como
+//! base é a do target `sprint/<n>` pedido explicitamente ou, na ausência dele,
+//! a sprint mais recente; quando a branch existe localmente e em `origin`, a
+//! ref mais atualizada é a escolhida.
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -239,7 +242,8 @@ fn latest_sprint_branch(branches: &str) -> Option<String> {
         .filter_map(|line| {
             let branch = line
                 .trim()
-                .trim_start_matches("* ")
+                .trim_start_matches(['*', '+'])
+                .trim_start()
                 .trim_start_matches("remotes/origin/")
                 .trim_start_matches("origin/");
             let captures = re.captures(branch)?;
@@ -250,18 +254,39 @@ fn latest_sprint_branch(branches: &str) -> Option<String> {
         .map(|(_, branch)| branch)
 }
 
-/// Resolve uma branch local ou sua referência de acompanhamento em `origin`.
-fn resolve_ref(branch: &str) -> Option<String> {
+/// Resolve a ref de uma branch base, preferindo a cópia mais atualizada.
+///
+/// Branches base (`sprint/<n>`, `dev`, ...) são compartilhadas e a cópia local
+/// costuma ficar para trás de `origin`. Quando as duas existem e a local é
+/// ancestral da remota, a remota é usada: comparar com a local desatualizada
+/// faria o diff incluir todo o trabalho alheio que a branch de origem já
+/// incorporou da sprint. A local só prevalece se tiver commits próprios.
+fn resolve_base_ref_with<F>(branch: &str, command: &mut F) -> Option<String>
+where
+    F: FnMut(&[&str]) -> Result<String>,
+{
     if branch.is_empty() {
         return None;
     }
-    if git(&["rev-parse", "--verify", branch]).is_ok() {
-        return Some(branch.to_owned());
-    }
+    let local_ref = format!("refs/heads/{branch}");
+    let remote_ref = format!("refs/remotes/origin/{branch}");
     let remote_branch = format!("origin/{branch}");
-    git(&["rev-parse", "--verify", &remote_branch])
-        .is_ok()
-        .then_some(remote_branch)
+    let has_local = command(&["rev-parse", "--verify", "--quiet", &local_ref]).is_ok();
+    let has_remote = command(&["rev-parse", "--verify", "--quiet", &remote_ref]).is_ok();
+    match (has_local, has_remote) {
+        (true, true) => {
+            let local_is_behind =
+                command(&["merge-base", "--is-ancestor", &local_ref, &remote_ref]).is_ok();
+            Some(if local_is_behind {
+                remote_branch
+            } else {
+                branch.to_owned()
+            })
+        }
+        (true, false) => Some(branch.to_owned()),
+        (false, true) => Some(remote_branch),
+        (false, false) => None,
+    }
 }
 
 fn resolve_pull_request_ref_with<F>(remote_ref: &str, command: &mut F) -> Option<String>
@@ -450,11 +475,27 @@ where
 
 /// Coleta o contexto Git (branch atual ou `source` explícito).
 ///
+/// `requested_targets` são os targets pedidos na CLI. Um target `sprint/<n>`
+/// explícito define a base do diff; sem ele, a base é a sprint mais recente,
+/// com `dev`/`main`/`master` apenas como fallback quando não há sprint.
+///
 /// # Errors
 ///
-/// Retorna [`AppError::Git`] se não for repo, branch protegida ou sem base.
-pub fn collect(source: Option<&str>) -> Result<ChangeContext> {
-    let current = git(&["branch", "--show-current"])?;
+/// Retorna [`AppError::Git`] se não for repo, branch protegida, sem base ou
+/// se a sprint pedida explicitamente não existir localmente nem em `origin`.
+pub fn collect(source: Option<&str>, requested_targets: &[String]) -> Result<ChangeContext> {
+    collect_with(source, requested_targets, git)
+}
+
+pub(crate) fn collect_with<F>(
+    source: Option<&str>,
+    requested_targets: &[String],
+    mut command: F,
+) -> Result<ChangeContext>
+where
+    F: FnMut(&[&str]) -> Result<String>,
+{
+    let current = command(&["branch", "--show-current"])?;
     let branch = source.unwrap_or(&current).to_owned();
     if branch.is_empty() {
         return Err(AppError::Git {
@@ -469,20 +510,37 @@ pub fn collect(source: Option<&str>) -> Result<ChangeContext> {
     let source_ref = format!("refs/heads/{branch}");
 
     // Descobre a sprint mais recente entre branches locais e remotas.
-    let local_branches = git(&["branch", "--list", "sprint/*", "dev", "main", "master"])?;
-    let remote_branches = git(&["branch", "-r"])?;
+    let local_branches = command(&["branch", "--list", "sprint/*", "dev", "main", "master"])?;
+    let remote_branches = command(&["branch", "-r"])?;
     let branches = format!("{local_branches}\n{remote_branches}");
     let sprint_branch = latest_sprint_branch(&branches).unwrap_or_default();
-    let base_branch = [sprint_branch.as_str(), "dev", "main", "master"]
-        .into_iter()
-        .find_map(resolve_ref)
-        .ok_or_else(|| AppError::Git {
-            message: "nenhuma branch base encontrada (sprint/dev/main/master)".to_owned(),
-        })?;
+
+    // A sprint pedida explicitamente é a base; nunca cai em outra branch em
+    // silêncio, pois isso geraria uma descrição com mudanças alheias.
+    let requested_sprint = requested_targets
+        .iter()
+        .find(|target| target.starts_with("sprint/"));
+    let base_branch = if let Some(sprint) = requested_sprint {
+        resolve_base_ref_with(sprint, &mut command).ok_or_else(|| AppError::Git {
+            message: format!(
+                "branch base {sprint} não encontrada localmente nem em origin; \
+                 execute `git fetch origin` e tente novamente"
+            ),
+        })?
+    } else {
+        [sprint_branch.as_str(), "dev", "main", "master"]
+            .into_iter()
+            .find_map(|candidate| resolve_base_ref_with(candidate, &mut command))
+            .ok_or_else(|| AppError::Git {
+                message: "nenhuma branch base encontrada (sprint/dev/main/master)".to_owned(),
+            })?
+    };
 
     // Diff: `diff base...source`, fallback `diff base source`.
-    let diff_raw = git(&["diff", &format!("{base_branch}...{branch}")])
-        .or_else(|_| git(&["diff", &base_branch, &branch]))?;
+    let diff_raw = match command(&["diff", &format!("{base_branch}...{branch}")]) {
+        Ok(diff) => diff,
+        Err(_) => command(&["diff", &base_branch, &branch])?,
+    };
     let diff_original_lines = diff_raw.lines().count();
     let diff = diff_raw
         .lines()
@@ -490,13 +548,15 @@ pub fn collect(source: Option<&str>) -> Result<ChangeContext> {
         .collect::<Vec<_>>()
         .join("\n");
 
-    let log = git(&[
+    let log = command(&[
         "log",
         "--oneline",
         "-50",
         &format!("{base_branch}..{branch}"),
     ])?;
-    let remote = origin_remote()?;
+    let remote = command(&["remote", "get-url", "origin"])
+        .ok()
+        .and_then(|url| parse_azure_remote(&url));
     let work_item_id = work_item_from_branch(&branch);
 
     Ok(ChangeContext {
@@ -567,6 +627,116 @@ mod tests {
     fn latest_sprint_should_ignore_malformed_branch_names() {
         let branches = "origin/sprint/foo\norigin/sprint/12x\norigin/sprint/abc/extra";
         assert_eq!(latest_sprint_branch(branches), None);
+    }
+
+    #[test]
+    fn latest_sprint_should_accept_current_and_worktree_markers() {
+        let branches = "  sprint/10\n* sprint/11\n+ sprint/12";
+        assert_eq!(latest_sprint_branch(branches), Some("sprint/12".to_owned()));
+    }
+
+    /// Simula um repositório a partir das refs existentes e registra chamadas.
+    fn fake_git<'a>(
+        refs: &'a [&'a str],
+        local_behind: bool,
+        branches: &'a str,
+        calls: &'a mut Vec<String>,
+    ) -> impl FnMut(&[&str]) -> Result<String> + 'a {
+        move |args: &[&str]| {
+            calls.push(args.join(" "));
+            let failure = || {
+                Err(AppError::Git {
+                    message: format!("falhou: {}", args.join(" ")),
+                })
+            };
+            match args {
+                ["branch", "--show-current"] => Ok("feature/42".to_owned()),
+                ["branch", "--list", ..] => Ok(String::new()),
+                ["branch", "-r"] => Ok(branches.to_owned()),
+                ["rev-parse", "--verify", "--quiet", name] => {
+                    if refs.contains(name) {
+                        Ok("oid".to_owned())
+                    } else {
+                        failure()
+                    }
+                }
+                ["merge-base", "--is-ancestor", ..] => {
+                    if local_behind {
+                        Ok(String::new())
+                    } else {
+                        failure()
+                    }
+                }
+                ["diff", range] => Ok(format!("diff {range}")),
+                ["log", ..] => Ok("log".to_owned()),
+                _ => failure(),
+            }
+        }
+    }
+
+    #[test]
+    fn collect_should_diff_against_latest_sprint_instead_of_master() {
+        let mut calls = Vec::new();
+        let refs = [
+            "refs/remotes/origin/sprint/12",
+            "refs/remotes/origin/master",
+            "refs/heads/master",
+        ];
+        let branches = "origin/master\norigin/sprint/11\norigin/sprint/12";
+        let context = collect_with(None, &[], fake_git(&refs, true, branches, &mut calls)).unwrap();
+
+        assert_eq!(context.sprint_branch, "sprint/12");
+        assert_eq!(context.base_branch, "origin/sprint/12");
+        assert_eq!(context.diff, "diff origin/sprint/12...feature/42");
+        assert!(calls.contains(&"log --oneline -50 origin/sprint/12..feature/42".to_owned()));
+    }
+
+    #[test]
+    fn collect_should_prefer_origin_sprint_when_local_copy_is_behind() {
+        let refs = ["refs/heads/sprint/12", "refs/remotes/origin/sprint/12"];
+        let branches = "origin/sprint/12";
+
+        let mut calls = Vec::new();
+        let stale = collect_with(None, &[], fake_git(&refs, true, branches, &mut calls)).unwrap();
+        assert_eq!(stale.base_branch, "origin/sprint/12");
+
+        let mut calls = Vec::new();
+        let ahead = collect_with(None, &[], fake_git(&refs, false, branches, &mut calls)).unwrap();
+        assert_eq!(ahead.base_branch, "sprint/12");
+    }
+
+    #[test]
+    fn collect_should_use_explicit_sprint_target_as_base() {
+        let mut calls = Vec::new();
+        let refs = [
+            "refs/remotes/origin/sprint/11",
+            "refs/remotes/origin/sprint/12",
+        ];
+        let branches = "origin/sprint/11\norigin/sprint/12";
+        let targets = ["dev".to_owned(), "sprint/11".to_owned()];
+        let context =
+            collect_with(None, &targets, fake_git(&refs, true, branches, &mut calls)).unwrap();
+
+        assert_eq!(context.base_branch, "origin/sprint/11");
+        assert_eq!(context.sprint_branch, "sprint/12");
+    }
+
+    #[test]
+    fn collect_should_fail_when_explicit_sprint_target_is_not_fetched() {
+        let mut calls = Vec::new();
+        let refs = ["refs/heads/master", "refs/remotes/origin/master"];
+        let targets = ["sprint/13".to_owned()];
+        let error = collect_with(
+            None,
+            &targets,
+            fake_git(&refs, true, "origin/master", &mut calls),
+        )
+        .unwrap_err();
+
+        let message = error.to_string();
+        assert!(message.contains("sprint/13"), "{message}");
+        assert!(message.contains("git fetch"), "{message}");
+        assert!(!calls.iter().any(|call| call.starts_with("diff")));
     }
 
     #[test]

@@ -367,7 +367,7 @@ async fn prepare_cli(
             message: "o comando test requer AZURE_PAT ou AZURE_DEVOPS_PAT configurado".to_owned(),
         });
     }
-    let change = git::collect(options.source.as_deref())?;
+    let change = git::collect(options.source.as_deref(), &[])?;
     let Some(remote) = change.remote.as_ref() else {
         return Err(AppError::Git {
             message: "o comando test requer um remote git do azure devops".to_owned(),
