@@ -130,21 +130,132 @@ fn format_desc_plain_output(
     )
 }
 
+/// Mapa `target → revisor` no formato da saída `--json`.
+fn desc_reviewers_json(prep: &prt::features::describe::DescribePrep) -> serde_json::Value {
+    serde_json::Value::Object(
+        prep.targets
+            .iter()
+            .map(|target| {
+                (
+                    target.clone(),
+                    serde_json::Value::String(prt::features::describe::reviewer_for(prep, target)),
+                )
+            })
+            .collect(),
+    )
+}
+
+/// PRs publicados no formato da saída `--json`.
+fn published_prs_json(items: &[prt::azure::pull_requests::PublishedPr]) -> serde_json::Value {
+    serde_json::Value::Array(
+        items
+            .iter()
+            .map(|pr| serde_json::json!({"id": pr.id, "target": pr.target, "url": pr.url}))
+            .collect(),
+    )
+}
+
+/// `prt desc --create --yes` sem terminal: publica um PR por target.
+///
+/// Com `--title` e `--body-file` usa o conteúdo já revisado; sem eles, gera
+/// por IA antes de publicar.
+async fn run_desc_headless(
+    options: &prt::cli::CliOptions,
+    prep: &prt::features::describe::DescribePrep,
+) -> anyhow::Result<()> {
+    use prt::features::describe;
+    let headless = &options.headless;
+    let (title, body) = match (&headless.title, &headless.body_file) {
+        (Some(title), Some(path)) => {
+            let body = std::fs::read_to_string(path)
+                .with_context(|| format!("não foi possível ler --body-file {path}"))?;
+            (title.trim().to_owned(), body.trim().to_owned())
+        }
+        _ => {
+            eprintln!("Gerando descrição via IA…");
+            let desc = describe::generate(prep).await.map_err(anyhow::Error::new)?;
+            (desc.title, desc.body)
+        }
+    };
+    if title.is_empty() || body.is_empty() {
+        anyhow::bail!("título e descrição do PR não podem ser vazios");
+    }
+    let outcome = describe::publish_headless(prep, &title, &body)
+        .await
+        .map_err(anyhow::Error::new)?;
+    let Some(error) = outcome.error else {
+        if headless.json {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "kind": "pr_created",
+                    "title": title,
+                    "branch": prep.context.branch,
+                    "work_item": prep.work_item_id,
+                    "pull_requests": published_prs_json(&outcome.published),
+                })
+            );
+        } else {
+            for pr in &outcome.published {
+                println!("✓ PR #{} · {} · {}", pr.id, pr.target, pr.url);
+            }
+        }
+        return Ok(());
+    };
+    // Sucessos parciais precisam aparecer mesmo quando um target posterior falha.
+    if headless.json && !outcome.published.is_empty() {
+        println!(
+            "{}",
+            serde_json::json!({
+                "kind": "pr_partial",
+                "pull_requests": published_prs_json(&outcome.published),
+            })
+        );
+    }
+    for pr in &outcome.published {
+        eprintln!(
+            "✓ PR #{} · {} · {} (criado antes da falha)",
+            pr.id, pr.target, pr.url
+        );
+    }
+    Err(anyhow::Error::new(error))
+}
+
 async fn run_desc_plain(
     options: &prt::cli::CliOptions,
     prep: &prt::features::describe::DescribePrep,
 ) -> anyhow::Result<()> {
     use prt::features::describe;
     if options.create {
-        return Err(anyhow::Error::new(prt::error::AppError::cli(
-            "criação requer terminal interativo: use sem --create ou em terminal",
-        )));
+        // Sem terminal não há revisão: a publicação exige confirmação explícita.
+        if !options.headless.yes {
+            return Err(anyhow::Error::new(prt::error::AppError::cli(
+                "criação sem terminal interativo requer --yes (ou use em um terminal)",
+            )));
+        }
+        return run_desc_headless(options, prep).await;
     }
     if let Some(follow_up) = &prep.follow_up {
         eprintln!("{}", follow_up.display_label());
     }
     eprintln!("Gerando descrição via IA…");
     let desc = describe::generate(prep).await.map_err(anyhow::Error::new)?;
+    if options.headless.json {
+        println!(
+            "{}",
+            serde_json::json!({
+                "kind": "pr_draft",
+                "title": desc.title,
+                "body": desc.body,
+                "branch": prep.context.branch,
+                "targets": prep.targets,
+                "work_item": prep.work_item_id,
+                "reviewers": desc_reviewers_json(prep),
+            })
+        );
+        eprintln!("Concluído.");
+        return Ok(());
+    }
     println!(
         "{}",
         format_desc_plain_output(
@@ -499,6 +610,117 @@ where
     }
 }
 
+/// Campos editáveis do Test Case no formato da saída `--json`.
+fn test_settings_json(settings: &prt::features::test_card::TestSettings) -> serde_json::Value {
+    serde_json::json!({
+        "area_path": settings.area_path,
+        "assigned_to": settings.assigned_to,
+        "iteration_path": settings.iteration_path,
+        "priority": settings.priority,
+        "team": settings.team,
+        "program": settings.program,
+    })
+}
+
+/// Work Item pai no formato da saída `--json`.
+fn test_parent_json(prep: &prt::features::test_card::TestCardPrep) -> serde_json::Value {
+    serde_json::json!({
+        "id": prep.parent.id,
+        "title": prt::features::test_card::work_item_field(&prep.parent, "System.Title"),
+        "transition": prep.profile.profile.parent_transition(),
+    })
+}
+
+/// `prt test` sem terminal com `--yes`: cria o Test Case e/ou move o pai.
+///
+/// Com `--title` e `--body-file` usa o conteúdo já revisado; sem eles, gera
+/// por IA antes de criar. As flags de campo (`--priority`, `--team`, …)
+/// substituem os valores do perfil, como na revisão interativa.
+async fn run_test_headless(
+    options: &prt::cli::CliOptions,
+    selected_profile: Option<prt::features::process_profiles::ProfileSelection>,
+) -> anyhow::Result<()> {
+    use prt::features::test_card;
+    let headless = &options.headless;
+    let prep = test_card::prepare_with_profile(options, selected_profile)
+        .await
+        .map_err(anyhow::Error::new)?;
+    let settings =
+        test_card::TestSettings::from_cli_or_profile(options, &prep.profile, &prep.parent)
+            .map_err(anyhow::Error::new)?;
+
+    let mut created = None;
+    if options.create {
+        let (title, body) = match (&headless.title, &headless.body_file) {
+            (Some(title), Some(path)) => {
+                let body = std::fs::read_to_string(path)
+                    .with_context(|| format!("não foi possível ler --body-file {path}"))?;
+                (title.clone(), body)
+            }
+            _ => {
+                eprintln!("Gerando card de teste via IA…");
+                let desc = test_card::generate(&prep)
+                    .await
+                    .map_err(anyhow::Error::new)?;
+                (desc.title, desc.body)
+            }
+        };
+        test_card::validate_card(&title, &body).map_err(anyhow::Error::new)?;
+        let item = test_card::create(&prep, &settings, title.trim(), body.trim())
+            .await
+            .map_err(anyhow::Error::new)?;
+        let url = prep.context.remote.as_ref().map_or_else(
+            || format!("workitem:{}", item.id),
+            |remote| {
+                format!(
+                    "https://dev.azure.com/{}/{}/_workitems/edit/{}",
+                    remote.organization, remote.project, item.id
+                )
+            },
+        );
+        created = Some((item.id, url, title));
+    }
+
+    if headless.move_parent {
+        // A criação já aconteceu: uma falha aqui não pode esconder o Test Case criado.
+        if let Err(error) = test_card::update_parent(
+            &prep,
+            headless.effort.as_deref(),
+            headless.real_effort.as_deref(),
+        )
+        .await
+        {
+            if let Some((id, url, _)) = &created {
+                eprintln!("✓ Test Case #{id} criado: {url}");
+            }
+            return Err(anyhow::Error::new(error).context("o Work Item pai não foi atualizado"));
+        }
+    }
+
+    if headless.json {
+        println!(
+            "{}",
+            serde_json::json!({
+                "kind": if created.is_some() { "test_case_created" } else { "parent_moved" },
+                "id": created.as_ref().map(|(id, _, _)| *id),
+                "url": created.as_ref().map(|(_, url, _)| url.clone()),
+                "title": created.as_ref().map(|(_, _, title)| title.clone()),
+                "parent": test_parent_json(&prep),
+                "parent_moved": headless.move_parent,
+                "settings": test_settings_json(&settings),
+            })
+        );
+    } else {
+        if let Some((id, url, _)) = &created {
+            println!("✓ Test Case #{id} criado: {url}");
+        }
+        if headless.move_parent {
+            println!("✓ Work Item pai #{} atualizado", prep.parent.id);
+        }
+    }
+    Ok(())
+}
+
 async fn run_test(options: &prt::cli::CliOptions) -> anyhow::Result<()> {
     use prt::tui::notice::{NoticeKind, show_notice};
     use prt::tui::test_flow::{TestFlowOutcome, run_test_flow};
@@ -523,10 +745,14 @@ async fn run_test(options: &prt::cli::CliOptions) -> anyhow::Result<()> {
     }
     // `--raw` e sem tty: gera e imprime, sem criar (script-friendly).
     if options.output.raw || !tty {
-        if options.create {
-            return Err(anyhow::Error::new(prt::error::AppError::cli(
-                "criação requer terminal interativo: use sem --create ou em terminal",
-            )));
+        if options.create || options.headless.move_parent {
+            // Sem terminal não há revisão: a escrita exige confirmação explícita.
+            if !options.headless.yes {
+                return Err(anyhow::Error::new(prt::error::AppError::cli(
+                    "criação sem terminal interativo requer --yes (ou use em um terminal)",
+                )));
+            }
+            return run_test_headless(options, selected_profile).await;
         }
         eprintln!("Gerando card de teste via IA…");
         let prep =
@@ -536,7 +762,25 @@ async fn run_test(options: &prt::cli::CliOptions) -> anyhow::Result<()> {
         let desc = prt::features::test_card::generate(&prep)
             .await
             .map_err(anyhow::Error::new)?;
-        if options.output.raw {
+        if options.headless.json {
+            let settings = prt::features::test_card::TestSettings::from_cli_or_profile(
+                options,
+                &prep.profile,
+                &prep.parent,
+            )
+            .map_err(anyhow::Error::new)?;
+            println!(
+                "{}",
+                serde_json::json!({
+                    "kind": "test_case_draft",
+                    "title": desc.title,
+                    "body": desc.body,
+                    "parent": test_parent_json(&prep),
+                    "pr": prep.pr_id,
+                    "settings": test_settings_json(&settings),
+                })
+            );
+        } else if options.output.raw {
             println!("{}", desc.body);
         } else {
             println!(
