@@ -87,9 +87,9 @@ pub struct Cli {
 /// Subcomando normalizado da CLI (espelha `Command` do Dart).
 pub enum CommandWithOpts {
     /// `prt desc` — gera descrição de PR.
-    Desc(DescOpts),
+    Desc(Box<DescOpts>),
     /// `prt test` — gera card de Test Case.
-    Test(TestOpts),
+    Test(Box<TestOpts>),
     /// `prt init` — wizard de configuração.
     Init,
     /// `prt doctor` — diagnóstico do ambiente.
@@ -157,6 +157,26 @@ pub struct DescOpts {
     /// Retoma uma sessão específica pelo UUID v4.
     #[arg(long, conflicts_with = "resume")]
     pub session: Option<String>,
+    /// Flags do modo sem terminal (`--yes`, `--json`, …).
+    #[command(flatten)]
+    pub headless: DescHeadlessArgs,
+}
+
+/// Flags de `prt desc` para execução sem terminal (scripts e bots).
+#[derive(Debug, Clone, Default, Parser)]
+pub struct DescHeadlessArgs {
+    /// Confirma a publicação sem revisão interativa.
+    #[arg(long)]
+    pub yes: bool,
+    /// Imprime o resultado como um objeto JSON em stdout.
+    #[arg(long)]
+    pub json: bool,
+    /// Título já revisado; com `--body-file`, dispensa a geração por IA.
+    #[arg(long)]
+    pub title: Option<String>,
+    /// Arquivo com a descrição Markdown já revisada.
+    #[arg(long = "body-file")]
+    pub body_file: Option<String>,
 }
 
 /// Opções de `prt test`.
@@ -198,6 +218,38 @@ pub struct TestOpts {
     /// Não copia (compat).
     #[arg(long = "no-copy")]
     pub no_copy: bool,
+    /// Flags do modo sem terminal (`--yes`, `--json`, …).
+    #[command(flatten)]
+    pub headless: HeadlessArgs,
+}
+
+/// Flags de `prt test` para execução sem terminal (scripts e bots).
+///
+/// Ficam em uma struct própria para que [`TestOpts`] e [`CliOptions`] não
+/// excedam o limite do lint `struct_excessive_bools`.
+#[derive(Debug, Clone, Default, Parser)]
+pub struct HeadlessArgs {
+    /// Confirma a criação/alteração sem revisão interativa.
+    #[arg(long)]
+    pub yes: bool,
+    /// Imprime o resultado como um objeto JSON em stdout.
+    #[arg(long)]
+    pub json: bool,
+    /// Título já revisado; com `--body-file`, dispensa a geração por IA.
+    #[arg(long)]
+    pub title: Option<String>,
+    /// Arquivo com o corpo Markdown já revisado.
+    #[arg(long = "body-file")]
+    pub body_file: Option<String>,
+    /// Move o Work Item pai para a transição do perfil (ex.: Test QA).
+    #[arg(long = "move-parent")]
+    pub move_parent: bool,
+    /// Esforço estimado gravado no pai junto com a transição.
+    #[arg(long, requires = "move_parent")]
+    pub effort: Option<String>,
+    /// Esforço real gravado no pai junto com a transição.
+    #[arg(long = "real-effort", requires = "move_parent")]
+    pub real_effort: Option<String>,
 }
 
 /// Opções de `prt doctor`.
@@ -277,6 +329,8 @@ pub struct CliOptions {
     pub examples: Option<String>,
     /// Flags de saída (`--dry-run`, `--raw`, `--no-copy`).
     pub output: OutputFlags,
+    /// Flags do modo sem terminal de `test`.
+    pub headless: HeadlessArgs,
     /// Shell de `completions` (`None` nos demais comandos).
     pub completion_shell: Option<Shell>,
 }
@@ -391,6 +445,7 @@ fn default_cli_options() -> CliOptions {
             raw: false,
             copy: true,
         },
+        headless: HeadlessArgs::default(),
         completion_shell: None,
     }
 }
@@ -436,7 +491,31 @@ fn desc_cli_options(o: DescOpts) -> Result<CliOptions> {
             return Err(AppError::cli("--session requer um UUID v4 válido"));
         }
     }
+    let h = &o.headless;
+    if resume_requested && (h.yes || h.json || h.title.is_some() || h.body_file.is_some()) {
+        return Err(AppError::cli(
+            "retomar uma sessão não pode ser combinado com o modo sem terminal",
+        ));
+    }
+    if h.title.is_some() != h.body_file.is_some() {
+        return Err(AppError::cli(
+            "--title e --body-file devem ser informados juntos",
+        ));
+    }
+    if h.json && o.shared.raw {
+        return Err(AppError::cli("--json não pode ser combinado com --raw"));
+    }
+    if h.title.is_some() && !o.shared.create {
+        return Err(AppError::cli(
+            "--title e --body-file só fazem sentido com --create",
+        ));
+    }
     let pr = parse_optional_work_item(o.pr.as_deref(), "--pr")?;
+    if pr.is_some() && (h.yes || h.json || h.title.is_some()) {
+        return Err(AppError::cli(
+            "atualização de PR requer revisão interativa: --pr não pode ser combinado com --yes, --json, --title ou --body-file",
+        ));
+    }
     if pr.is_some() && (o.shared.raw || o.shared.create || o.no_create) {
         return Err(AppError::cli(
             "atualização de PR requer revisão interativa: --pr não pode ser combinado com --raw, --create ou --no-create",
@@ -468,6 +547,13 @@ fn desc_cli_options(o: DescOpts) -> Result<CliOptions> {
             raw: o.shared.raw,
             copy: !o.no_copy,
         },
+        headless: HeadlessArgs {
+            yes: o.headless.yes,
+            json: o.headless.json,
+            title: o.headless.title,
+            body_file: o.headless.body_file,
+            ..HeadlessArgs::default()
+        },
         completion_shell: None,
     })
 }
@@ -478,6 +564,7 @@ fn desc_cli_options(o: DescOpts) -> Result<CliOptions> {
 ///
 /// Retorna [`AppError::Cli`] se work-item, pr ou provider forem inválidos.
 fn test_cli_options(o: TestOpts) -> Result<CliOptions> {
+    validate_headless(&o)?;
     Ok(CliOptions {
         command: Command::Test,
         source: o.shared.source,
@@ -504,8 +591,39 @@ fn test_cli_options(o: TestOpts) -> Result<CliOptions> {
             raw: o.shared.raw,
             copy: !o.no_copy,
         },
+        headless: o.headless,
         completion_shell: None,
     })
+}
+
+/// Valida as combinações das flags do modo sem terminal de `test`.
+///
+/// # Errors
+///
+/// Retorna [`AppError::Cli`] quando `--title`/`--body-file` vêm sozinhos,
+/// quando `--json` é combinado com `--raw`, ou quando `--move-parent` é
+/// usado sem `--yes`.
+fn validate_headless(o: &TestOpts) -> Result<()> {
+    let h = &o.headless;
+    if h.title.is_some() != h.body_file.is_some() {
+        return Err(AppError::cli(
+            "--title e --body-file devem ser informados juntos",
+        ));
+    }
+    if h.json && o.shared.raw {
+        return Err(AppError::cli("--json não pode ser combinado com --raw"));
+    }
+    if h.move_parent && !h.yes {
+        return Err(AppError::cli(
+            "--move-parent altera o Work Item pai e requer --yes",
+        ));
+    }
+    if h.title.is_some() && !o.shared.create {
+        return Err(AppError::cli(
+            "--title e --body-file só fazem sentido com --create",
+        ));
+    }
+    Ok(())
 }
 
 /// Converte ID opcional (`--work-item`/`--pr`) em [`WorkItemId`].
@@ -524,8 +642,8 @@ fn parse_optional_work_item(value: Option<&str>, label: &str) -> Result<Option<W
 /// Propaga [`AppError::Cli`] das validações de cada subcomando.
 fn build_options(sub: CommandWithOpts) -> Result<CliOptions> {
     match sub {
-        CommandWithOpts::Desc(o) => desc_cli_options(o),
-        CommandWithOpts::Test(o) => test_cli_options(o),
+        CommandWithOpts::Desc(o) => desc_cli_options(*o),
+        CommandWithOpts::Test(o) => test_cli_options(*o),
         CommandWithOpts::Init => Ok(empty_cli_options(Command::Init)),
         CommandWithOpts::Doctor(o) => Ok(CliOptions {
             source: o.source,
@@ -596,6 +714,13 @@ pub fn help_text() -> String {
          --model <nome>          Modelo do provider\n  --base-url <url>        Endpoint OpenAI-compatible\n  \
          --api-key <key>         API key do endpoint\n  --create                Confirma a criação após gerar o conteúdo\n  \
          --no-create             Apenas gera o Test Case\n  --pr <id>               PR existente (desc) ou contexto do Test Case\n  \
+         --yes                   Confirma criação/publicação sem terminal\n  \
+         --json                  Imprime o resultado em JSON\n  \
+         --title <texto>         Título já revisado (com --body-file)\n  \
+         --body-file <arquivo>   Corpo Markdown já revisado\n  \
+         --move-parent           test: move o Work Item pai (ex.: Test QA)\n  \
+         --effort <n>            test: esforço do pai (com --move-parent)\n  \
+         --real-effort <n>       test: esforço real do pai (com --move-parent)\n  \
          --area-path <path>      AreaPath do Test Case\n  --assigned-to <valor>   Responsável do Test Case\n  \
          --iteration-path <path> IterationPath do Test Case\n  --priority <n>          Prioridade do Test Case\n  \
          --team <nome>           Campo Custom.Team\n  --program <nome>        Campo Custom.ProgramasAgrotrace\n  \
@@ -769,6 +894,102 @@ mod tests {
             }
             let error = parse_cli(args).unwrap_err();
             assert_eq!(error.exit_code(), 2, "{extra}");
+        }
+    }
+    #[test]
+    fn test_headless_create_accepts_reviewed_content_and_fields() {
+        let opts = parse_cli([
+            "prt",
+            "test",
+            "--create",
+            "--yes",
+            "--json",
+            "--title",
+            "Validar loader",
+            "--body-file",
+            "/tmp/card.md",
+            "--priority",
+            "1",
+            "--move-parent",
+            "--effort",
+            "2",
+        ])
+        .unwrap();
+        assert!(opts.create && opts.headless.yes && opts.headless.json);
+        assert_eq!(opts.headless.title.as_deref(), Some("Validar loader"));
+        assert_eq!(opts.headless.body_file.as_deref(), Some("/tmp/card.md"));
+        assert_eq!(opts.priority.as_deref(), Some("1"));
+        assert!(opts.headless.move_parent);
+        assert_eq!(opts.headless.effort.as_deref(), Some("2"));
+    }
+
+    #[test]
+    fn test_headless_rejects_incomplete_or_unsafe_combinations() {
+        for args in [
+            vec!["prt", "test", "--create", "--yes", "--title", "x"],
+            vec![
+                "prt",
+                "test",
+                "--create",
+                "--yes",
+                "--body-file",
+                "/tmp/x.md",
+            ],
+            vec!["prt", "test", "--title", "x", "--body-file", "/tmp/x.md"],
+            vec!["prt", "test", "--move-parent"],
+            vec!["prt", "test", "--yes", "--effort", "2"],
+            vec!["prt", "test", "--json", "--raw"],
+        ] {
+            assert!(
+                parse_cli(args.clone()).is_err(),
+                "deveria recusar: {args:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_headless_flags_default_to_off() {
+        let opts = parse_cli(["prt", "test", "--work-item", "42"]).unwrap();
+        assert!(!opts.headless.yes && !opts.headless.json && !opts.headless.move_parent);
+        assert!(opts.headless.title.is_none());
+    }
+    #[test]
+    fn desc_headless_create_accepts_reviewed_content() {
+        let opts = parse_cli([
+            "prt",
+            "desc",
+            "--target",
+            "sprint/114",
+            "--work-item",
+            "42",
+            "--create",
+            "--yes",
+            "--json",
+            "--title",
+            "Corrige loader",
+            "--body-file",
+            "/tmp/pr.md",
+        ])
+        .unwrap();
+        assert!(opts.create && opts.headless.yes && opts.headless.json);
+        assert_eq!(opts.headless.title.as_deref(), Some("Corrige loader"));
+        assert_eq!(opts.headless.body_file.as_deref(), Some("/tmp/pr.md"));
+        assert!(!opts.headless.move_parent);
+    }
+
+    #[test]
+    fn desc_headless_rejects_invalid_combinations() {
+        for args in [
+            vec!["prt", "desc", "--create", "--yes", "--title", "x"],
+            vec!["prt", "desc", "--title", "x", "--body-file", "/tmp/x.md"],
+            vec!["prt", "desc", "--json", "--raw"],
+            vec!["prt", "desc", "--pr", "42", "--yes"],
+            vec!["prt", "desc", "--resume", "--yes"],
+        ] {
+            assert!(
+                parse_cli(args.clone()).is_err(),
+                "deveria recusar: {args:?}"
+            );
         }
     }
 }

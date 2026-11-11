@@ -221,6 +221,46 @@ prt test --work-item 11763 --create
 
 O fluxo busca o Work Item pai, pode complementar o contexto com `--pr <id>`, mostra o card gerado e solicita confirmação antes de criar o Test Case. AreaPath, responsável, IterationPath e campos customizados também podem ser ajustados durante o fluxo.
 
+
+## Uso sem terminal (scripts e bots)
+
+Sem TTY (stdout em pipe) o `prt` não abre a TUI. Por padrão ele só gera o conteúdo e imprime; para também criar no Azure DevOps é preciso confirmar com `--yes`, já que não há revisão interativa.
+
+```bash
+# Rascunho em JSON: título, corpo, targets e revisor de cada target
+prt desc --target sprint/114 --target dev --work-item 11763 --json --no-copy
+
+# Publica um PR por target com o conteúdo já revisado (não gera de novo)
+prt desc --target sprint/114 --target dev --work-item 11763 \
+  --create --yes --json --title "Corrige o loader" --body-file pr.md --no-copy
+
+# Rascunho do Test Case, com os campos resolvidos pelo perfil
+prt test --work-item 11763 --pr 4321 --json --no-copy
+
+# Cria o Test Case revisado, com campos ajustados
+prt test --work-item 11763 --pr 4321 --create --yes --json \
+  --title "Validar o loader" --body-file card.md --priority 1 --assigned-to qa@empresa.com
+
+# Move o Work Item pai para a transição do perfil (ex.: Test QA)
+prt test --work-item 11763 --pr 4321 --move-parent --yes --json --effort 3 --real-effort 2
+```
+
+| Flag | Comando | Efeito |
+| --- | --- | --- |
+| `--yes` | `desc`, `test` | Confirma a criação ou alteração sem terminal. Sem ela, `--create` e `--move-parent` são recusados fora de um terminal. |
+| `--json` | `desc`, `test` | Imprime um único objeto JSON em stdout (`kind`: `pr_draft`, `pr_created`, `pr_partial`, `test_case_draft`, `test_case_created` ou `parent_moved`). Mensagens de progresso continuam em stderr. |
+| `--title`, `--body-file` | `desc`, `test` | Usam o conteúdo já revisado em vez de gerar por IA. Devem vir juntos e exigem `--create`. |
+| `--move-parent` | `test` | Aplica a transição do perfil ao Work Item pai. Pode ser usado sozinho ou junto com `--create`. |
+| `--effort`, `--real-effort` | `test` | Esforços gravados no pai junto com `--move-parent`. |
+
+Os campos do Test Case seguem as flags já existentes (`--area-path`, `--assigned-to`, `--iteration-path`, `--priority`, `--team`, `--program`), com precedência sobre o perfil.
+
+Observações:
+
+- O `prt` não faz `git push`: para `desc --create`, a branch precisa já estar no Azure DevOps.
+- Se um target falhar depois de outro ter sido publicado, a saída `--json` traz `pr_partial` com os PRs já criados e o comando termina com erro.
+- `prt desc --pr <id>` (atualizar um PR existente) continua exigindo revisão interativa.
+
 ## Azure DevOps
 
 O remote Git precisa apontar para Azure DevOps. O PAT deve ter, no mínimo, permissão de leitura/escrita de código para PRs e de leitura/escrita de Work Items para Test Cases. O `init` salva o token em `.env`; também é possível usar `AZURE_PAT` ou `AZURE_DEVOPS_PAT` no ambiente.

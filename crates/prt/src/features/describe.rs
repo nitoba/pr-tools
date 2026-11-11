@@ -527,6 +527,79 @@ pub async fn find_publish_candidates(
     Ok(candidates)
 }
 
+/// Resultado da publicação sem terminal: o que foi criado e a falha, se houve.
+///
+/// Um target posterior pode falhar depois de outro já ter sido publicado; por
+/// isso os PRs criados são devolvidos mesmo quando `error` está presente.
+#[derive(Debug)]
+pub struct HeadlessPublish {
+    /// PRs criados, na ordem dos targets.
+    pub published: Vec<pull_requests::PublishedPr>,
+    /// Falha que interrompeu a publicação dos targets restantes.
+    pub error: Option<AppError>,
+}
+
+/// Revisor obrigatório do target, conforme o perfil selecionado na preparação.
+#[must_use]
+pub fn reviewer_for(prep: &DescribePrep, target: &str) -> String {
+    prep.profile
+        .as_ref()
+        .map(|selection| selection.reviewer_for(target))
+        .unwrap_or_default()
+}
+
+/// Publica um PR por target com título e descrição já aprovados, sem TUI.
+///
+/// Usa os mesmos revisores e o mesmo vínculo de Work Item da publicação
+/// interativa. Não faz push: a branch precisa existir no Azure DevOps.
+///
+/// # Errors
+///
+/// Retorna [`AppError::Git`] sem remote Azure e propaga a falha de criação
+/// do cliente. Falhas de publicação ficam em [`HeadlessPublish::error`],
+/// junto com os PRs que já tinham sido criados.
+pub async fn publish_headless(
+    prep: &DescribePrep,
+    title: &str,
+    body: &str,
+) -> Result<HeadlessPublish> {
+    let Some(remote) = prep.context.remote.as_ref() else {
+        return Err(AppError::Git {
+            message: "o repositório não tem um remote Azure DevOps em origin".to_owned(),
+        });
+    };
+    let client = azure::client_for(Some(remote), prep.config.azure_pat.trim())?;
+    let work_items: Vec<String> = if prep.work_item_id.trim().is_empty() {
+        Vec::new()
+    } else {
+        vec![prep.work_item_id.trim().to_owned()]
+    };
+    let created = std::sync::Mutex::new(Vec::new());
+    let on_published = |item: &pull_requests::PublishedPr| {
+        if let Ok(mut list) = created.lock() {
+            list.push(item.clone());
+        }
+    };
+    let input = pull_requests::PublishInput {
+        remote,
+        branch: &prep.context.branch,
+        targets: &prep.targets,
+        title,
+        body,
+        work_item_ids: &work_items,
+        reviewer_for: &|target| reviewer_for(prep, target),
+        on_published: Some(&on_published),
+        on_published_durable: None,
+        on_target_started: None,
+        on_target_started_durable: None,
+    };
+    let error = pull_requests::publish_pull_requests(&client, &input)
+        .await
+        .err();
+    let published = created.lock().map(|list| list.clone()).unwrap_or_default();
+    Ok(HeadlessPublish { published, error })
+}
+
 fn append_detail(message: String, detail: &str) -> String {
     if detail.is_empty() {
         message

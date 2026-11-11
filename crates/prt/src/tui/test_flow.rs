@@ -3382,6 +3382,7 @@ mod tests {
             program: None,
             examples: None,
             output: OutputFlags::default(),
+            headless: crate::cli::HeadlessArgs::default(),
             completion_shell: None,
         };
         let app = TestApp::for_request(&TestCardRequest::Cli(options));

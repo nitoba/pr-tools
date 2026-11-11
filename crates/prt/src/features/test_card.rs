@@ -2174,6 +2174,7 @@ mod tests {
                 raw: false,
                 copy: true,
             },
+            headless: crate::cli::HeadlessArgs::default(),
             completion_shell: None,
         }
     }
