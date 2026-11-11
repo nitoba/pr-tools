@@ -353,6 +353,23 @@ impl CreatedPullRequest {
     }
 }
 
+/// Link do PR na interface web do Azure DevOps.
+///
+/// A resposta de criação nem sempre traz `webUrl`; nesse caso `url` aponta
+/// para a API REST (`…/_apis/git/repositories/…`), que não abre no navegador.
+/// Quando o link recebido é vazio ou da API, monta o endereço da interface.
+#[must_use]
+pub fn pull_request_web_url(remote: &crate::git::RepositoryRemote, id: i64, link: &str) -> String {
+    if link.trim().is_empty() || link.contains("/_apis/") {
+        format!(
+            "https://dev.azure.com/{}/{}/_git/{}/pullrequest/{id}",
+            remote.organization, remote.project, remote.repository
+        )
+    } else {
+        link.to_owned()
+    }
+}
+
 /// Possível PR criado antes de uma resposta perdida.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PullRequestCandidate {
@@ -789,7 +806,7 @@ pub async fn publish_pull_requests(
         let item = PublishedPr {
             target: target.clone(),
             id: created.pull_request_id,
-            url: created.web_link().to_owned(),
+            url: pull_request_web_url(remote, created.pull_request_id, created.web_link()),
         };
         published.push(item.clone());
         if let Some(on_published_durable) = input.on_published_durable {
@@ -1558,5 +1575,20 @@ mod tests {
             loaded.targets[0].state,
             crate::features::session::TargetState::Confirmed { id: 101, .. }
         ));
+    }
+    #[test]
+    fn pull_request_web_url_should_replace_api_links_with_the_web_interface() {
+        let remote = crate::git::RepositoryRemote {
+            organization: "org".to_owned(),
+            project: "PROJ".to_owned(),
+            repository: "repo".to_owned(),
+        };
+        let web = "https://dev.azure.com/org/PROJ/_git/repo/pullrequest/42";
+        let api = "https://dev.azure.com/org/8ffc/_apis/git/repositories/a7b2/pullRequests/42";
+        assert_eq!(pull_request_web_url(&remote, 42, api), web);
+        assert_eq!(pull_request_web_url(&remote, 42, ""), web);
+        // um link que já é da interface é preservado
+        let given = "https://dev.azure.com/org/PROJ/_git/repo/pullrequest/42?_a=files";
+        assert_eq!(pull_request_web_url(&remote, 42, given), given);
     }
 }
